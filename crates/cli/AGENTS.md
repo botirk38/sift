@@ -1,5 +1,7 @@
 # Agent notes (sift-cli)
 
+Installable agent skill ([skills.sh](https://skills.sh) / `npx skills`): [`skills/sift-cli/SKILL.md`](../../skills/sift-cli/SKILL.md).
+
 ## Structure
 
 - **`src/main.rs`** — single binary: `Cli` (clap `Parser`), subcommand `build`, default search mode when no subcommand.

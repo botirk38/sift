@@ -8,6 +8,7 @@
 | `crates/cli` | `sift-cli` — `sift` binary (clap), thin wrapper over core |
 | `fuzz/` | `cargo-fuzz` crate (excluded from workspace); see `fuzz/README.md` |
 | `scripts/` | `bench.sh`, `profile.sh`, `fuzz.sh`, smoke helpers |
+| `skills/` | Installable agent skills for [skills.sh](https://skills.sh) / `npx skills` (see `skills/README.md`) |
 | `BENCH.md` | Criterion + profiling workflow |
 | `plan.md` | Product / design roadmap (human-oriented) |
 

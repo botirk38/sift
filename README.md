@@ -10,6 +10,8 @@
 
 **Docs:** [`BENCH.md`](BENCH.md) (benchmarks & profiling), [`plan.md`](plan.md) (roadmap), [`AGENTS.md`](AGENTS.md) (repo / automation hints). Per-crate **`README.md`** and **`AGENTS.md`** live under each crate and under `fuzz/`.
 
+**Agent skills** ([skills.sh](https://skills.sh) / `npx skills`): [`skills/README.md`](skills/README.md).
+
 ## Quick start
 
 ```bash
