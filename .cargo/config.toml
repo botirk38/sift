@@ -1,0 +1,3 @@
+[alias]
+# Same checks recommended before push / in CI
+clippy-check = "clippy --workspace --all-targets --all-features -- --deny warnings"

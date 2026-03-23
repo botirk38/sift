@@ -1,0 +1,27 @@
+[package]
+name = "sift-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+sift-core = { path = "../crates/core" }
+tempfile = "3"
+
+[[bin]]
+name = "search_usage"
+path = "fuzz_targets/search_usage.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "compile_only"
+path = "fuzz_targets/compile_only.rs"
+test = false
+doc = false
+bench = false

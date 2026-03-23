@@ -1,0 +1,22 @@
+[package]
+name = "sift-cli"
+version.workspace = true
+edition.workspace = true
+description = "Grep-like CLI for sift-core"
+readme.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "sift"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+sift-core = { path = "../core" }

@@ -1,0 +1,40 @@
+[package]
+name = "sift-core"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+readme.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Enables the `sift-profile` binary (tempfile for temp corpora).
+profile = ["dep:tempfile"]
+
+[dependencies]
+bitflags = "2"
+ignore = "0.4"
+rayon = "1"
+regex = "1"
+regex-syntax = "0.8"
+thiserror = "2"
+tempfile = { version = "3", optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3"
+
+[[bin]]
+name = "sift-profile"
+path = "src/bin/profile.rs"
+required-features = ["profile"]
+
+[[bench]]
+name = "search"
+harness = false

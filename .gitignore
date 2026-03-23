@@ -1,0 +1,8 @@
+/target
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts
+/flamegraph.svg
+/cargo-flamegraph.trace
+.cursor/
+.index/

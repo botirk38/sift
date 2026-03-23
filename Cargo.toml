@@ -1,0 +1,34 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/cli"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Indexed regex search over codebases (library + grep-like CLI)"
+readme = "README.md"
+repository = "https://github.com/sift-rs/sift"
+keywords = ["grep", "regex", "search", "index", "codebase"]
+categories = ["command-line-utilities", "development-tools"]
+
+# Shared lint levels (members use `[lints] workspace = true`).
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+# No blanket allows — fix code or adjust workspace defaults here, not with #[allow].
+pedantic = "warn"
+nursery = "warn"
+cargo = "warn"
+
+# Line tables for Criterion / `cargo bench` without full debug info bloat.
+[profile.bench]
+inherits = "release"
+debug = 1
+
+# Release + line tables for perf / cargo-flamegraph (used by `scripts/profile.sh`, not benches).
+[profile.profiling]
+inherits = "release"
+debug = 1
