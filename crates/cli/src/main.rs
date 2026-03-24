@@ -3,13 +3,16 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{value_parser, Arg, ArgAction, Args, Command, FromArgMatches, Parser, Subcommand};
+use clap::{
+    value_parser, Arg, ArgAction, Args, Command, CommandFactory, FromArgMatches, Parser, Subcommand,
+};
 use sift_core::{
     CaseMode, CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchMode, SearchOptions,
     SearchOutput,
 };
 
 #[derive(Parser)]
+#[command(disable_help_flag = true)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -71,8 +74,11 @@ struct OutputFlagsA {
 
 #[derive(Args)]
 struct OutputFlagsC {
-    #[arg(long = "no-filename")]
+    #[arg(short = 'h', long = "no-filename")]
     no_filename: bool,
+
+    #[arg(long = "help")]
+    help: bool,
 }
 
 #[derive(Args)]
@@ -84,6 +90,7 @@ struct PathArgs {
 }
 
 #[derive(Subcommand)]
+#[command(disable_help_flag = true)]
 enum Commands {
     Build {
         #[arg(default_value = ".")]
@@ -454,6 +461,13 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+
+    if cli.out3.help {
+        let mut cmd = Cli::command();
+        cmd.print_help().ok();
+        println!();
+        return ExitCode::SUCCESS;
+    }
 
     if let Some(Commands::Build { path }) = cli.command {
         return match IndexBuilder::new(&path)
