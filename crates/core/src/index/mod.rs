@@ -8,6 +8,7 @@ use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
 pub use builder::build_index_tables;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryPlan {
@@ -22,11 +23,76 @@ pub struct QueryPlan {
 #[derive(Debug)]
 pub struct Index {
     pub root: PathBuf,
+    pub corpus_kind: CorpusKind,
     files: files::MappedFilesView,
     file_paths: Vec<PathBuf>,
     lexicon: crate::storage::lexicon::MappedLexicon,
     postings: crate::storage::postings::MappedPostings,
     pub index_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CorpusKind {
+    Directory,
+    File { entries: Vec<PathBuf> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexMeta {
+    pub root: PathBuf,
+    #[serde(flatten)]
+    pub kind: CorpusKind,
+}
+
+impl IndexMeta {
+    const fn new(root: PathBuf, kind: CorpusKind) -> Self {
+        Self { root, kind }
+    }
+
+    fn validate(self, meta_path: &Path) -> crate::Result<Self> {
+        if !self.root.is_absolute() {
+            return Err(crate::Error::InvalidMeta(meta_path.to_path_buf()));
+        }
+        match &self.kind {
+            CorpusKind::Directory => {}
+            CorpusKind::File { entries } => {
+                if entries.len() != 1
+                    || entries.iter().any(|entry| {
+                        entry.as_os_str().is_empty()
+                            || entry.is_absolute()
+                            || entry.components().count() != 1
+                    })
+                {
+                    return Err(crate::Error::InvalidMeta(meta_path.to_path_buf()));
+                }
+            }
+        }
+        Ok(self)
+    }
+}
+
+fn validate_file_paths(
+    kind: &CorpusKind,
+    file_paths: &[PathBuf],
+    meta_path: &Path,
+) -> crate::Result<()> {
+    match kind {
+        CorpusKind::Directory => {
+            if file_paths
+                .iter()
+                .any(|path| path.as_os_str().is_empty() || path.is_absolute())
+            {
+                return Err(crate::Error::InvalidMeta(meta_path.to_path_buf()));
+            }
+        }
+        CorpusKind::File { entries } => {
+            if file_paths != entries {
+                return Err(crate::Error::InvalidMeta(meta_path.to_path_buf()));
+            }
+        }
+    }
+    Ok(())
 }
 
 impl Index {
@@ -46,11 +112,9 @@ impl Index {
             return Err(crate::Error::MissingMeta(meta_path));
         }
         let raw = std::fs::read_to_string(&meta_path)?;
-        let line = raw
-            .lines()
-            .next()
-            .ok_or_else(|| crate::Error::InvalidMeta(meta_path.clone()))?;
-        let root = PathBuf::from(line);
+        let meta = serde_json::from_str::<IndexMeta>(&raw)
+            .map_err(|_| crate::Error::InvalidMeta(meta_path.clone()))?
+            .validate(&meta_path)?;
         let paths = [
             index_dir.join(crate::FILES_BIN),
             index_dir.join(crate::LEXICON_BIN),
@@ -64,13 +128,15 @@ impl Index {
 
         let files = files::MappedFilesView::open(&paths[0]).map_err(crate::Error::Io)?;
         let file_paths = files.to_path_bufs().map_err(crate::Error::Io)?;
+        validate_file_paths(&meta.kind, &file_paths, &meta_path)?;
         let lexicon =
             crate::storage::lexicon::MappedLexicon::open(&paths[1]).map_err(crate::Error::Io)?;
         let postings =
             crate::storage::postings::MappedPostings::open(&paths[2]).map_err(crate::Error::Io)?;
 
         Ok(Self {
-            root,
+            root: meta.root,
+            corpus_kind: meta.kind,
             files,
             file_paths,
             lexicon,
@@ -87,7 +153,12 @@ impl Index {
     pub fn save_to_dir(&self, dir: &Path) -> crate::Result<()> {
         std::fs::create_dir_all(dir)?;
         let meta_path = dir.join(crate::META_FILENAME);
-        std::fs::write(&meta_path, format!("{}\n", self.root.display()))?;
+        let meta = IndexMeta::new(self.root.clone(), self.corpus_kind.clone());
+        std::fs::write(
+            &meta_path,
+            serde_json::to_vec_pretty(&meta)
+                .map_err(|_| crate::Error::InvalidMeta(meta_path.clone()))?,
+        )?;
 
         let index_dir = dir.join(crate::INDEX_SUBDIR);
         std::fs::create_dir_all(&index_dir)?;
@@ -313,8 +384,19 @@ impl<'a> IndexBuilder<'a> {
     /// Propagates IO errors from walking, reading files, or writing persistence files
     /// (if `with_dir` was called).
     pub fn build(self) -> crate::Result<Index> {
-        let root = self.root.canonicalize()?;
-        let tables = build_index_tables(&root)?;
+        let canonical = self.root.canonicalize()?;
+        let (root, build_root) = if canonical.is_file() {
+            let parent = canonical.parent().ok_or_else(|| {
+                crate::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "single-file corpus must have a parent directory",
+                ))
+            })?;
+            (parent.to_path_buf(), canonical)
+        } else {
+            (canonical.clone(), canonical)
+        };
+        let (corpus_kind, tables) = build_index_tables(&build_root)?;
 
         let files = files::MappedFilesView::from_paths(&tables.files);
         let lexicon = crate::storage::lexicon::MappedLexicon::from_entries(&tables.lexicon);
@@ -322,6 +404,7 @@ impl<'a> IndexBuilder<'a> {
 
         let mut index = Index {
             root,
+            corpus_kind,
             files,
             file_paths: tables.files,
             lexicon,

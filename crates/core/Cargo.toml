@@ -31,6 +31,8 @@ memmap2 = "0.9"
 rayon = "1"
 regex-automata = "0.4"
 regex-syntax = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 termcolor = "1"
 thiserror = "2"
 tempfile = { version = "3", optional = true }

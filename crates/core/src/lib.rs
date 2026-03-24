@@ -100,7 +100,14 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("sift-missing-table-{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
-        fs::write(tmp.join(META_FILENAME), "/tmp/foo\n").unwrap();
+        fs::write(
+            tmp.join(META_FILENAME),
+            r#"{
+  "root": "/tmp/foo",
+  "kind": "directory"
+}"#,
+        )
+        .unwrap();
         assert!(matches!(Index::open(&tmp), Err(Error::MissingComponent(_))));
     }
 
@@ -201,5 +208,51 @@ mod tests {
         from_index.sort_by(|a, b| (&a.file, a.line, &a.text).cmp(&(&b.file, b.line, &b.text)));
         from_walk.sort_by(|a, b| (&a.file, a.line, &a.text).cmp(&(&b.file, b.line, &b.text)));
         assert_eq!(from_index, from_walk);
+    }
+
+    #[test]
+    fn build_open_single_file_search_finds_line() {
+        let tmp = std::env::temp_dir().join(format!("sift-single-file-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("one.txt");
+        fs::write(&file, "alpha\nbeta needle\n").unwrap();
+
+        let idx = tmp.join(".sift");
+        let _ = IndexBuilder::new(&file).with_dir(&idx).build().unwrap();
+        let index = Index::open(&idx).unwrap();
+
+        assert_eq!(index.root, tmp);
+        assert!(matches!(index.corpus_kind, index::CorpusKind::File { .. }));
+        assert_eq!(index.file_count(), 1);
+        assert_eq!(index.file_path(0).unwrap(), std::path::Path::new("one.txt"));
+
+        let pat = vec!["needle".to_string()];
+        let q = CompiledSearch::new(&pat, SearchOptions::default()).unwrap();
+        let hits = q.collect_index_matches(&index).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].file, file);
+        assert_eq!(hits[0].line, 2);
+    }
+
+    #[test]
+    fn single_file_meta_is_json_with_explicit_kind() {
+        let tmp =
+            std::env::temp_dir().join(format!("sift-single-file-meta-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("one.txt");
+        fs::write(&file, "alpha\n").unwrap();
+
+        let idx = tmp.join(".sift");
+        let _ = IndexBuilder::new(&file).with_dir(&idx).build().unwrap();
+        let meta = fs::read_to_string(idx.join(META_FILENAME)).unwrap();
+
+        assert!(
+            meta.contains("\"kind\": \"file\""),
+            "unexpected meta: {meta}"
+        );
+        assert!(meta.contains("\"entries\""), "unexpected meta: {meta}");
+        assert!(meta.contains("\"one.txt\""), "unexpected meta: {meta}");
     }
 }

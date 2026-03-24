@@ -1,15 +1,16 @@
 //! Walk corpus, extract trigrams, build in-memory index tables.
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use ignore::WalkBuilder;
+use memmap2::Mmap;
 use rayon::prelude::*;
 
-use crate::index::trigram::extract_trigrams_utf8_lossy;
+use crate::index::{trigram::extract_unique_trigrams_utf8_lossy, CorpusKind};
 use crate::search::parallel_candidate_min_files;
 use crate::storage::lexicon::LexiconEntry;
+use crate::storage::mmap::open_mmap;
 
 pub struct IndexTables {
     pub files: Vec<PathBuf>,
@@ -17,7 +18,23 @@ pub struct IndexTables {
     pub postings: Vec<u8>,
 }
 
-pub fn build_index_tables(root: &Path) -> crate::Result<IndexTables> {
+fn collect_paths(root: &Path) -> crate::Result<(CorpusKind, Vec<PathBuf>)> {
+    if root.is_file() {
+        let Some(name) = root.file_name() else {
+            return Err(crate::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "single-file corpus must have a file name",
+            )));
+        };
+        let entry = PathBuf::from(name);
+        return Ok((
+            CorpusKind::File {
+                entries: vec![entry.clone()],
+            },
+            vec![entry],
+        ));
+    }
+
     let mut paths: Vec<PathBuf> = Vec::new();
     let walker = WalkBuilder::new(root).follow_links(false).build();
     for entry in walker {
@@ -29,6 +46,31 @@ pub fn build_index_tables(root: &Path) -> crate::Result<IndexTables> {
         let display = path.strip_prefix(root).unwrap_or(path).to_path_buf();
         paths.push(display);
     }
+    Ok((CorpusKind::Directory, paths))
+}
+
+fn open_corpus_bytes(path: &Path) -> crate::Result<Mmap> {
+    open_mmap(path).map_err(crate::Error::Io)
+}
+
+fn unique_trigrams_for_file(path: &Path) -> crate::Result<Vec<[u8; 3]>> {
+    let mmap = open_corpus_bytes(path)?;
+    let mut tris: Vec<[u8; 3]> = extract_unique_trigrams_utf8_lossy(mmap.as_ref())
+        .into_iter()
+        .collect();
+    tris.sort_unstable();
+    Ok(tris)
+}
+
+fn actual_path(root: &Path, corpus_kind: &CorpusKind, display: &Path) -> PathBuf {
+    match corpus_kind {
+        CorpusKind::Directory => root.join(display),
+        CorpusKind::File { .. } => root.to_path_buf(),
+    }
+}
+
+pub fn build_index_tables(root: &Path) -> crate::Result<(CorpusKind, IndexTables)> {
+    let (corpus_kind, mut paths) = collect_paths(root)?;
     paths.sort_unstable();
 
     let min_parallel = parallel_candidate_min_files();
@@ -36,22 +78,18 @@ pub fn build_index_tables(root: &Path) -> crate::Result<IndexTables> {
         paths
             .par_iter()
             .map(|display| {
-                let path = root.join(display);
-                let tris = fs::read(&path)
-                    .map_or_else(|_| Vec::new(), |bytes| extract_trigrams_utf8_lossy(&bytes));
-                (display.clone(), tris)
+                let path = actual_path(root, &corpus_kind, display);
+                unique_trigrams_for_file(&path).map(|tris| (display.clone(), tris))
             })
-            .collect()
+            .collect::<crate::Result<Vec<_>>>()?
     } else {
         paths
             .iter()
             .map(|display| {
-                let path = root.join(display);
-                let tris = fs::read(&path)
-                    .map_or_else(|_| Vec::new(), |bytes| extract_trigrams_utf8_lossy(&bytes));
-                (display.clone(), tris)
+                let path = actual_path(root, &corpus_kind, display);
+                unique_trigrams_for_file(&path).map(|tris| (display.clone(), tris))
             })
-            .collect()
+            .collect::<crate::Result<Vec<_>>>()?
     };
     let rel_paths: Vec<PathBuf> = per_file.iter().map(|(p, _)| p.clone()).collect();
 
@@ -99,9 +137,12 @@ pub fn build_index_tables(root: &Path) -> crate::Result<IndexTables> {
         });
     }
 
-    Ok(IndexTables {
-        files: rel_paths,
-        lexicon: lex_entries,
-        postings: posting_bytes,
-    })
+    Ok((
+        corpus_kind,
+        IndexTables {
+            files: rel_paths,
+            lexicon: lex_entries,
+            postings: posting_bytes,
+        },
+    ))
 }

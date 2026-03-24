@@ -172,3 +172,52 @@ fn search_literal_index_without_subcommand() {
     let stdout = normalized_stdout(&out);
     assert!(stdout.contains("t.txt:") && stdout.contains("index"));
 }
+
+#[test]
+fn build_single_file_then_search_finds_match() {
+    let root = fresh_dir("search-single-file");
+    let file = root.join("one.txt");
+    fs::write(&file, "alpha\nbeta needle\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &file);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("needle")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let stdout = normalized_stdout(&out);
+    assert!(
+        stdout.contains("one.txt:beta needle"),
+        "unexpected stdout: {stdout}"
+    );
+}
+
+#[test]
+fn build_single_file_then_search_path_scope_accepts_that_file() {
+    let root = fresh_dir("search-single-file-scope");
+    let file = root.join("one.txt");
+    fs::write(&file, "needle here\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &file);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("needle")
+        .arg(&file)
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let stdout = normalized_stdout(&out);
+    assert!(
+        stdout.contains("one.txt:needle here"),
+        "unexpected stdout: {stdout}"
+    );
+}
