@@ -138,44 +138,36 @@ impl MappedFilesView {
         self.count
     }
 
-    pub fn get(&self, id: usize) -> Option<PathBuf> {
-        if id >= self.count {
-            return None;
-        }
+    pub fn to_path_bufs(&self) -> std::io::Result<Vec<PathBuf>> {
+        let mut out = Vec::with_capacity(self.count);
         let bytes = self.bytes();
-        let off = u32::from_le_bytes(
-            bytes[self.offset_table_start + id * 4..self.offset_table_start + (id + 1) * 4]
-                .try_into()
-                .unwrap(),
-        ) as usize;
-        let path_len = u32::from_le_bytes(bytes[off..off + 4].try_into().ok()?) as usize;
-        let path_start = off + 4;
-        let path_end = path_start + path_len;
-        let path_bytes = bytes.get(path_start..path_end)?;
-        let s = std::str::from_utf8(path_bytes).ok()?;
-        Some(PathBuf::from(s))
-    }
-
-    pub const fn iter(&self) -> MappedFilesIter<'_> {
-        MappedFilesIter { view: self, pos: 0 }
+        for id in 0..self.count {
+            let off = u32::from_le_bytes(
+                bytes[self.offset_table_start + id * 4..self.offset_table_start + (id + 1) * 4]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+            let path_len = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()) as usize;
+            let path_start = off + 4;
+            let path_end = path_start + path_len;
+            let path_bytes = bytes.get(path_start..path_end).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("path {id} extends past files table end"),
+                )
+            })?;
+            let path = std::str::from_utf8(path_bytes).map_err(|err| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("path {id} is not valid UTF-8: {err}"),
+                )
+            })?;
+            out.push(PathBuf::from(path));
+        }
+        Ok(out)
     }
 
     pub fn backing_slice(&self) -> &[u8] {
         self.bytes()
-    }
-}
-
-pub struct MappedFilesIter<'a> {
-    view: &'a MappedFilesView,
-    pos: usize,
-}
-
-impl Iterator for MappedFilesIter<'_> {
-    type Item = PathBuf;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let result = self.view.get(self.pos);
-        self.pos += 1;
-        result
     }
 }

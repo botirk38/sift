@@ -62,7 +62,7 @@ impl Index {
         }
 
         let files = files::MappedFilesView::open(&paths[0]).map_err(crate::Error::Io)?;
-        let file_paths: Vec<PathBuf> = files.iter().collect();
+        let file_paths = files.to_path_bufs().map_err(crate::Error::Io)?;
         let lexicon =
             crate::storage::lexicon::MappedLexicon::open(&paths[1]).map_err(crate::Error::Io)?;
         let postings =

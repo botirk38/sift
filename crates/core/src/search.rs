@@ -566,7 +566,7 @@ pub fn parallel_candidate_min_files() -> usize {
     if effective <= 1 {
         usize::MAX
     } else {
-        effective
+        effective.saturating_mul(8)
     }
 }
 
