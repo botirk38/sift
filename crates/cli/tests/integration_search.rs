@@ -192,9 +192,10 @@ fn build_single_file_then_search_finds_match() {
 
     let stdout = normalized_stdout(&out);
     assert!(
-        stdout.contains(&abs_match(&root, "one.txt", "beta needle")),
-        "unexpected stdout: {stdout}"
+        stdout.contains("beta needle"),
+        "single-file index search should not print filename, got: {stdout}"
     );
+    assert!(!stdout.contains("one.txt"));
 }
 
 #[test]
@@ -217,9 +218,10 @@ fn build_single_file_then_search_path_scope_accepts_that_file() {
 
     let stdout = normalized_stdout(&out);
     assert!(
-        stdout.contains(&abs_match(&root, "one.txt", "needle here")),
-        "unexpected stdout: {stdout}"
+        stdout.contains("needle here"),
+        "single-file explicit target should not print filename, got: {stdout}"
     );
+    assert!(!stdout.contains("one.txt"));
 }
 
 #[test]

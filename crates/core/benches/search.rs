@@ -12,8 +12,8 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use std::hint::black_box;
 
 use sift_core::{
-    CaseMode, CompiledSearch, Index, IndexBuilder, OutputEmission, SearchMatchFlags, SearchMode,
-    SearchOptions, SearchOutput,
+    CaseMode, CompiledSearch, FilenameMode, Index, IndexBuilder, OutputEmission, SearchMatchFlags,
+    SearchMode, SearchOptions, SearchOutput,
 };
 
 fn make_parity_corpus(root: &Path) {
@@ -90,7 +90,7 @@ const fn make_output() -> SearchOutput {
     SearchOutput {
         mode: SearchMode::Standard,
         emission: OutputEmission::Quiet,
-        with_filename: false,
+        filename_mode: FilenameMode::Never,
         line_number: false,
     }
 }

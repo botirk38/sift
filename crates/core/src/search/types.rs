@@ -97,11 +97,19 @@ pub enum OutputEmission {
     Quiet,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FilenameMode {
+    #[default]
+    Auto,
+    Always,
+    Never,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SearchOutput {
     pub mode: SearchMode,
     pub emission: OutputEmission,
-    pub with_filename: bool,
+    pub filename_mode: FilenameMode,
     pub line_number: bool,
 }
 
@@ -110,7 +118,7 @@ impl Default for SearchOutput {
         Self {
             mode: SearchMode::Standard,
             emission: OutputEmission::Normal,
-            with_filename: true,
+            filename_mode: FilenameMode::Auto,
             line_number: false,
         }
     }

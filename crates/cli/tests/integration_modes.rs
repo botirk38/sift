@@ -840,3 +840,188 @@ fn quiet_only_matching_no_match() {
     assert_eq!(out.status.code(), Some(1));
     assert!(normalized_stdout(&out).is_empty());
 }
+
+#[test]
+fn single_file_search_defaults_to_no_filename() {
+    let root = fresh_dir("modes-single-default");
+    let file = root.join("only.txt");
+    fs::write(&file, "hello world\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &file);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("hello")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let stdout = normalized_stdout(&out);
+    assert!(stdout.contains("hello world"));
+    assert!(
+        !stdout.contains("only.txt"),
+        "single-file index search should default to no filename"
+    );
+}
+
+#[test]
+fn single_file_o_defaults_to_no_filename() {
+    let root = fresh_dir("modes-single-o-default");
+    let file = root.join("only.txt");
+    fs::write(&file, "alpha beta\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &file);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-o")
+        .arg("alpha")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let stdout = normalized_stdout(&out);
+    assert!(stdout.contains("alpha"));
+    assert!(
+        !stdout.contains("only.txt"),
+        "single-file -o should default to no filename"
+    );
+}
+
+#[test]
+fn single_file_count_bare() {
+    let root = fresh_dir("modes-single-count");
+    let file = root.join("only.txt");
+    fs::write(&file, "hello\nhello\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &file);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-c")
+        .arg("hello")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let stdout = normalized_stdout(&out);
+    assert_eq!(stdout.trim(), "2");
+    assert!(
+        !stdout.contains("only.txt"),
+        "single-file -c should print bare count"
+    );
+}
+
+#[test]
+fn single_file_count_matches_bare() {
+    let root = fresh_dir("modes-single-count-matches");
+    let file = root.join("only.txt");
+    fs::write(&file, "hello hello hello\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &file);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("--count-matches")
+        .arg("hello")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let stdout = normalized_stdout(&out);
+    assert_eq!(stdout.trim(), "3");
+    assert!(
+        !stdout.contains("only.txt"),
+        "single-file --count-matches should print bare count"
+    );
+}
+
+#[test]
+fn no_filename_flag_still_works_for_line_prefix() {
+    let root = fresh_dir("modes-no-filename-explicit");
+    fs::write(root.join("a.txt"), "found\n").unwrap();
+    fs::write(root.join("b.txt"), "also found\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("--no-filename")
+        .arg("found")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let stdout = normalized_stdout(&out);
+    assert!(stdout.contains("found"));
+    assert!(!stdout.contains("a.txt"));
+    assert!(!stdout.contains("b.txt"));
+}
+
+#[test]
+fn files_with_matches_still_path_mode_under_no_filename() {
+    let root = fresh_dir("modes-l-no-filename");
+    fs::write(root.join("a.txt"), "found\n").unwrap();
+    fs::write(root.join("b.txt"), "found\n").unwrap();
+    fs::write(root.join("c.txt"), "miss\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("--no-filename")
+        .arg("-l")
+        .arg("found")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let lines: Vec<_> = normalized_stdout(&out)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert!(lines
+        .iter()
+        .all(|l| l.contains("a.txt") || l.contains("b.txt")));
+}
+
+#[test]
+fn files_without_match_still_path_mode_under_no_filename() {
+    let root = fresh_dir("modes-L-no-filename");
+    fs::write(root.join("a.txt"), "hit\n").unwrap();
+    fs::write(root.join("b.txt"), "hit\n").unwrap();
+    fs::write(root.join("c.txt"), "miss\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("--no-filename")
+        .arg("-L")
+        .arg("hit")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let lines: Vec<_> = normalized_stdout(&out)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].contains("c.txt"));
+}

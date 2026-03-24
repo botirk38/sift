@@ -57,8 +57,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use sift_core::{
-    CaseMode, CompiledSearch, Index, IndexBuilder, OutputEmission, SearchMatchFlags, SearchMode,
-    SearchOptions, SearchOutput, TrigramPlan,
+    CaseMode, CompiledSearch, FilenameMode, Index, IndexBuilder, OutputEmission, SearchMatchFlags,
+    SearchMode, SearchOptions, SearchOutput, TrigramPlan,
 };
 
 #[derive(Clone, Debug)]
@@ -465,7 +465,7 @@ fn run_scenario(index: &Index, scenario: &Scenario, loop_cfg: &Loop) {
                             SearchOutput {
                                 mode: SearchMode::Standard,
                                 emission: OutputEmission::Quiet,
-                                with_filename: false,
+                                filename_mode: FilenameMode::Never,
                                 line_number: false,
                             },
                         )
@@ -486,7 +486,7 @@ fn run_scenario(index: &Index, scenario: &Scenario, loop_cfg: &Loop) {
                             SearchOutput {
                                 mode: SearchMode::Standard,
                                 emission: OutputEmission::Quiet,
-                                with_filename: false,
+                                filename_mode: FilenameMode::Never,
                                 line_number: false,
                             },
                         )

@@ -13,7 +13,7 @@ use rayon::prelude::*;
 use crate::planner::TrigramPlan;
 use crate::Index;
 
-use super::{CompiledSearch, OutputEmission, SearchMode, SearchOutput};
+use super::{CompiledSearch, FilenameMode, OutputEmission, SearchMode, SearchOutput};
 
 #[cfg(test)]
 use super::Match;
@@ -590,24 +590,25 @@ fn write_summary_record(
             if result.count == 0 {
                 return Ok(());
             }
-            if output.with_filename {
+            let print_filename = output.filename_mode != FilenameMode::Never;
+            if print_filename {
                 writeln!(out, "{}:{}", path.display(), result.count)
             } else {
                 writeln!(out, "{}", result.count)
             }
         }
         SearchMode::FilesWithMatches => {
-            if result.matched && output.with_filename {
+            if result.matched {
                 writeln!(out, "{}", path.display())
             } else {
                 Ok(())
             }
         }
         SearchMode::FilesWithoutMatch => {
-            if !result.matched && output.with_filename {
-                writeln!(out, "{}", path.display())
-            } else {
+            if result.matched {
                 Ok(())
+            } else {
+                writeln!(out, "{}", path.display())
             }
         }
         SearchMode::Standard | SearchMode::OnlyMatching => unreachable!(),
@@ -620,7 +621,8 @@ fn write_standard_prefix(
     path: &Path,
     line_number: Option<u64>,
 ) -> io::Result<()> {
-    if output.with_filename {
+    let print_filename = output.filename_mode != FilenameMode::Never;
+    if print_filename {
         write!(out, "{}:", path.display())?;
     }
     if output.line_number {

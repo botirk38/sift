@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use clap::{value_parser, Arg, ArgAction, Args, Command, FromArgMatches, Parser, Subcommand};
 use ignore::overrides::OverrideBuilder;
 use sift_core::{
-    CaseMode, CompiledSearch, Index, IndexBuilder, OutputEmission, SearchMatchFlags, SearchMode,
-    SearchOptions, SearchOutput,
+    CaseMode, CompiledSearch, FilenameMode, Index, IndexBuilder, OutputEmission, SearchMatchFlags,
+    SearchMode, SearchOptions, SearchOutput,
 };
 
 #[derive(Parser)]
@@ -447,6 +447,26 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
         mode
     };
 
+    let query = CompiledSearch::new(&patterns, opts).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let index = Index::open(&cli.paths.sift_dir)?;
+    let cwd = std::env::current_dir()?;
+    let prefixes = corpus_path_prefixes(&index.root, &cwd, &cli.search_scope.paths)?;
+
+    let is_path_mode = matches!(
+        effective_mode,
+        SearchMode::FilesWithMatches | SearchMode::FilesWithoutMatch
+    );
+    let corpus_is_single_file = matches!(index.corpus_kind, sift_core::CorpusKind::File { .. });
+    let effective_filename_mode = if cli.out3.no_filename && !is_path_mode {
+        FilenameMode::Never
+    } else if cli.out3.no_filename && is_path_mode {
+        FilenameMode::Always
+    } else if corpus_is_single_file && !is_path_mode {
+        FilenameMode::Never
+    } else {
+        FilenameMode::Always
+    };
+
     let output = SearchOutput {
         mode: effective_mode,
         emission: if quiet {
@@ -454,14 +474,9 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
         } else {
             OutputEmission::Normal
         },
-        with_filename: !cli.out3.no_filename,
+        filename_mode: effective_filename_mode,
         line_number: cli.out1.line_number,
     };
-
-    let query = CompiledSearch::new(&patterns, opts).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let index = Index::open(&cli.paths.sift_dir)?;
-    let cwd = std::env::current_dir()?;
-    let prefixes = corpus_path_prefixes(&index.root, &cwd, &cli.search_scope.paths)?;
 
     let glob_override = if cli.glob_flags.glob.is_empty() {
         None
