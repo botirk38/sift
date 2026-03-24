@@ -254,7 +254,7 @@ def download_linux(suite_dir):
 
 def has_linux(suite_dir):
     checkout_dir = path.join(suite_dir, LINUX_DIR)
-    return path.exists(path.join(checkout_dir, 'vmlinux'))
+    return path.isdir(checkout_dir)
 
 
 def download_subtitles_en(suite_dir):

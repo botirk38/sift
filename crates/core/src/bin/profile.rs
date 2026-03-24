@@ -47,7 +47,7 @@
 use std::fs;
 use std::hint::black_box;
 use std::io::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use sift_core::{
@@ -175,7 +175,27 @@ fn materialize_build_corpus(root: &Path, kind: &CorpusKind) {
     }
 }
 
+fn external_corpus_paths() -> Option<(PathBuf, PathBuf)> {
+    let corpus = std::env::var_os("SIFT_PROFILE_CORPUS").map(PathBuf::from)?;
+    let index = std::env::var_os("SIFT_PROFILE_INDEX").map_or_else(
+        || PathBuf::from(format!("{}.sift", corpus.display())),
+        PathBuf::from,
+    );
+    Some((corpus, index))
+}
+
 fn open_corpus_index(kind: &CorpusKind) -> (tempfile::TempDir, Index) {
+    if let Some((corpus, index_dir)) = external_corpus_paths() {
+        let t_open = Instant::now();
+        let index = Index::open(&index_dir).unwrap();
+        let open_ms = t_open.elapsed().as_secs_f64() * 1e3;
+        println!("metric\tcorpus_kind\texternal");
+        println!("metric\tcorpus_root\t{}", corpus.display());
+        println!("metric\tindex_root\t{}", index_dir.display());
+        println!("metric\tphase_open_index_ms\t{open_ms:.3}");
+        return (tempfile::tempdir().unwrap(), index);
+    }
+
     let tmp = tempfile::tempdir().unwrap();
     let corpus = tmp.path().join("corpus");
 

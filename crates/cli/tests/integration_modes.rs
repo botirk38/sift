@@ -2,7 +2,7 @@ mod common;
 
 use std::fs;
 
-use common::{assert_success, build_index, command, fresh_dir, normalized_stdout};
+use common::{abs, abs_match, assert_success, build_index, command, fresh_dir, normalized_stdout};
 
 #[test]
 fn files_without_match_only_non_matching_paths() {
@@ -27,7 +27,7 @@ fn files_without_match_only_non_matching_paths() {
         .lines()
         .map(str::to_string)
         .collect();
-    assert_eq!(lines, ["b.txt"]);
+    assert_eq!(lines, [abs(&root, "b.txt")]);
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn files_without_match_when_no_file_matches_prints_all_files() {
         .lines()
         .map(str::to_string)
         .collect();
-    assert_eq!(lines, ["a.txt", "b.txt"]);
+    assert_eq!(lines, [abs(&root, "a.txt"), abs(&root, "b.txt")]);
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn files_with_matches_takes_precedence_over_files_without_match() {
         .lines()
         .map(str::to_string)
         .collect();
-    assert_eq!(lines, ["a.txt", "b.txt"]);
+    assert_eq!(lines, [abs(&root, "a.txt"), abs(&root, "b.txt")]);
 }
 
 #[test]
@@ -122,8 +122,8 @@ fn count_shows_zero_for_non_matching_files() {
     assert_success(&out);
 
     let stdout = normalized_stdout(&out);
-    assert!(stdout.contains("a.txt:2"));
-    assert!(stdout.contains("b.txt:0"));
+    assert!(stdout.contains(&abs_match(&root, "a.txt", "2")));
+    assert!(stdout.contains(&abs_match(&root, "b.txt", "0")));
 }
 
 #[test]
@@ -149,7 +149,13 @@ fn count_takes_precedence_over_files_without_match() {
         .lines()
         .map(str::to_string)
         .collect();
-    assert_eq!(lines, ["a.txt:1", "b.txt:1"]);
+    assert_eq!(
+        lines,
+        [
+            abs_match(&root, "a.txt", "1"),
+            abs_match(&root, "b.txt", "1")
+        ]
+    );
 }
 
 #[test]
@@ -312,8 +318,8 @@ fn multiple_patterns_combined_with_or() {
     assert_success(&out);
 
     let stdout = normalized_stdout(&out);
-    assert!(stdout.contains("a.txt:alpha"));
-    assert!(stdout.contains("b.txt:beta"));
+    assert!(stdout.contains(&abs_match(&root, "a.txt", "alpha")));
+    assert!(stdout.contains(&abs_match(&root, "b.txt", "beta")));
     assert!(!stdout.contains("c.txt"));
 }
 
@@ -354,7 +360,7 @@ fn single_file_match() {
     assert_success(&out);
 
     let stdout = normalized_stdout(&out);
-    assert!(stdout.contains("only.txt:unique content"));
+    assert!(stdout.contains(&abs_match(&root, "only.txt", "unique content")));
 }
 
 #[test]
@@ -457,7 +463,7 @@ fn line_regexp_exact_line_match() {
     assert_success(&out);
 
     let stdout = normalized_stdout(&out);
-    assert!(stdout.contains("t.txt:exact"));
+    assert!(stdout.contains(&abs_match(&root, "t.txt", "exact")));
     assert!(
         stdout.lines().count() == 1,
         "only exact line should match: {stdout}"
@@ -640,7 +646,11 @@ fn output_order_deterministic() {
         .collect();
     assert_eq!(
         paths,
-        ["a/z.txt", "b/m.txt", "c/a.txt"],
+        [
+            abs(&root, "a/z.txt"),
+            abs(&root, "b/m.txt"),
+            abs(&root, "c/a.txt")
+        ],
         "output should be sorted: {paths:?}"
     );
 }

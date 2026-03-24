@@ -2,7 +2,7 @@ mod common;
 
 use std::fs;
 
-use common::{assert_success, build_index, command, fresh_dir, normalized_stdout};
+use common::{abs, abs_match, assert_success, build_index, command, fresh_dir, normalized_stdout};
 
 #[test]
 fn quiet_exit_codes() {
@@ -53,7 +53,7 @@ fn files_with_matches_print_each_path_once() {
         .lines()
         .map(str::to_string)
         .collect();
-    assert_eq!(lines, ["a.txt", "b.txt"]);
+    assert_eq!(lines, [abs(&root, "a.txt"), abs(&root, "b.txt")]);
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn files_without_match_print_only_non_matching_paths() {
         .lines()
         .map(str::to_string)
         .collect();
-    assert_eq!(lines, ["b.txt"]);
+    assert_eq!(lines, [abs(&root, "b.txt")]);
 }
 
 #[test]
@@ -104,7 +104,13 @@ fn count_prints_match_totals_per_file() {
         .lines()
         .map(str::to_string)
         .collect();
-    assert_eq!(lines, ["a.txt:2", "b.txt:0"]);
+    assert_eq!(
+        lines,
+        [
+            abs_match(&root, "a.txt", "2"),
+            abs_match(&root, "b.txt", "0")
+        ]
+    );
 }
 
 #[test]

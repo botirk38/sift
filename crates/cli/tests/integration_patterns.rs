@@ -2,7 +2,7 @@ mod common;
 
 use std::fs;
 
-use common::{assert_success, build_index, command, fresh_dir, normalized_stdout};
+use common::{abs_match, assert_success, build_index, command, fresh_dir, normalized_stdout};
 
 #[test]
 fn pattern_file_roundtrip() {
@@ -48,8 +48,8 @@ fn repeated_e_patterns_are_or_combined() {
     assert_success(&out);
 
     let stdout = normalized_stdout(&out);
-    assert!(stdout.contains("a.txt:alpha"));
-    assert!(stdout.contains("b.txt:beta"));
+    assert!(stdout.contains(&abs_match(&root, "a.txt", "alpha")));
+    assert!(stdout.contains(&abs_match(&root, "b.txt", "beta")));
 }
 
 #[test]
@@ -74,6 +74,6 @@ fn pattern_file_and_positional_pattern_are_combined() {
     assert_success(&out);
 
     let stdout = normalized_stdout(&out);
-    assert!(stdout.contains("a.txt:alpha"));
-    assert!(stdout.contains("b.txt:beta"));
+    assert!(stdout.contains(&abs_match(&root, "a.txt", "alpha")));
+    assert!(stdout.contains(&abs_match(&root, "b.txt", "beta")));
 }

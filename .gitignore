@@ -6,5 +6,9 @@
 /cargo-flamegraph.trace
 .cursor/
 .sift/
+benchsuite/linux/
+benchsuite/*.sift/
+ripgrep/
 *.data
 *.data.*
+__pycache__/

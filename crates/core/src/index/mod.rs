@@ -5,6 +5,8 @@ pub mod files;
 pub mod trigram;
 
 use std::cmp::Ordering;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use std::path::{Path, PathBuf};
 
 pub use builder::build_index_tables;
@@ -232,20 +234,20 @@ impl Index {
             if arm.is_empty() {
                 continue;
             }
-            let slices: Vec<&[u8]> = arm
+            let mut slices: Vec<&[u8]> = arm
                 .iter()
                 .map(|tri| self.posting_bytes_slice(*tri))
                 .collect();
             if slices.iter().any(|s| s.is_empty()) {
                 continue;
             }
+            slices.sort_unstable_by_key(|slice| slice.len());
             let ids = intersect_sorted_posting_byte_slices(&slices);
             if !ids.is_empty() {
                 id_lists.push(ids);
             }
         }
-        let refs: Vec<&[u32]> = id_lists.iter().map(Vec::as_slice).collect();
-        union_sorted_runs(&refs)
+        merge_sorted_runs(id_lists)
     }
 
     #[must_use]
@@ -346,18 +348,38 @@ fn u32_vec_from_le_bytes(slice: &[u8]) -> Vec<u32> {
         .collect()
 }
 
-fn union_sorted_runs(lists: &[&[u32]]) -> Vec<u32> {
+fn merge_sorted_runs(lists: Vec<Vec<u32>>) -> Vec<u32> {
     if lists.is_empty() {
         return Vec::new();
     }
-    let total: usize = lists.iter().map(|s| s.len()).sum();
-    let mut all: Vec<u32> = Vec::with_capacity(total);
-    for s in lists {
-        all.extend_from_slice(s);
+    if lists.len() == 1 {
+        return lists.into_iter().next().unwrap_or_default();
     }
-    all.sort_unstable();
-    all.dedup();
-    all
+
+    let total: usize = lists.iter().map(Vec::len).sum();
+    let mut heap: BinaryHeap<Reverse<(u32, usize)>> = BinaryHeap::with_capacity(lists.len());
+    let mut positions = vec![0usize; lists.len()];
+
+    for (list_idx, list) in lists.iter().enumerate() {
+        if let Some(&first) = list.first() {
+            heap.push(Reverse((first, list_idx)));
+        }
+    }
+
+    let mut out = Vec::with_capacity(total);
+    let mut last = None;
+    while let Some(Reverse((value, list_idx))) = heap.pop() {
+        if last != Some(value) {
+            out.push(value);
+            last = Some(value);
+        }
+
+        positions[list_idx] += 1;
+        if let Some(&next) = lists[list_idx].get(positions[list_idx]) {
+            heap.push(Reverse((next, list_idx)));
+        }
+    }
+    out
 }
 
 pub struct IndexBuilder<'a> {
@@ -417,5 +439,30 @@ impl<'a> IndexBuilder<'a> {
             index.save_to_dir(&dir)?;
         }
         Ok(index)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{intersect_sorted_posting_byte_slices, merge_sorted_runs};
+
+    fn bytes(ids: &[u32]) -> Vec<u8> {
+        ids.iter().flat_map(|id| id.to_le_bytes()).collect()
+    }
+
+    #[test]
+    fn merge_sorted_runs_preserves_order_and_uniqueness() {
+        let merged = merge_sorted_runs(vec![vec![1, 3, 7], vec![1, 2, 7, 9], vec![4, 7, 8]]);
+        assert_eq!(merged, vec![1, 2, 3, 4, 7, 8, 9]);
+    }
+
+    #[test]
+    fn intersect_sorted_posting_byte_slices_handles_smallest_first_order() {
+        let a = bytes(&[1, 3, 5, 7, 9]);
+        let b = bytes(&[3, 7]);
+        let c = bytes(&[0, 3, 4, 7, 8]);
+        let slices = vec![a.as_slice(), b.as_slice(), c.as_slice()];
+        let ids = intersect_sorted_posting_byte_slices(&slices);
+        assert_eq!(ids, vec![3, 7]);
     }
 }

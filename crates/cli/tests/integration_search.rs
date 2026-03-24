@@ -3,7 +3,7 @@ mod common;
 use std::fs;
 use std::path::Path;
 
-use common::{assert_success, build_index, command, fresh_dir, normalized_stdout};
+use common::{abs_match, assert_success, build_index, command, fresh_dir, normalized_stdout};
 
 #[test]
 fn build_then_search_finds_line() {
@@ -24,7 +24,7 @@ fn build_then_search_finds_line() {
 
     let stdout = normalized_stdout(&out);
     assert!(
-        stdout.contains("src/lib.rs:") && stdout.contains("let y = 2;"),
+        stdout.contains(&abs_match(&root, "src/lib.rs", "")) && stdout.contains("let y = 2;"),
         "unexpected stdout: {stdout}"
     );
 }
@@ -65,7 +65,7 @@ fn fixed_string_ignore_case_finds_match() {
     assert_success(&out);
 
     let stdout = normalized_stdout(&out);
-    assert!(stdout.contains("t.txt:") && stdout.contains("hello world"));
+    assert!(stdout.contains(&abs_match(&root, "t.txt", "")) && stdout.contains("hello world"));
 }
 
 #[test]
@@ -112,7 +112,7 @@ fn word_regexp_matches_whole_words_only() {
     assert_success(&out);
 
     let stdout = normalized_stdout(&out);
-    assert!(stdout.contains("t.txt:cat"));
+    assert!(stdout.contains(&abs_match(&root, "t.txt", "cat")));
     assert!(!stdout.contains("scatter"), "unexpected stdout: {stdout}");
     assert!(!stdout.contains("catnip"), "unexpected stdout: {stdout}");
 }
@@ -135,7 +135,7 @@ fn line_regexp_matches_whole_lines_only() {
     assert_success(&out);
 
     let stdout = normalized_stdout(&out);
-    assert!(stdout.contains("t.txt:cat"));
+    assert!(stdout.contains(&abs_match(&root, "t.txt", "cat")));
     assert!(!stdout.contains("cat dog"), "unexpected stdout: {stdout}");
     assert!(!stdout.contains("dog cat"), "unexpected stdout: {stdout}");
 }
@@ -170,7 +170,7 @@ fn search_literal_index_without_subcommand() {
     assert_success(&out);
 
     let stdout = normalized_stdout(&out);
-    assert!(stdout.contains("t.txt:") && stdout.contains("index"));
+    assert!(stdout.contains(&abs_match(&root, "t.txt", "")) && stdout.contains("index"));
 }
 
 #[test]
@@ -192,7 +192,7 @@ fn build_single_file_then_search_finds_match() {
 
     let stdout = normalized_stdout(&out);
     assert!(
-        stdout.contains("one.txt:beta needle"),
+        stdout.contains(&abs_match(&root, "one.txt", "beta needle")),
         "unexpected stdout: {stdout}"
     );
 }
@@ -217,7 +217,7 @@ fn build_single_file_then_search_path_scope_accepts_that_file() {
 
     let stdout = normalized_stdout(&out);
     assert!(
-        stdout.contains("one.txt:needle here"),
+        stdout.contains(&abs_match(&root, "one.txt", "needle here")),
         "unexpected stdout: {stdout}"
     );
 }
@@ -245,7 +245,7 @@ fn binary_files_are_skipped_by_default() {
 
     let stdout = normalized_stdout(&out);
     assert!(
-        stdout.contains("text.txt:alpha βeta"),
+        stdout.contains(&abs_match(&root, "text.txt", "alpha βeta")),
         "unexpected stdout: {stdout}"
     );
     assert!(
@@ -280,5 +280,5 @@ fn symlinked_files_are_not_searched_by_default() {
         .lines()
         .map(str::to_string)
         .collect();
-    assert_eq!(lines, ["real/target.txt:needle here"]);
+    assert_eq!(lines, [abs_match(&root, "real/target.txt", "needle here")]);
 }

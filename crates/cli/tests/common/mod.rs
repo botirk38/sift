@@ -54,3 +54,13 @@ pub fn stdout(output: &Output) -> String {
 pub fn normalized_stdout(output: &Output) -> String {
     stdout(output).replace("\r\n", "\n").replace('\\', "/")
 }
+
+#[allow(dead_code)]
+pub fn abs(root: &Path, rel: &str) -> String {
+    root.join(rel).display().to_string().replace('\\', "/")
+}
+
+#[allow(dead_code)]
+pub fn abs_match(root: &Path, rel: &str, text: &str) -> String {
+    format!("{}:{text}", abs(root, rel))
+}

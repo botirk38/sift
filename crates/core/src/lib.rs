@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn explain_returns_indexed_plan_for_literal_prefix() {
-        let tmp = std::env::temp_dir().join(format!("sift-explain-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("sift-explain-indexed-{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
         fs::write(tmp.join("a.txt"), "alpha beta\ngamma delta\n").unwrap();
@@ -136,7 +136,8 @@ mod tests {
 
     #[test]
     fn explain_returns_full_scan_for_true_no_literal() {
-        let tmp = std::env::temp_dir().join(format!("sift-explain-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("sift-explain-fullscan-{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
         fs::write(tmp.join("a.txt"), "alpha beta\ngamma delta\n").unwrap();
