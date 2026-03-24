@@ -13,7 +13,10 @@ pub use storage::{lexicon, postings};
 pub use verify::{compile_pattern, compile_search_pattern};
 
 pub use planner::TrigramPlan;
-pub use search::{walk_file_paths, CompiledSearch, Match, SearchMatchFlags, SearchOptions};
+pub use search::{
+    walk_file_paths, CompiledSearch, Match, SearchMatchFlags, SearchMode, SearchOptions,
+    SearchOutput,
+};
 
 pub use ignore::{Walk, WalkBuilder};
 
@@ -76,7 +79,7 @@ mod tests {
         assert!(index.file_count() > 0);
         let pat = vec![r"let\s+x".to_string()];
         let q = CompiledSearch::new(&pat, SearchOptions::default()).unwrap();
-        let hits = q.search_index(&index).unwrap();
+        let hits = q.collect_index_matches(&index).unwrap();
         assert_eq!(hits.len(), 1);
         assert!(hits[0].file.ends_with("src/lib.rs"));
         assert_eq!(hits[0].line, 2);
@@ -137,8 +140,8 @@ mod tests {
         let pat = vec!["beta".to_string()];
         let opts = SearchOptions::default();
         let q = CompiledSearch::new(&pat, opts).unwrap();
-        let naive = q.search_walk(&tmp, None).unwrap();
-        let indexed = q.search_index(&index).unwrap();
+        let naive = q.collect_walk_matches(&tmp).unwrap();
+        let indexed = q.collect_index_matches(&index).unwrap();
         assert_eq!(indexed, naive);
     }
 
@@ -169,7 +172,7 @@ mod tests {
         let pat = vec!["needle".to_string()];
         let opts = SearchOptions::default();
         let q = CompiledSearch::new(&pat, opts).unwrap();
-        let hits = q.search_index(&index).unwrap();
+        let hits = q.collect_index_matches(&index).unwrap();
         assert_eq!(hits.len(), n_files);
     }
 
@@ -191,8 +194,8 @@ mod tests {
         let pat = vec![".*".to_string()];
         let opts = SearchOptions::default();
         let q = CompiledSearch::new(&pat, opts).unwrap();
-        let mut from_index = q.search_index(&index).unwrap();
-        let mut from_walk = q.search_walk(&tmp, None).unwrap();
+        let mut from_index = q.collect_index_matches(&index).unwrap();
+        let mut from_walk = q.collect_walk_matches(&tmp).unwrap();
         from_index.sort_by(|a, b| (&a.file, a.line, &a.text).cmp(&(&b.file, b.line, &b.text)));
         from_walk.sort_by(|a, b| (&a.file, a.line, &a.text).cmp(&(&b.file, b.line, &b.text)));
         assert_eq!(from_index, from_walk);

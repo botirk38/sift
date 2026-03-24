@@ -1,15 +1,11 @@
-//! Thin CLI over `sift-core` — ripgrep-shaped invocation: `PATTERN [PATH...]`, plus `sift build`.
-//!
-//! Patterns use the Rust `regex` dialect (ERE-like), except `-F` (fixed string). See `--help`.
+//! Thin CLI over `sift-core`.
 
-use std::collections::{HashMap, HashSet};
-use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 use sift_core::{
-    walk_file_paths, CompiledSearch, Index, IndexBuilder, Match, SearchMatchFlags, SearchOptions,
+    CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchMode, SearchOptions, SearchOutput,
 };
 
 #[derive(Parser)]
@@ -17,8 +13,7 @@ use sift_core::{
     name = "sift",
     version,
     about = "Search the indexed corpus (ripgrep-like: PATTERN [PATH...]). Uses Rust regex unless -F. \
-             Unlike ripgrep: search needs a prior `sift build` (or same workflow); the `build` \
-             subcommand updates the on-disk index. Literal `build` as a pattern: use -e build or -- build."
+             Unlike ripgrep: search needs a prior `sift build`; the `build` subcommand updates the on-disk index."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -44,19 +39,14 @@ struct Cli {
 
 #[derive(Args)]
 struct PatternArgs {
-    /// Use PATTERN for matching (repeatable; OR like grep).
     #[arg(short = 'e', long = "regexp", value_name = "PATTERN")]
     regexp: Vec<String>,
-
-    /// Read patterns from file (one per line; `#` starts a comment).
     #[arg(short = 'f', long = "file", value_name = "FILE")]
     pattern_file: Option<PathBuf>,
-
     #[arg(value_name = "PATTERN")]
     pattern: Option<String>,
 }
 
-/// Optional path roots to search (ripgrep-style); relative to current dir, must lie under the corpus.
 #[derive(Args)]
 struct SearchScope {
     #[arg(value_name = "PATH", num_args = 0..)]
@@ -65,98 +55,67 @@ struct SearchScope {
 
 #[derive(Args)]
 struct RegexFlagsA {
-    #[arg(short = 'i', long, help = "Ignore case")]
+    #[arg(short = 'i', long)]
     ignore_case: bool,
-
-    #[arg(short = 'v', long, help = "Select non-matching lines")]
+    #[arg(short = 'v', long)]
     invert_match: bool,
-
-    #[arg(short = 'w', long, help = "Match whole words")]
+    #[arg(short = 'w', long)]
     word_regexp: bool,
 }
 
 #[derive(Args)]
 struct RegexFlagsB {
-    #[arg(short = 'x', long, help = "Match whole lines")]
+    #[arg(short = 'x', long)]
     line_regexp: bool,
-
-    #[arg(short = 'F', long = "fixed-strings", help = "Fixed strings, not regex")]
+    #[arg(short = 'F', long = "fixed-strings")]
     fixed_strings: bool,
 }
 
 #[derive(Args)]
 struct OutputFlagsA {
-    #[arg(short = 'n', long = "line-number", help = "Print line numbers")]
+    #[arg(short = 'n', long = "line-number")]
     line_number: bool,
-
-    #[arg(short = 'c', long = "count", help = "Print match counts per file")]
+    #[arg(short = 'c', long = "count")]
     count: bool,
-
-    #[arg(
-        short = 'l',
-        long = "files-with-matches",
-        help = "Only print filenames with a match"
-    )]
+    #[arg(short = 'l', long = "files-with-matches")]
     files_with_matches: bool,
 }
 
 #[derive(Args)]
 struct OutputFlagsB {
-    #[arg(
-        short = 'L',
-        long = "files-without-match",
-        help = "Only print filenames with no match"
-    )]
+    #[arg(short = 'L', long = "files-without-match")]
     files_without_match: bool,
-
-    #[arg(
-        short = 'o',
-        long = "only-matching",
-        help = "Only print matched parts of a line"
-    )]
+    #[arg(short = 'o', long = "only-matching")]
     only_matching: bool,
-
-    #[arg(
-        short = 'q',
-        long = "quiet",
-        help = "Quiet; exit 0 if any match, 1 otherwise"
-    )]
+    #[arg(short = 'q', long = "quiet")]
     quiet: bool,
 }
 
 #[derive(Args)]
 struct OutputFlagsC {
-    /// Suppress file names (grep `-h`; here `--no-filename` because `-h` is reserved for help).
     #[arg(long = "no-filename")]
     no_filename: bool,
 }
 
 #[derive(Args)]
 struct PathArgs {
-    #[arg(
-        short = 'm',
-        long = "max-count",
-        value_name = "NUM",
-        help = "Stop after NUM matches total"
-    )]
+    #[arg(short = 'm', long = "max-count", value_name = "NUM")]
     max_count: Option<usize>,
-
-    #[arg(long, default_value = ".index", help = "Index directory")]
+    #[arg(long, default_value = ".index")]
     index: PathBuf,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Build or refresh the trigram index for a corpus root (writes `--index` dir)
     Build {
-        #[arg(default_value = ".", help = "Corpus root to index")]
+        #[arg(default_value = ".")]
         path: PathBuf,
     },
 }
 
 fn resolve_patterns(
     regexp: &[String],
-    pattern_file: Option<&std::path::Path>,
+    pattern_file: Option<&Path>,
     positional: Option<&str>,
 ) -> anyhow::Result<Vec<String>> {
     let mut v = Vec::new();
@@ -180,7 +139,6 @@ fn resolve_patterns(
     Ok(v)
 }
 
-/// Corpus-relative directory prefixes; empty means entire corpus.
 fn corpus_path_prefixes(
     index_root: &Path,
     cwd: &Path,
@@ -207,91 +165,13 @@ fn corpus_path_prefixes(
                 index_root.display()
             );
         }
-        let rel = abs
-            .strip_prefix(&index_root)
-            .expect("prefix checked")
-            .to_path_buf();
-        out.push(rel);
+        out.push(
+            abs.strip_prefix(&index_root)
+                .expect("prefix checked")
+                .to_path_buf(),
+        );
     }
     Ok(out)
-}
-
-fn path_in_scope(rel: &Path, prefixes: &[PathBuf]) -> bool {
-    if prefixes.is_empty() {
-        return true;
-    }
-    prefixes
-        .iter()
-        .any(|pre| rel.starts_with(pre) || rel.as_os_str() == pre.as_os_str())
-}
-
-fn filter_matches(hits: Vec<Match>, prefixes: &[PathBuf]) -> Vec<Match> {
-    if prefixes.is_empty() {
-        return hits;
-    }
-    hits.into_iter()
-        .filter(|m| path_in_scope(&m.file, prefixes))
-        .collect()
-}
-
-fn filter_path_set(set: HashSet<PathBuf>, prefixes: &[PathBuf]) -> HashSet<PathBuf> {
-    if prefixes.is_empty() {
-        return set;
-    }
-    set.into_iter()
-        .filter(|p| path_in_scope(p, prefixes))
-        .collect()
-}
-
-fn count_lines_per_file(matches: &[Match], only_matching: bool) -> HashMap<PathBuf, usize> {
-    if !only_matching {
-        let mut m = HashMap::new();
-        for hit in matches {
-            *m.entry(hit.file.clone()).or_insert(0) += 1;
-        }
-        return m;
-    }
-    let mut seen: HashSet<(PathBuf, usize)> = HashSet::new();
-    let mut m = HashMap::new();
-    for hit in matches {
-        if seen.insert((hit.file.clone(), hit.line)) {
-            *m.entry(hit.file.clone()).or_insert(0) += 1;
-        }
-    }
-    m
-}
-
-fn trim_line_ending(text: &str) -> &str {
-    text.trim_end_matches(['\r', '\n'])
-}
-
-fn relativize_match_paths(hits: Vec<Match>, root: &Path) -> Vec<Match> {
-    hits.into_iter()
-        .map(|mut m| {
-            if let Ok(rel) = m.file.strip_prefix(root) {
-                m.file = rel.to_path_buf();
-            }
-            m
-        })
-        .collect()
-}
-
-fn print_match<W: Write>(
-    w: &mut W,
-    m: &Match,
-    show_path: bool,
-    line_number: bool,
-) -> io::Result<()> {
-    if show_path {
-        if line_number {
-            write!(w, "{}:{}:", m.file.display(), m.line)?;
-        } else {
-            write!(w, "{}:", m.file.display())?;
-        }
-    } else if line_number {
-        write!(w, "{}:", m.line)?;
-    }
-    writeln!(w, "{}", trim_line_ending(&m.text))
 }
 
 fn search_options(cli: &Cli) -> SearchOptions {
@@ -314,90 +194,47 @@ fn search_options(cli: &Cli) -> SearchOptions {
     if cli.out2.only_matching && !cli.regex1.invert_match {
         flags |= SearchMatchFlags::ONLY_MATCHING;
     }
-
     SearchOptions {
         flags,
         max_results: cli.paths.max_count,
     }
 }
 
-/// `true` if grep should exit 0 (something matched / output produced where relevant).
+const fn search_mode(cli: &Cli) -> SearchMode {
+    if cli.out2.only_matching && !cli.regex1.invert_match {
+        SearchMode::OnlyMatching
+    } else if cli.out1.count {
+        SearchMode::Count
+    } else if cli.out1.files_with_matches {
+        SearchMode::FilesWithMatches
+    } else if cli.out2.files_without_match {
+        SearchMode::FilesWithoutMatch
+    } else if cli.out2.quiet {
+        SearchMode::Quiet
+    } else {
+        SearchMode::Standard
+    }
+}
+
 fn run_search(cli: &Cli) -> anyhow::Result<bool> {
     let patterns = resolve_patterns(
         &cli.patterns.regexp,
         cli.patterns.pattern_file.as_deref(),
         cli.patterns.pattern.as_deref(),
     )?;
-
     let opts = search_options(cli);
-
+    let query = CompiledSearch::new(&patterns, opts).map_err(|e| anyhow::anyhow!("{e}"))?;
     let index = Index::open(&cli.paths.index)?;
     let cwd = std::env::current_dir()?;
     let prefixes = corpus_path_prefixes(&index.root, &cwd, &cli.search_scope.paths)?;
-
-    let query = CompiledSearch::new(&patterns, opts).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let mut hits = query.search_index(&index)?;
-    hits = relativize_match_paths(hits, &index.root);
-    hits = filter_matches(hits, &prefixes);
-
-    let stdout = io::stdout();
-    let mut out = BufWriter::new(stdout.lock());
-
-    let has_match = !hits.is_empty();
-
-    if cli.out2.quiet {
-        return Ok(has_match);
-    }
-
-    if cli.out1.files_with_matches {
-        let mut seen = HashSet::new();
-        for m in &hits {
-            if seen.insert(&m.file) {
-                writeln!(out, "{}", m.file.display())?;
-            }
-        }
-        out.flush()?;
-        return Ok(has_match);
-    }
-
-    if cli.out2.files_without_match {
-        let all = walk_file_paths(&index.root)?;
-        let all = filter_path_set(all, &prefixes);
-        let mut files_with_hits = HashSet::new();
-        for m in &hits {
-            files_with_hits.insert(m.file.clone());
-        }
-        let mut rest: Vec<_> = all.difference(&files_with_hits).cloned().collect();
-        rest.sort();
-        for p in &rest {
-            writeln!(out, "{}", p.display())?;
-        }
-        out.flush()?;
-        return Ok(!rest.is_empty());
-    }
-
-    if cli.out1.count {
-        let counts = count_lines_per_file(&hits, cli.out2.only_matching);
-        let all = walk_file_paths(&index.root)?;
-        let all = filter_path_set(all, &prefixes);
-        let mut paths: Vec<_> = all.into_iter().collect();
-        paths.sort();
-        for p in paths {
-            let n = counts.get(&p).copied().unwrap_or(0);
-            writeln!(out, "{}:{}", p.display(), n)?;
-        }
-        out.flush()?;
-        return Ok(true);
-    }
-
-    let show_path = !cli.out3.no_filename;
-
-    for m in &hits {
-        print_match(&mut out, m, show_path, cli.out1.line_number)?;
-    }
-    out.flush()?;
-
-    Ok(has_match)
+    let output = SearchOutput {
+        mode: search_mode(cli),
+        with_filename: !cli.out3.no_filename,
+        line_number: cli.out1.line_number,
+    };
+    query
+        .run_index(&index, &prefixes, output)
+        .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 fn main() -> ExitCode {
@@ -424,6 +261,11 @@ fn main() -> ExitCode {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::from(1),
         Err(e) => {
+            if let Some(ioe) = e.downcast_ref::<std::io::Error>() {
+                if ioe.kind() == std::io::ErrorKind::BrokenPipe {
+                    return ExitCode::SUCCESS;
+                }
+            }
             eprintln!("sift: {e}");
             ExitCode::from(2)
         }

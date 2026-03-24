@@ -1,69 +1,21 @@
-//! Streaming search powered by `grep-searcher`.
-//!
-//! Scan pipeline: `grep-searcher` → `grep-regex` → user-provided `Sink`.
+//! Indexed search execution built on ripgrep's public grep crates.
 
-use std::{
-    collections::HashSet,
-    fs::File,
-    io,
-    path::{Path, PathBuf},
-    sync::OnceLock,
-};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use grep_matcher::{LineTerminator, Matcher};
-use grep_regex::RegexMatcherBuilder;
-use grep_searcher::{
-    Searcher, SearcherBuilder, Sink, SinkContext, SinkError, SinkFinish, SinkMatch,
-};
+use grep_matcher::LineTerminator;
+#[cfg(test)]
+use grep_matcher::Matcher;
+use grep_printer::{StandardBuilder, SummaryBuilder, SummaryKind};
+use grep_regex::{RegexMatcher, RegexMatcherBuilder};
+use grep_searcher::SearcherBuilder;
 use rayon::prelude::*;
+use termcolor::{BufferWriter, ColorChoice};
 
 use crate::planner::TrigramPlan;
 use crate::verify;
 use crate::Index;
-
-struct SiftSinkError;
-
-impl SinkError for SiftSinkError {
-    fn error_message<T: std::fmt::Display>(_: T) -> Self {
-        Self
-    }
-}
-
-static PARALLEL_MIN_FILES: OnceLock<usize> = OnceLock::new();
-
-#[must_use]
-pub fn parallel_candidate_min_files() -> usize {
-    *PARALLEL_MIN_FILES.get_or_init(|| {
-        let cpus = std::thread::available_parallelism()
-            .map(std::num::NonZeroUsize::get)
-            .unwrap_or(1);
-        let rayon_threads = std::env::var("RAYON_NUM_THREADS")
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok());
-        let effective = rayon_threads
-            .filter(|&n| n > 0)
-            .map_or(cpus, |rt| rt.min(cpus))
-            .max(1);
-        if effective <= 1 {
-            usize::MAX
-        } else {
-            effective
-        }
-    })
-}
-
-#[cfg(test)]
-fn parallel_scan_min_files_inner(cpus: usize, rayon_threads: Option<usize>) -> usize {
-    let effective = rayon_threads
-        .filter(|&n| n > 0)
-        .map_or(cpus, |rt| rt.min(cpus))
-        .max(1);
-    if effective <= 1 {
-        usize::MAX
-    } else {
-        effective
-    }
-}
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -88,26 +40,32 @@ impl SearchOptions {
     pub const fn case_insensitive(self) -> bool {
         self.flags.contains(SearchMatchFlags::CASE_INSENSITIVE)
     }
+
     #[must_use]
     pub const fn invert_match(self) -> bool {
         self.flags.contains(SearchMatchFlags::INVERT_MATCH)
     }
+
     #[must_use]
     pub const fn fixed_strings(self) -> bool {
         self.flags.contains(SearchMatchFlags::FIXED_STRINGS)
     }
+
     #[must_use]
     pub const fn word_regexp(self) -> bool {
         self.flags.contains(SearchMatchFlags::WORD_REGEXP)
     }
+
     #[must_use]
     pub const fn line_regexp(self) -> bool {
         self.flags.contains(SearchMatchFlags::LINE_REGEXP)
     }
+
     #[must_use]
     pub const fn only_matching(self) -> bool {
         self.flags.contains(SearchMatchFlags::ONLY_MATCHING)
     }
+
     #[must_use]
     pub const fn precludes_trigram_index(self) -> bool {
         self.case_insensitive() || self.invert_match() || self.word_regexp() || self.line_regexp()
@@ -121,11 +79,32 @@ pub struct Match {
     pub text: String,
 }
 
-#[derive(Debug, Default)]
-pub struct Outcome {
-    pub has_match: bool,
-    pub files_with_match: Vec<PathBuf>,
-    pub counts: Vec<(PathBuf, usize)>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SearchMode {
+    #[default]
+    Standard,
+    OnlyMatching,
+    Count,
+    FilesWithMatches,
+    FilesWithoutMatch,
+    Quiet,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchOutput {
+    pub mode: SearchMode,
+    pub with_filename: bool,
+    pub line_number: bool,
+}
+
+impl Default for SearchOutput {
+    fn default() -> Self {
+        Self {
+            mode: SearchMode::Standard,
+            with_filename: true,
+            line_number: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -135,13 +114,19 @@ pub struct CompiledSearch {
     plan: TrigramPlan,
 }
 
+#[derive(Debug, Clone)]
+struct Candidate {
+    actual: PathBuf,
+    display: PathBuf,
+}
+
 impl CompiledSearch {
-    /// Create a new compiled search from patterns and options.
+    /// Create a compiled search from patterns and options.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::EmptyPatterns`] if patterns is empty.
-    /// Returns [`Error::RegexBuild`] if the combined regex cannot be built.
+    /// Returns [`crate::Error::EmptyPatterns`] when no patterns are provided,
+    /// or [`crate::Error::RegexBuild`] later when the regex engine rejects the pattern.
     pub fn new(patterns: &[String], opts: SearchOptions) -> crate::Result<Self> {
         if patterns.is_empty() {
             return Err(crate::Error::EmptyPatterns);
@@ -154,7 +139,12 @@ impl CompiledSearch {
         })
     }
 
-    fn build_matcher(&self) -> crate::Result<grep_regex::RegexMatcher> {
+    #[must_use]
+    pub fn patterns(&self) -> &[String] {
+        &self.patterns
+    }
+
+    fn build_matcher(&self) -> crate::Result<RegexMatcher> {
         let branches: Vec<String> = self
             .patterns
             .iter()
@@ -184,330 +174,321 @@ impl CompiledSearch {
             .map_err(|e| crate::Error::RegexBuild(e.to_string()))
     }
 
-    fn build_searcher(&self) -> Searcher {
+    fn build_searcher(
+        &self,
+        line_number: bool,
+        max_matches: Option<usize>,
+    ) -> grep_searcher::Searcher {
         let mut builder = SearcherBuilder::new();
         builder
             .line_terminator(LineTerminator::byte(b'\n'))
             .invert_match(self.opts.invert_match())
-            .line_number(true);
+            .line_number(line_number)
+            .max_matches(max_matches.map(|n| n as u64));
         builder.build()
     }
 
-    /// Search the index, returning all matches.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Io`] on file read errors.
-    /// Returns [`Error::RegexBuild`] if the regex cannot be built.
-    pub fn search_index(&self, index: &Index) -> crate::Result<Vec<Match>> {
-        let candidates: Vec<PathBuf> = match &self.plan {
-            TrigramPlan::FullScan => index.iter_files().map(|p| index.root.join(p)).collect(),
-            TrigramPlan::Narrow { arms } => {
-                let cids = index.candidate_file_ids(arms.as_slice());
-                if cids.is_empty() {
-                    return Ok(Vec::new());
-                }
-                cids.iter()
-                    .filter_map(|&id| index.file_path(id as usize))
-                    .map(|p| index.root.join(p))
-                    .collect()
-            }
-        };
-        self.search_paths(candidates)
+    const fn uses_exhaustive_candidates(mode: SearchMode) -> bool {
+        matches!(mode, SearchMode::Count | SearchMode::FilesWithoutMatch)
     }
 
-    /// Search a directory tree, returning all matches.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Io`] if root cannot be canonicalized or on file read errors.
-    /// Returns [`Error::Ignore`] if directory walking fails.
-    /// Returns [`Error::RegexBuild`] if the regex cannot be built.
-    pub fn search_walk(
+    fn candidate_paths(
         &self,
-        root: &Path,
-        candidates: Option<&[PathBuf]>,
-    ) -> crate::Result<Vec<Match>> {
-        let root = root.canonicalize()?;
-
-        let paths: Vec<PathBuf> = if let Some(set) = candidates {
-            if set.is_empty() {
-                return Ok(Vec::new());
-            }
-            set.iter()
-                .map(|p| {
-                    if p.is_absolute() {
-                        p.clone()
-                    } else {
-                        root.join(p)
-                    }
-                })
-                .collect()
+        index: &Index,
+        prefixes: &[PathBuf],
+        exhaustive: bool,
+    ) -> Vec<Candidate> {
+        let rel_paths: Vec<PathBuf> = if exhaustive {
+            index.iter_files().collect()
         } else {
-            let mut paths = Vec::new();
-            let walker = ignore::WalkBuilder::new(&root).follow_links(false).build();
-            for entry in walker {
-                let entry = entry.map_err(crate::Error::Ignore)?;
-                if entry.path().is_file() {
-                    paths.push(entry.path().to_path_buf());
-                }
+            match &self.plan {
+                TrigramPlan::FullScan => index.iter_files().collect(),
+                TrigramPlan::Narrow { arms } => index
+                    .candidate_file_ids(arms.as_slice())
+                    .into_iter()
+                    .filter_map(|id| index.file_path(id as usize))
+                    .collect(),
             }
-            paths
         };
 
-        self.search_paths(paths)
+        rel_paths
+            .into_iter()
+            .filter(|rel| path_in_scope(rel, prefixes))
+            .map(|display| Candidate {
+                actual: index.root.join(&display),
+                display,
+            })
+            .collect()
     }
 
-    fn search_paths(&self, paths: Vec<PathBuf>) -> crate::Result<Vec<Match>> {
-        let matcher = self.build_matcher()?;
-        let mut searcher = self.build_searcher();
-        let mut results = Vec::new();
-
-        for path in paths {
-            if !path.is_file() {
-                continue;
-            }
-            let Ok(file) = File::open(&path) else {
-                continue;
-            };
-            let mut sink = MatchCollectSink::new(path, matcher.clone());
-            sink.set_only_matching(self.opts.only_matching());
-            if let Err(e) = searcher.search_file(&matcher, &file, &mut sink) {
-                let _ = e;
-            }
-            results.extend(sink.into_matches());
-            if let Some(limit) = self.opts.max_results {
-                if results.len() >= limit {
-                    results.truncate(limit);
-                    break;
-                }
-            }
+    /// Execute a search over an opened index and print results to stdout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the matcher cannot be built.
+    pub fn run_index(
+        &self,
+        index: &Index,
+        prefixes: &[PathBuf],
+        output: SearchOutput,
+    ) -> crate::Result<bool> {
+        let candidates = self.candidate_paths(
+            index,
+            prefixes,
+            Self::uses_exhaustive_candidates(output.mode),
+        );
+        if candidates.is_empty() {
+            return Ok(false);
         }
 
-        Ok(results)
+        let matcher = self.build_matcher()?;
+        let parallel =
+            self.opts.max_results.is_none() && candidates.len() >= parallel_candidate_min_files();
+        match output.mode {
+            SearchMode::Standard | SearchMode::OnlyMatching => {
+                Ok(self.run_standard(&candidates, &matcher, output, parallel))
+            }
+            SearchMode::Count
+            | SearchMode::FilesWithMatches
+            | SearchMode::FilesWithoutMatch
+            | SearchMode::Quiet => Ok(self.run_summary(&candidates, &matcher, output, parallel)),
+        }
     }
 
-    /// Search the index, invoking a callback for each file's outcome.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::RegexBuild`] if the regex cannot be built.
-    pub fn search_index_with<F>(&self, index: &Index, mut f: F) -> crate::Result<()>
-    where
-        F: FnMut(&Outcome) + Send + Sync,
-    {
-        let matcher = self.build_matcher()?;
-        let mut searcher = self.build_searcher();
-
-        let candidates: Vec<PathBuf> = match &self.plan {
-            TrigramPlan::FullScan => index.iter_files().map(|p| index.root.join(p)).collect(),
-            TrigramPlan::Narrow { arms } => {
-                let cids = index.candidate_file_ids(arms.as_slice());
-                if cids.is_empty() {
-                    return Ok(());
-                }
-                cids.iter()
-                    .filter_map(|&id| index.file_path(id as usize))
-                    .map(|p| index.root.join(p))
-                    .collect()
-            }
-        };
-
-        let threshold = parallel_candidate_min_files();
-        let parallel = candidates.len() >= threshold && self.opts.max_results.is_none();
+    fn run_standard(
+        &self,
+        candidates: &[Candidate],
+        matcher: &RegexMatcher,
+        output: SearchOutput,
+        parallel: bool,
+    ) -> bool {
+        let bufwtr = BufferWriter::stdout(ColorChoice::Never);
+        let mut builder = StandardBuilder::new();
+        builder.path(output.with_filename);
+        if matches!(output.mode, SearchMode::OnlyMatching) {
+            builder.only_matching(true);
+        }
 
         if parallel {
+            let any_match = AtomicBool::new(false);
+            let stop = AtomicBool::new(false);
             let chunk_size = (candidates.len()
                 / std::thread::available_parallelism()
                     .map(std::num::NonZeroUsize::get)
                     .unwrap_or(1))
             .max(1);
 
-            let results: Vec<Outcome> = candidates
-                .par_chunks(chunk_size)
-                .filter_map(|chunk| {
-                    let mut local = Outcome::default();
-                    let mut local_searcher = self.build_searcher();
-                    let matcher_clone = matcher.clone();
-                    for path in chunk {
-                        if !path.is_file() {
-                            continue;
-                        }
-                        if let Ok(file) = File::open(path) {
-                            let mut sink = OutcomeSink::new(path.clone());
-                            let _ = local_searcher.search_file(&matcher_clone, &file, &mut sink);
-                            merge_outcome(&mut local, &sink.into_outcome());
+            candidates.par_chunks(chunk_size).for_each(|chunk| {
+                let mut searcher = self.build_searcher(output.line_number, None);
+                let builder = builder.clone();
+                for candidate in chunk {
+                    if stop.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let mut printer = builder.build(bufwtr.buffer());
+                    let mut sink = printer.sink_with_path(matcher.clone(), &candidate.display);
+                    let _ = searcher.search_path(matcher, &candidate.actual, &mut sink);
+                    if sink.has_match() {
+                        any_match.store(true, Ordering::SeqCst);
+                    }
+                    drop(sink);
+                    if let Err(err) = bufwtr.print(printer.get_mut()) {
+                        if err.kind() == std::io::ErrorKind::BrokenPipe {
+                            stop.store(true, Ordering::SeqCst);
+                            break;
                         }
                     }
-                    Some(local)
-                })
-                .collect();
-
-            let mut combined = Outcome::default();
-            for r in results {
-                merge_outcome(&mut combined, &r);
-            }
-            f(&combined);
+                }
+            });
+            any_match.load(Ordering::SeqCst)
         } else {
-            for path in &candidates {
-                if !path.is_file() {
-                    continue;
+            let mut any_match = false;
+            let mut remaining = self.opts.max_results;
+            for candidate in candidates {
+                let mut searcher = self.build_searcher(output.line_number, remaining);
+                let mut printer = builder.build(bufwtr.buffer());
+                let mut sink = printer.sink_with_path(matcher.clone(), &candidate.display);
+                let _ = searcher.search_path(matcher, &candidate.actual, &mut sink);
+                if sink.has_match() {
+                    any_match = true;
                 }
-                if let Ok(file) = File::open(path) {
-                    let mut sink = OutcomeSink::new(path.clone());
-                    let _ = searcher.search_file(&matcher, &file, &mut sink);
-                    let outcome = sink.into_outcome();
-                    f(&outcome);
+                let used = usize::try_from(sink.match_count()).unwrap_or(usize::MAX);
+                drop(sink);
+                if let Err(err) = bufwtr.print(printer.get_mut()) {
+                    if err.kind() == std::io::ErrorKind::BrokenPipe {
+                        break;
+                    }
+                }
+                if let Some(ref mut left) = remaining {
+                    *left = left.saturating_sub(used);
+                    if *left == 0 {
+                        break;
+                    }
                 }
             }
-        }
-
-        Ok(())
-    }
-
-    #[must_use]
-    pub fn patterns(&self) -> &[String] {
-        &self.patterns
-    }
-}
-
-fn merge_outcome(into: &mut Outcome, from: &Outcome) {
-    into.has_match = into.has_match || from.has_match;
-    into.files_with_match
-        .extend_from_slice(&from.files_with_match);
-    into.counts.extend_from_slice(&from.counts);
-}
-
-struct OutcomeSink {
-    path: PathBuf,
-    outcome: Outcome,
-}
-
-impl OutcomeSink {
-    fn new(path: PathBuf) -> Self {
-        Self {
-            path,
-            outcome: Outcome::default(),
+            any_match
         }
     }
 
-    fn into_outcome(self) -> Outcome {
-        self.outcome
-    }
-}
-
-impl Sink for OutcomeSink {
-    type Error = SiftSinkError;
-
-    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, Self::Error> {
-        let line = usize::try_from(mat.line_number().unwrap_or(0)).unwrap_or(0);
-        self.outcome.has_match = true;
-        self.outcome.files_with_match.push(self.path.clone());
-        self.outcome.counts.push((self.path.clone(), line));
-        Ok(true)
-    }
-
-    fn context(&mut self, _: &Searcher, _: &SinkContext<'_>) -> Result<bool, Self::Error> {
-        Ok(true)
-    }
-
-    fn finish(&mut self, _: &Searcher, _: &SinkFinish) -> Result<(), Self::Error> {
-        Ok(())
-    }
-}
-
-struct MatchCollectSink {
-    path: PathBuf,
-    budget: Option<usize>,
-    matches: Vec<Match>,
-    only_matching: bool,
-    matcher: Option<grep_regex::RegexMatcher>,
-}
-
-impl MatchCollectSink {
-    const fn new(path: PathBuf, matcher: grep_regex::RegexMatcher) -> Self {
-        Self {
-            path,
-            budget: None,
-            matches: Vec::new(),
-            only_matching: false,
-            matcher: Some(matcher),
-        }
-    }
-
-    fn into_matches(self) -> Vec<Match> {
-        self.matches
-    }
-
-    fn budget_exhausted(&self) -> bool {
-        self.budget == Some(0)
-    }
-
-    const fn set_only_matching(&mut self, yes: bool) {
-        self.only_matching = yes;
-    }
-}
-
-impl Sink for MatchCollectSink {
-    type Error = io::Error;
-
-    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, Self::Error> {
-        if self.budget_exhausted() {
-            return Ok(false);
+    fn run_summary(
+        &self,
+        candidates: &[Candidate],
+        matcher: &RegexMatcher,
+        output: SearchOutput,
+        parallel: bool,
+    ) -> bool {
+        let bufwtr = BufferWriter::stdout(ColorChoice::Never);
+        let mut builder = SummaryBuilder::new();
+        builder.kind(summary_kind(output.mode));
+        builder.path(output.with_filename);
+        if matches!(output.mode, SearchMode::Count) {
+            builder.exclude_zero(false);
         }
 
-        let line = usize::try_from(mat.line_number().unwrap_or(0)).unwrap_or(0);
-        let line_bytes = mat.bytes();
+        if parallel {
+            let any_match = AtomicBool::new(false);
+            let stop = AtomicBool::new(false);
+            let chunk_size = (candidates.len()
+                / std::thread::available_parallelism()
+                    .map(std::num::NonZeroUsize::get)
+                    .unwrap_or(1))
+            .max(1);
 
-        if self.only_matching {
-            if let Some(matcher) = self.matcher.clone() {
-                let _ = matcher.find_iter(line_bytes, |m| {
-                    if self.budget_exhausted() {
-                        return false;
+            candidates.par_chunks(chunk_size).for_each(|chunk| {
+                let mut searcher = self.build_searcher(false, None);
+                let builder = builder.clone();
+                for candidate in chunk {
+                    if stop.load(Ordering::SeqCst) {
+                        break;
                     }
-                    let text =
-                        String::from_utf8_lossy(&line_bytes[m.start()..m.end()]).into_owned();
-                    self.matches.push(Match {
-                        file: self.path.clone(),
-                        line,
-                        text,
-                    });
-                    if let Some(ref mut b) = self.budget {
-                        *b = b.saturating_sub(1);
+                    let mut printer = builder.build(bufwtr.buffer());
+                    let mut sink = printer.sink_with_path(matcher.clone(), &candidate.display);
+                    let _ = searcher.search_path(matcher, &candidate.actual, &mut sink);
+                    if sink.has_match() {
+                        any_match.store(true, Ordering::SeqCst);
                     }
-                    true
+                    let file_matched = sink.has_match();
+                    drop(sink);
+                    if let Err(err) = bufwtr.print(printer.get_mut()) {
+                        if err.kind() == std::io::ErrorKind::BrokenPipe {
+                            stop.store(true, Ordering::SeqCst);
+                            break;
+                        }
+                    }
+                    if matches!(output.mode, SearchMode::Quiet) && file_matched {
+                        stop.store(true, Ordering::SeqCst);
+                        break;
+                    }
+                }
+            });
+            any_match.load(Ordering::SeqCst)
+        } else {
+            let mut any_match = false;
+            let mut remaining = self.opts.max_results;
+            for candidate in candidates {
+                let mut searcher = self.build_searcher(false, remaining);
+                let mut printer = builder.build(bufwtr.buffer());
+                let mut sink = printer.sink_with_path(matcher.clone(), &candidate.display);
+                let _ = searcher.search_path(matcher, &candidate.actual, &mut sink);
+                let file_matched = sink.has_match();
+                if file_matched {
+                    any_match = true;
+                }
+                let used = usize::from(file_matched);
+                drop(sink);
+                if let Err(err) = bufwtr.print(printer.get_mut()) {
+                    if err.kind() == std::io::ErrorKind::BrokenPipe {
+                        break;
+                    }
+                }
+                if let Some(ref mut left) = remaining {
+                    *left = left.saturating_sub(used);
+                    if *left == 0 {
+                        break;
+                    }
+                }
+                if matches!(output.mode, SearchMode::Quiet) && file_matched {
+                    break;
+                }
+            }
+            any_match
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn collect_index_matches(&self, index: &Index) -> crate::Result<Vec<Match>> {
+        let candidates = self.candidate_paths(index, &[], false);
+        self.collect_candidates(&candidates, false)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn collect_walk_matches(&self, root: &Path) -> crate::Result<Vec<Match>> {
+        let root = root.canonicalize()?;
+        let mut candidates = Vec::new();
+        let walker = ignore::WalkBuilder::new(&root).follow_links(false).build();
+        for entry in walker {
+            let entry = entry.map_err(crate::Error::Ignore)?;
+            if entry.path().is_file() {
+                let actual = entry.path().to_path_buf();
+                candidates.push(Candidate {
+                    display: actual.clone(),
+                    actual,
                 });
             }
-        } else {
-            let text = String::from_utf8_lossy(line_bytes).into_owned();
-            self.matches.push(Match {
-                file: self.path.clone(),
-                line,
-                text,
-            });
-            if let Some(ref mut b) = self.budget {
-                *b = b.saturating_sub(1);
-            }
         }
-
-        Ok(true)
+        self.collect_candidates(&candidates, false)
     }
 
-    fn context(&mut self, _: &Searcher, _: &SinkContext<'_>) -> Result<bool, Self::Error> {
-        Ok(!self.budget_exhausted())
-    }
-
-    fn finish(&mut self, _: &Searcher, _: &SinkFinish) -> Result<(), Self::Error> {
-        Ok(())
+    #[cfg(test)]
+    fn collect_candidates(
+        &self,
+        candidates: &[Candidate],
+        display_relative: bool,
+    ) -> crate::Result<Vec<Match>> {
+        let matcher = self.build_matcher()?;
+        let mut searcher = self.build_searcher(true, None);
+        let mut out = Vec::new();
+        for candidate in candidates {
+            let mut sink = CollectSink::new(
+                if display_relative {
+                    candidate.display.clone()
+                } else {
+                    candidate.actual.clone()
+                },
+                self.opts.only_matching(),
+                matcher.clone(),
+            );
+            let _ = searcher.search_path(&matcher, &candidate.actual, &mut sink);
+            out.extend(sink.into_matches());
+        }
+        Ok(out)
     }
 }
 
-/// Walk a directory and return all file paths.
+fn summary_kind(mode: SearchMode) -> SummaryKind {
+    match mode {
+        SearchMode::Count => SummaryKind::Count,
+        SearchMode::FilesWithMatches => SummaryKind::PathWithMatch,
+        SearchMode::FilesWithoutMatch => SummaryKind::PathWithoutMatch,
+        SearchMode::Quiet => SummaryKind::QuietWithMatch,
+        SearchMode::Standard | SearchMode::OnlyMatching => unreachable!(),
+    }
+}
+
+fn path_in_scope(rel: &Path, prefixes: &[PathBuf]) -> bool {
+    if prefixes.is_empty() {
+        return true;
+    }
+    prefixes
+        .iter()
+        .any(|pre| rel.starts_with(pre) || rel.as_os_str() == pre.as_os_str())
+}
+
+/// Walk a directory tree and return all indexed file paths relative to `root`.
 ///
 /// # Errors
 ///
-/// Returns [`Error::Io`] if root cannot be canonicalized.
-/// Returns [`Error::Ignore`] if directory walking fails.
+/// Returns an error when canonicalizing `root` or while walking the tree.
 pub fn walk_file_paths(root: &Path) -> crate::Result<HashSet<PathBuf>> {
     let root = root.canonicalize()?;
     let mut set = HashSet::new();
@@ -522,6 +503,81 @@ pub fn walk_file_paths(root: &Path) -> crate::Result<HashSet<PathBuf>> {
         set.insert(display);
     }
     Ok(set)
+}
+
+pub fn parallel_candidate_min_files() -> usize {
+    let cpus = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1);
+    let rayon_threads = std::env::var("RAYON_NUM_THREADS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok());
+    let effective = rayon_threads
+        .filter(|&n| n > 0)
+        .map_or(cpus, |rt| rt.min(cpus))
+        .max(1);
+    if effective <= 1 {
+        usize::MAX
+    } else {
+        effective
+    }
+}
+
+#[cfg(test)]
+struct CollectSink {
+    path: PathBuf,
+    only_matching: bool,
+    matcher: RegexMatcher,
+    matches: Vec<Match>,
+}
+
+#[cfg(test)]
+impl CollectSink {
+    fn new(path: PathBuf, only_matching: bool, matcher: RegexMatcher) -> Self {
+        Self {
+            path,
+            only_matching,
+            matcher,
+            matches: Vec::new(),
+        }
+    }
+
+    fn into_matches(self) -> Vec<Match> {
+        self.matches
+    }
+}
+
+#[cfg(test)]
+impl grep_searcher::Sink for CollectSink {
+    type Error = std::io::Error;
+
+    fn matched(
+        &mut self,
+        _: &grep_searcher::Searcher,
+        mat: &grep_searcher::SinkMatch<'_>,
+    ) -> Result<bool, Self::Error> {
+        let line = usize::try_from(mat.line_number().unwrap_or(0)).unwrap_or(0);
+        let line_bytes = mat.bytes();
+        if self.only_matching {
+            let _ = self
+                .matcher
+                .find_iter(line_bytes, |m: grep_matcher::Match| {
+                    self.matches.push(Match {
+                        file: self.path.clone(),
+                        line,
+                        text: String::from_utf8_lossy(&line_bytes[m.start()..m.end()]).into_owned(),
+                    });
+                    true
+                });
+        } else {
+            self.matches.push(Match {
+                file: self.path.clone(),
+                line,
+                text: String::from_utf8_lossy(line_bytes).into_owned(),
+            });
+        }
+        Ok(true)
+    }
 }
 
 #[cfg(test)]
@@ -542,53 +598,6 @@ mod tests {
     }
 
     #[test]
-    fn parallel_scan_threshold_rayon_one_disables() {
-        assert_eq!(parallel_scan_min_files_inner(8, Some(1)), usize::MAX);
-    }
-
-    #[test]
-    fn parallel_scan_threshold_caps_at_cpus() {
-        assert_eq!(parallel_scan_min_files_inner(4, Some(16)), 4);
-    }
-
-    #[test]
-    fn parallel_scan_threshold_uses_rayon_when_lower() {
-        assert_eq!(parallel_scan_min_files_inner(8, Some(4)), 4);
-    }
-
-    #[test]
-    fn parallel_scan_threshold_single_cpu_no_parallel() {
-        assert_eq!(parallel_scan_min_files_inner(1, None), usize::MAX);
-    }
-
-    #[test]
-    fn parallel_scan_threshold_zero_rayon_ignored() {
-        assert_eq!(parallel_scan_min_files_inner(8, Some(0)), 8);
-    }
-
-    #[test]
-    fn fixed_string_substring_fast_path_matches_plain_regex() {
-        let dir = tmp_corpus("fixed-fast");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("a.txt"), "alpha beta\n").unwrap();
-        fs::write(dir.join("b.txt"), "gamma\n").unwrap();
-
-        let pat = vec!["beta".to_string()];
-        let opts_fix = SearchOptions {
-            flags: SearchMatchFlags::FIXED_STRINGS,
-            max_results: None,
-        };
-        let q_fix = CompiledSearch::new(&pat, opts_fix).unwrap();
-        let q_re = CompiledSearch::new(&pat, SearchOptions::default()).unwrap();
-
-        assert_eq!(
-            q_fix.search_walk(&dir, None).unwrap(),
-            q_re.search_walk(&dir, None).unwrap()
-        );
-    }
-
-    #[test]
     fn alternation_finds_both_branches() {
         let dir = tmp_corpus("regex-or");
         let _ = fs::remove_dir_all(&dir);
@@ -597,88 +606,7 @@ mod tests {
         fs::write(dir.join("b.txt"), "x bar z\n").unwrap();
         let pat = vec![r"foo|bar".to_string()];
         let q = CompiledSearch::new(&pat, SearchOptions::default()).unwrap();
-        let hits = q.search_walk(&dir, None).unwrap();
-        assert_eq!(hits.len(), 2);
-    }
-
-    #[test]
-    fn search_finds_across_two_files() {
-        let dir = tmp_corpus("two-files");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(dir.join("a")).unwrap();
-        fs::create_dir_all(dir.join("b")).unwrap();
-        fs::write(dir.join("a/x.txt"), "one\n").unwrap();
-        fs::write(dir.join("b/y.txt"), "two\n").unwrap();
-        let pat = vec!["o".to_string()];
-        let q = CompiledSearch::new(&pat, SearchOptions::default()).unwrap();
-        let hits = q.search_walk(&dir, None).unwrap();
-        assert_eq!(hits.len(), 2);
-    }
-
-    #[test]
-    fn unsorted_candidates_match_sorted() {
-        let dir = tmp_corpus("cand-order");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("a.txt"), "hit\n").unwrap();
-        fs::write(dir.join("b.txt"), "hit\n").unwrap();
-        let pat = vec!["hit".to_string()];
-        let opts = SearchOptions::default();
-        let sorted = vec![PathBuf::from("a.txt"), PathBuf::from("b.txt")];
-        let unsorted = vec![PathBuf::from("b.txt"), PathBuf::from("a.txt")];
-        let q = CompiledSearch::new(&pat, opts).unwrap();
-        let mut a = q.search_walk(&dir, Some(&sorted)).unwrap();
-        let mut b = q.search_walk(&dir, Some(&unsorted)).unwrap();
-        a.sort_by(|x, y| (&x.file, x.line, &x.text).cmp(&(&y.file, y.line, &y.text)));
-        b.sort_by(|x, y| (&x.file, x.line, &x.text).cmp(&(&y.file, y.line, &y.text)));
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn ignore_file_excludes_matches() {
-        let dir = tmp_corpus("ignore");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(".ignore"), "*.skip\n").unwrap();
-        fs::write(dir.join("keep.txt"), "SECRET=1\n").unwrap();
-        fs::write(dir.join("x.skip"), "SECRET=2\n").unwrap();
-        let pat = vec!["SECRET".to_string()];
-        let q = CompiledSearch::new(&pat, SearchOptions::default()).unwrap();
-        let hits = q.search_walk(&dir, None).unwrap();
-        assert_eq!(hits.len(), 1);
-        assert!(hits[0].file.ends_with("keep.txt"));
-    }
-
-    #[test]
-    fn invert_match_selects_non_matching_lines() {
-        let dir = tmp_corpus("invert");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("t.txt"), "aa\nbb\n").unwrap();
-        let opts = SearchOptions {
-            flags: SearchMatchFlags::INVERT_MATCH,
-            max_results: None,
-        };
-        let pat = vec!["aa".to_string()];
-        let q = CompiledSearch::new(&pat, opts).unwrap();
-        let hits = q.search_walk(&dir, None).unwrap();
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].text, "bb\n");
-    }
-
-    #[test]
-    fn max_results_stops_after_n() {
-        let dir = tmp_corpus("max");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("t.txt"), "a\na\na\n").unwrap();
-        let opts = SearchOptions {
-            flags: SearchMatchFlags::empty(),
-            max_results: Some(2),
-        };
-        let pat = vec!["a".to_string()];
-        let q = CompiledSearch::new(&pat, opts).unwrap();
-        let hits = q.search_walk(&dir, None).unwrap();
+        let hits = q.collect_walk_matches(&dir).unwrap();
         assert_eq!(hits.len(), 2);
     }
 
@@ -694,23 +622,8 @@ mod tests {
         };
         let pat = vec!["foo".to_string()];
         let q = CompiledSearch::new(&pat, opts).unwrap();
-        let hits = q.search_walk(&dir, None).unwrap();
+        let hits = q.collect_walk_matches(&dir).unwrap();
         assert_eq!(hits.len(), 2);
         assert!(hits.iter().all(|m| m.text == "foo"));
-    }
-
-    #[test]
-    fn walk_file_paths_lists_expected_files() {
-        let dir = tmp_corpus("walk");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(".ignore"), "x\n").unwrap();
-        fs::write(dir.join("a.rs"), "").unwrap();
-        fs::write(dir.join("x"), "").unwrap();
-        let paths = walk_file_paths(&dir).unwrap();
-        assert!(paths.iter().any(|p| p.ends_with("a.rs")));
-        assert!(!paths
-            .iter()
-            .any(|p| p.as_path() == std::path::Path::new("x")));
     }
 }

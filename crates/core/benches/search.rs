@@ -10,7 +10,9 @@ use std::time::Duration;
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::hint::black_box;
 
-use sift_core::{CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchOptions};
+use sift_core::{
+    CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchMode, SearchOptions, SearchOutput,
+};
 
 /// Same layout as `indexed_search_matches_naive_for_literal` in `lib.rs` tests.
 fn make_parity_corpus(root: &Path) {
@@ -75,7 +77,19 @@ fn bench_search_literal_narrow(c: &mut Criterion) {
     let mut g = c.benchmark_group("search_literal_narrow");
     g.bench_function("beta_trigram_narrow", |b| {
         b.iter(|| {
-            black_box(query.search_index(black_box(&index)).unwrap());
+            black_box(
+                query
+                    .run_index(
+                        black_box(&index),
+                        &[],
+                        SearchOutput {
+                            mode: SearchMode::Quiet,
+                            with_filename: false,
+                            line_number: false,
+                        },
+                    )
+                    .unwrap(),
+            );
         });
     });
     g.finish();
@@ -97,12 +111,36 @@ fn bench_search_full_scan(c: &mut Criterion) {
     let mut g = c.benchmark_group("search_full_scan");
     g.bench_function("dot_star", |b| {
         b.iter(|| {
-            black_box(query_dot.search_index(black_box(&index)).unwrap());
+            black_box(
+                query_dot
+                    .run_index(
+                        black_box(&index),
+                        &[],
+                        SearchOutput {
+                            mode: SearchMode::Quiet,
+                            with_filename: false,
+                            line_number: false,
+                        },
+                    )
+                    .unwrap(),
+            );
         });
     });
     g.bench_function("case_insensitive_literal", |b| {
         b.iter(|| {
-            black_box(query_ci.search_index(black_box(&index)).unwrap());
+            black_box(
+                query_ci
+                    .run_index(
+                        black_box(&index),
+                        &[],
+                        SearchOutput {
+                            mode: SearchMode::Quiet,
+                            with_filename: false,
+                            line_number: false,
+                        },
+                    )
+                    .unwrap(),
+            );
         });
     });
     g.finish();

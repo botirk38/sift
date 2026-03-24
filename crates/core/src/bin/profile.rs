@@ -20,7 +20,9 @@ use std::io::Write as _;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use sift_core::{CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchOptions};
+use sift_core::{
+    CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchMode, SearchOptions, SearchOutput,
+};
 
 #[derive(Clone, Debug)]
 enum CorpusKind {
@@ -223,14 +225,38 @@ fn run_narrow(index: &Index, loop_cfg: &Loop) {
             let deadline = Instant::now() + *d;
             let mut n = 0usize;
             while Instant::now() < deadline {
-                black_box(query.search_index(index).unwrap());
+                black_box(
+                    query
+                        .run_index(
+                            index,
+                            &[],
+                            SearchOutput {
+                                mode: SearchMode::Quiet,
+                                with_filename: false,
+                                line_number: false,
+                            },
+                        )
+                        .unwrap(),
+                );
                 n += 1;
             }
             n
         }
         Loop::Iters(n) => {
             for _ in 0..*n {
-                black_box(query.search_index(index).unwrap());
+                black_box(
+                    query
+                        .run_index(
+                            index,
+                            &[],
+                            SearchOutput {
+                                mode: SearchMode::Quiet,
+                                with_filename: false,
+                                line_number: false,
+                            },
+                        )
+                        .unwrap(),
+                );
             }
             *n
         }
@@ -253,14 +279,38 @@ fn run_full_dotstar(index: &Index, loop_cfg: &Loop) {
             let deadline = Instant::now() + *d;
             let mut n = 0usize;
             while Instant::now() < deadline {
-                black_box(query.search_index(index).unwrap());
+                black_box(
+                    query
+                        .run_index(
+                            index,
+                            &[],
+                            SearchOutput {
+                                mode: SearchMode::Quiet,
+                                with_filename: false,
+                                line_number: false,
+                            },
+                        )
+                        .unwrap(),
+                );
                 n += 1;
             }
             n
         }
         Loop::Iters(n) => {
             for _ in 0..*n {
-                black_box(query.search_index(index).unwrap());
+                black_box(
+                    query
+                        .run_index(
+                            index,
+                            &[],
+                            SearchOutput {
+                                mode: SearchMode::Quiet,
+                                with_filename: false,
+                                line_number: false,
+                            },
+                        )
+                        .unwrap(),
+                );
             }
             *n
         }
@@ -288,14 +338,38 @@ fn run_full_ci(index: &Index, loop_cfg: &Loop) {
             let deadline = Instant::now() + *d;
             let mut n = 0usize;
             while Instant::now() < deadline {
-                black_box(query.search_index(index).unwrap());
+                black_box(
+                    query
+                        .run_index(
+                            index,
+                            &[],
+                            SearchOutput {
+                                mode: SearchMode::Quiet,
+                                with_filename: false,
+                                line_number: false,
+                            },
+                        )
+                        .unwrap(),
+                );
                 n += 1;
             }
             n
         }
         Loop::Iters(n) => {
             for _ in 0..*n {
-                black_box(query.search_index(index).unwrap());
+                black_box(
+                    query
+                        .run_index(
+                            index,
+                            &[],
+                            SearchOutput {
+                                mode: SearchMode::Quiet,
+                                with_filename: false,
+                                line_number: false,
+                            },
+                        )
+                        .unwrap(),
+                );
             }
             *n
         }
