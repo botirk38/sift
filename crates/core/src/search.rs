@@ -109,9 +109,9 @@ impl Default for SearchOutput {
 
 #[derive(Debug, Clone)]
 pub struct CompiledSearch {
-    patterns: Vec<String>,
-    opts: SearchOptions,
-    plan: TrigramPlan,
+    pub patterns: Vec<String>,
+    pub opts: SearchOptions,
+    pub plan: TrigramPlan,
 }
 
 impl CompiledSearch {
@@ -138,7 +138,9 @@ impl CompiledSearch {
         &self.patterns
     }
 
-    fn build_matcher(&self) -> crate::Result<RegexMatcher> {
+    /// # Errors
+    /// Returns an error if pattern compilation fails.
+    pub fn build_matcher(&self) -> crate::Result<RegexMatcher> {
         let branches: Vec<String> = self
             .patterns
             .iter()
@@ -187,7 +189,8 @@ impl CompiledSearch {
         matches!(mode, SearchMode::Count | SearchMode::FilesWithoutMatch)
     }
 
-    fn candidate_file_ids(
+    #[must_use]
+    pub fn candidate_file_ids(
         &self,
         index: &Index,
         prefixes: &[PathBuf],

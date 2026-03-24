@@ -2,17 +2,47 @@
 //!
 //! Built only with `--features profile`. Prefer **`./scripts/profile.sh`** from the repo root.
 //!
-//! Manual: `cargo run --profile profiling -p sift-core --features profile --bin sift-profile -- narrow`
+//! Scenarios (each mirrors a real benchsuite case):
 //!
-//! Modes: `narrow` | `full_dotstar` | `full_ci` | `build`
+//! **Literal (narrowable)**:
+//!   `literal`               beta
 //!
-//! **Corpus size** (simulate a large codebase):
-//! - Default: tiny **parity** fixture (2 files).
-//! - **`SIFT_LARGE=1`** — defaults to ~8k files × ~100 lines, spread across 256 `crates/cXXXX/src/` trees.
-//! - Or set **`SIFT_CORPUS_FILES=N`** explicitly (enables large layout; use `0` unset via omitting).
-//! - **`SIFT_CORPUS_LINES`**, **`SIFT_CORPUS_DIRS`** — tune lines per file and crate fan-out.
+//! **Word-boundary wrapped (sift currently disables index)**:
+//!   `word_literal`          -w beta
 //!
-//! Other env: **`SIFT_ITERS`** (default lower on large corpora), **`SIFT_LOOP_SECS`** (overrides iters for search; not for `build`).
+//! **Case-insensitive (sift currently disables index)**:
+//!   `casei_literal`         -i beta
+//!
+//! **Mixed regex with required literal (sift falls back, ripgrep narrows)**:
+//!   `required_literal`       [A-Z]+_RESUME
+//!
+//! **Unicode class (no required literal)**:
+//!   `unicode_class`          \p{Greek}
+//!
+//! **No-literal regex (full scan)**:
+//!   `no_literal`             \w{5}\s+\w{5}\s+\w{5}\s+\w{5}\s+\w{5}
+//!
+//! **Literal alternation**:
+//!   `alternation`            `ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT`
+//!
+//! **Case-insensitive alternation**:
+//!   `alternation_casei`      -i `ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT`
+//!
+//! **Whole-line regex**:
+//!   `line_regexp`           -x beta
+//!
+//! **Fixed string**:
+//!   `fixed_string`          -F beta.gamma
+//!
+//! **Corpus size**:
+//!   Default: tiny **parity** fixture (2 files, ~2k iters).
+//!   `SIFT_LARGE=1`: ~8k files × 100 lines across 256 crate dirs.
+//!   `SIFT_CORPUS_FILES=N`: custom file count.
+//!   `SIFT_CORPUS_LINES`, `SIFT_CORPUS_DIRS`: tune lines and fan-out.
+//!
+//! **Timing control**:
+//!   `SIFT_ITERS`: fixed iteration count.
+//!   `SIFT_LOOP_SECS`: run until N seconds elapsed (search modes only).
 
 use std::fs;
 use std::hint::black_box;
@@ -22,6 +52,7 @@ use std::time::{Duration, Instant};
 
 use sift_core::{
     CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchMode, SearchOptions, SearchOutput,
+    TrigramPlan,
 };
 
 #[derive(Clone, Debug)]
@@ -92,17 +123,18 @@ fn materialize_large_corpus(root: &Path, files: usize, lines_per_file: usize, di
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut f = fs::File::create(&path).unwrap();
         for line in 0..lines_per_file {
-            // Occasional "beta" for narrow / CI patterns; rest fills trigrams.
             let mid = if line % 47 == 3 {
                 " beta "
             } else if line % 91 == 7 {
-                " impl Trait "
+                " RESUME "
+            } else if line % 31 == 11 {
+                " ERR_SYS "
             } else {
                 " xval "
             };
             writeln!(
                 f,
-                "// {i}:{line} fn sym_{line}(){mid} struct Row{{ id: u32 }}",
+                "// {i}:{line} fn sym_{line}(){mid} struct Row{{ id: u32 }}"
             )
             .unwrap();
         }
@@ -132,7 +164,6 @@ fn materialize_search_corpus(root: &Path, kind: &CorpusKind) {
     }
 }
 
-/// `Parity` kind: 2 files for search profiling; 32 small files for `build` mode.
 fn materialize_build_corpus(root: &Path, kind: &CorpusKind) {
     match kind {
         CorpusKind::Parity => make_many_files_corpus(root, 32),
@@ -187,7 +218,6 @@ enum Loop {
     Iters(usize),
 }
 
-/// Mean nanoseconds per iteration (integer; avoids lossy `usize`/`u128`→`f64` casts).
 fn ns_per_iter(elapsed: Duration, iters: usize) -> u128 {
     if iters == 0 {
         return 0;
@@ -215,124 +245,155 @@ fn loop_config(kind: &CorpusKind) -> Loop {
     Loop::Iters(iters)
 }
 
-fn run_narrow(index: &Index, loop_cfg: &Loop) {
-    let opts = SearchOptions::default();
-    let pat = vec!["beta".to_string()];
-    let query = CompiledSearch::new(&pat, opts).unwrap();
-    let t0 = Instant::now();
-    let iters = match loop_cfg {
-        Loop::Timed(d) => {
-            let deadline = Instant::now() + *d;
-            let mut n = 0usize;
-            while Instant::now() < deadline {
-                black_box(
-                    query
-                        .run_index(
-                            index,
-                            &[],
-                            SearchOutput {
-                                mode: SearchMode::Quiet,
-                                with_filename: false,
-                                line_number: false,
-                            },
-                        )
-                        .unwrap(),
-                );
-                n += 1;
-            }
-            n
-        }
-        Loop::Iters(n) => {
-            for _ in 0..*n {
-                black_box(
-                    query
-                        .run_index(
-                            index,
-                            &[],
-                            SearchOutput {
-                                mode: SearchMode::Quiet,
-                                with_filename: false,
-                                line_number: false,
-                            },
-                        )
-                        .unwrap(),
-                );
-            }
-            *n
-        }
-    };
-    let elapsed = t0.elapsed();
-    let ns = ns_per_iter(elapsed, iters);
-    println!("metric\tmode\tnarrow");
-    println!("metric\titers\t{iters}");
-    println!("metric\ttotal_ms\t{:.3}", elapsed.as_secs_f64() * 1e3);
-    println!("metric\tns_per_iter\t{ns}");
+#[derive(Clone, Debug)]
+struct Scenario {
+    name: &'static str,
+    patterns: Vec<String>,
+    opts: SearchOptions,
 }
 
-fn run_full_dotstar(index: &Index, loop_cfg: &Loop) {
-    let opts = SearchOptions::default();
-    let pat = vec![".*".to_string()];
-    let query = CompiledSearch::new(&pat, opts).unwrap();
-    let t0 = Instant::now();
-    let iters = match loop_cfg {
-        Loop::Timed(d) => {
-            let deadline = Instant::now() + *d;
-            let mut n = 0usize;
-            while Instant::now() < deadline {
-                black_box(
-                    query
-                        .run_index(
-                            index,
-                            &[],
-                            SearchOutput {
-                                mode: SearchMode::Quiet,
-                                with_filename: false,
-                                line_number: false,
-                            },
-                        )
-                        .unwrap(),
-                );
-                n += 1;
-            }
-            n
+impl Scenario {
+    fn literal() -> Self {
+        Self {
+            name: "literal",
+            patterns: vec!["beta".to_string()],
+            opts: SearchOptions::default(),
         }
-        Loop::Iters(n) => {
-            for _ in 0..*n {
-                black_box(
-                    query
-                        .run_index(
-                            index,
-                            &[],
-                            SearchOutput {
-                                mode: SearchMode::Quiet,
-                                with_filename: false,
-                                line_number: false,
-                            },
-                        )
-                        .unwrap(),
-                );
-            }
-            *n
+    }
+
+    fn word_literal() -> Self {
+        Self {
+            name: "word_literal",
+            patterns: vec!["beta".to_string()],
+            opts: SearchOptions {
+                flags: SearchMatchFlags::WORD_REGEXP,
+                max_results: None,
+            },
         }
-    };
-    let elapsed = t0.elapsed();
-    let ns = ns_per_iter(elapsed, iters);
-    println!("metric\tmode\tfull_dotstar");
-    println!("metric\titers\t{iters}");
-    println!("metric\ttotal_ms\t{:.3}", elapsed.as_secs_f64() * 1e3);
-    println!("metric\tns_per_iter\t{ns}");
+    }
+
+    fn casei_literal() -> Self {
+        Self {
+            name: "casei_literal",
+            patterns: vec!["beta".to_string()],
+            opts: SearchOptions {
+                flags: SearchMatchFlags::CASE_INSENSITIVE,
+                max_results: None,
+            },
+        }
+    }
+
+    fn required_literal() -> Self {
+        Self {
+            name: "required_literal",
+            patterns: vec!["[A-Z]+_RESUME".to_string()],
+            opts: SearchOptions::default(),
+        }
+    }
+
+    fn unicode_class() -> Self {
+        Self {
+            name: "unicode_class",
+            patterns: vec![r"\p{Greek}".to_string()],
+            opts: SearchOptions::default(),
+        }
+    }
+
+    fn no_literal() -> Self {
+        Self {
+            name: "no_literal",
+            patterns: vec![r"\w{5}\s+\w{5}\s+\w{5}\s+\w{5}\s+\w{5}".to_string()],
+            opts: SearchOptions::default(),
+        }
+    }
+
+    fn alternation() -> Self {
+        Self {
+            name: "alternation",
+            patterns: vec!["ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT".to_string()],
+            opts: SearchOptions::default(),
+        }
+    }
+
+    fn alternation_casei() -> Self {
+        Self {
+            name: "alternation_casei",
+            patterns: vec!["ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT".to_string()],
+            opts: SearchOptions {
+                flags: SearchMatchFlags::CASE_INSENSITIVE,
+                max_results: None,
+            },
+        }
+    }
+
+    fn line_regexp() -> Self {
+        Self {
+            name: "line_regexp",
+            patterns: vec!["beta".to_string()],
+            opts: SearchOptions {
+                flags: SearchMatchFlags::LINE_REGEXP,
+                max_results: None,
+            },
+        }
+    }
+
+    fn fixed_string() -> Self {
+        Self {
+            name: "fixed_string",
+            patterns: vec!["beta.gamma".to_string()],
+            opts: SearchOptions {
+                flags: SearchMatchFlags::FIXED_STRINGS,
+                max_results: None,
+            },
+        }
+    }
 }
 
-fn run_full_ci(index: &Index, loop_cfg: &Loop) {
-    let mut flags = SearchMatchFlags::empty();
-    flags |= SearchMatchFlags::CASE_INSENSITIVE;
-    let opts = SearchOptions {
-        flags,
-        max_results: None,
+#[allow(clippy::type_complexity)]
+const ALL_SCENARIOS: &[(&str, fn() -> Scenario)] = &[
+    ("literal", Scenario::literal),
+    ("word_literal", Scenario::word_literal),
+    ("casei_literal", Scenario::casei_literal),
+    ("required_literal", Scenario::required_literal),
+    ("unicode_class", Scenario::unicode_class),
+    ("no_literal", Scenario::no_literal),
+    ("alternation", Scenario::alternation),
+    ("alternation_casei", Scenario::alternation_casei),
+    ("line_regexp", Scenario::line_regexp),
+    ("fixed_string", Scenario::fixed_string),
+];
+
+fn find_scenario(name: &str) -> Option<Scenario> {
+    for (n, f) in ALL_SCENARIOS {
+        if *n == name {
+            return Some(f());
+        }
+    }
+    None
+}
+
+fn run_scenario(index: &Index, scenario: &Scenario, loop_cfg: &Loop) {
+    let t_plan = Instant::now();
+    let query = CompiledSearch::new(&scenario.patterns, scenario.opts).unwrap();
+    let plan_us = t_plan.elapsed().as_micros();
+
+    let plan_kind = match &query.plan {
+        TrigramPlan::Narrow { .. } => "narrow",
+        TrigramPlan::FullScan => "full_scan",
     };
-    let pat = vec!["beta".to_string()];
-    let query = CompiledSearch::new(&pat, opts).unwrap();
-    let t0 = Instant::now();
+
+    let total_files = index.file_count();
+
+    let t_candidates = Instant::now();
+    let candidate_ids = query.candidate_file_ids(index, &[], false);
+    let candidates_us = t_candidates.elapsed().as_micros();
+    let candidate_count = candidate_ids.len();
+
+    let t_matcher = Instant::now();
+    let _matcher = query.build_matcher().unwrap();
+    let matcher_us = t_matcher.elapsed().as_micros();
+
+    let t_search = Instant::now();
     let iters = match loop_cfg {
         Loop::Timed(d) => {
             let deadline = Instant::now() + *d;
@@ -374,11 +435,23 @@ fn run_full_ci(index: &Index, loop_cfg: &Loop) {
             *n
         }
     };
-    let elapsed = t0.elapsed();
-    let ns = ns_per_iter(elapsed, iters);
-    println!("metric\tmode\tfull_ci");
+    let search_elapsed = t_search.elapsed();
+    let search_us = search_elapsed.as_micros();
+    let ns = ns_per_iter(search_elapsed, iters);
+
+    println!("metric\tscenario\t{}", scenario.name);
     println!("metric\titers\t{iters}");
-    println!("metric\ttotal_ms\t{:.3}", elapsed.as_secs_f64() * 1e3);
+    println!("metric\tplan_kind\t{plan_kind}");
+    println!("metric\ttotal_files\t{total_files}");
+    println!("metric\tcandidate_files\t{candidate_count}");
+    println!("metric\tphase_plan_us\t{plan_us}");
+    println!("metric\tphase_candidate_us\t{candidates_us}");
+    println!("metric\tphase_matcher_us\t{matcher_us}");
+    println!("metric\tphase_search_us\t{search_us}");
+    println!(
+        "metric\ttotal_ms\t{:.3}",
+        search_elapsed.as_secs_f64() * 1e3
+    );
     println!("metric\tns_per_iter\t{ns}");
 }
 
@@ -428,37 +501,48 @@ fn run_build(iters: usize, kind: &CorpusKind) {
     println!("metric\tns_per_iter\t{ns}");
 }
 
+fn list_scenarios() {
+    for (name, _) in ALL_SCENARIOS {
+        println!("{name}");
+    }
+}
+
 fn main() {
-    let mode = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "narrow".to_string());
+    let args: Vec<String> = std::env::args().collect();
+    let mode = args.get(1).map_or("literal", |s| s.as_str());
     let kind = corpus_kind();
 
-    match mode.as_str() {
-        "build" => {
-            if std::env::var("SIFT_LOOP_SECS").is_ok() {
-                eprintln!("build mode: use SIFT_ITERS (SIFT_LOOP_SECS not supported)");
-                std::process::exit(2);
-            }
-            let iters = std::env::var("SIFT_ITERS")
-                .ok()
-                .and_then(|x| x.parse().ok())
-                .unwrap_or_else(|| default_build_iters(&kind));
-            run_build(iters, &kind);
-        }
-        "narrow" | "full_dotstar" | "full_ci" => {
-            let (_tmp, index) = open_corpus_index(&kind);
-            let loop_cfg = loop_config(&kind);
-            match mode.as_str() {
-                "narrow" => run_narrow(&index, &loop_cfg),
-                "full_dotstar" => run_full_dotstar(&index, &loop_cfg),
-                "full_ci" => run_full_ci(&index, &loop_cfg),
-                _ => unreachable!(),
-            }
-        }
-        _ => {
-            eprintln!("usage: sift-profile [narrow|full_dotstar|full_ci|build]");
+    if mode == "list" {
+        list_scenarios();
+        return;
+    }
+
+    if mode == "build" {
+        if std::env::var("SIFT_LOOP_SECS").is_ok() {
+            eprintln!("build mode: use SIFT_ITERS (SIFT_LOOP_SECS not supported)");
             std::process::exit(2);
         }
+        let iters: usize = std::env::var("SIFT_ITERS")
+            .ok()
+            .and_then(|x| x.parse().ok())
+            .unwrap_or_else(|| default_build_iters(&kind));
+        run_build(iters, &kind);
+        return;
     }
+
+    let scenario = find_scenario(mode).unwrap_or_else(|| {
+        eprintln!(
+            "usage: sift-profile [list|build|{}]",
+            ALL_SCENARIOS
+                .iter()
+                .map(|(n, _)| *n)
+                .collect::<Vec<_>>()
+                .join("|")
+        );
+        std::process::exit(2);
+    });
+
+    let (_tmp, index) = open_corpus_index(&kind);
+    let loop_cfg = loop_config(&kind);
+    run_scenario(&index, &scenario, &loop_cfg);
 }
