@@ -164,7 +164,7 @@ fn only_matching_prints_each_match_span() {
 }
 
 #[test]
-fn max_count_limits_total_matches() {
+fn max_count_limits_per_file() {
     let root = fresh_dir("output-max-count");
     fs::write(root.join("a.txt"), "match one\nmatch two\n").unwrap();
     fs::write(root.join("b.txt"), "match three\n").unwrap();
@@ -187,5 +187,6 @@ fn max_count_limits_total_matches() {
         .lines()
         .map(str::to_string)
         .collect();
-    assert_eq!(lines.len(), 1, "unexpected lines: {lines:?}");
+    assert_eq!(lines.len(), 2, "expected 1 line per file: {lines:?}");
+    assert_eq!(lines, &["match one", "match three"]);
 }

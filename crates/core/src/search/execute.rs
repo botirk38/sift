@@ -83,8 +83,7 @@ impl CompiledSearch {
         }
 
         let matcher = self.build_matcher()?;
-        let parallel = self.opts.max_results.is_none()
-            && candidate_ids.len() >= parallel_candidate_min_files();
+        let parallel = candidate_ids.len() >= parallel_candidate_min_files();
         match output.mode {
             SearchMode::Standard | SearchMode::OnlyMatching => {
                 self.run_standard(index, &candidate_ids, &matcher, output, parallel)
@@ -139,7 +138,7 @@ impl CompiledSearch {
                 .par_iter()
                 .enumerate()
                 .map_init(
-                    || SummaryWorker::new(self, matcher.clone()),
+                    || SummaryWorker::new(self, matcher.clone(), self.opts.max_results),
                     |worker, (result_index, &id)| {
                         worker.search_candidate(index, result_index, id, output, &stop)
                     },
@@ -160,11 +159,10 @@ impl CompiledSearch {
         output: SearchOutput,
     ) -> crate::Result<bool> {
         let mut any_match = false;
-        let mut remaining = self.opts.max_results;
         let mut out = Vec::new();
         let mut actual = index.root.clone();
         for &id in candidate_ids {
-            let mut searcher = self.build_searcher(output.line_number, remaining);
+            let mut searcher = self.build_searcher(output.line_number, self.opts.max_results);
             let Some(candidate) = index.file_path(id) else {
                 continue;
             };
@@ -173,15 +171,8 @@ impl CompiledSearch {
             let mut sink = StandardSink::new(matcher, output, &actual, &mut out);
             let _ = searcher.search_path(matcher, &actual, &mut sink);
             any_match |= sink.matched;
-            let used = sink.match_count;
             for _ in 0..depth {
                 actual.pop();
-            }
-            if let Some(ref mut left) = remaining {
-                *left = left.saturating_sub(used);
-                if *left == 0 {
-                    break;
-                }
             }
         }
 
@@ -199,9 +190,8 @@ impl CompiledSearch {
         output: SearchOutput,
     ) -> crate::Result<bool> {
         let mut any_match = false;
-        let mut remaining = self.opts.max_results;
         let mut out = Vec::new();
-        let mut worker = SummaryWorker::new(self, matcher.clone());
+        let mut worker = SummaryWorker::new(self, matcher.clone(), self.opts.max_results);
         let mut actual = index.root.clone();
         for &id in candidate_ids {
             let Some(candidate) = index.file_path(id) else {
@@ -214,12 +204,6 @@ impl CompiledSearch {
             write_summary_record(&mut out, output, &actual, result)?;
             for _ in 0..depth {
                 actual.pop();
-            }
-            if let Some(ref mut left) = remaining {
-                *left = left.saturating_sub(usize::from(result.matched));
-                if *left == 0 {
-                    break;
-                }
             }
             if matches!(output.mode, SearchMode::Quiet) && result.matched {
                 break;
@@ -297,17 +281,17 @@ impl CompiledSearch {
     }
 }
 
-struct StandardWorker {
+struct StandardWorker<'a> {
+    search: &'a CompiledSearch,
     matcher: RegexMatcher,
-    searcher: Searcher,
     output: SearchOutput,
     bytes: Vec<u8>,
 }
 
-impl StandardWorker {
-    fn new(search: &CompiledSearch, matcher: RegexMatcher, output: SearchOutput) -> Self {
+impl<'a> StandardWorker<'a> {
+    const fn new(search: &'a CompiledSearch, matcher: RegexMatcher, output: SearchOutput) -> Self {
         Self {
-            searcher: search.build_searcher(output.line_number, None),
+            search,
             matcher,
             output,
             bytes: Vec::new(),
@@ -343,8 +327,11 @@ impl StandardWorker {
         };
         let actual = index.root.join(candidate);
         let matched = {
+            let mut searcher = self
+                .search
+                .build_searcher(self.output.line_number, self.search.opts.max_results);
             let mut sink = StandardSink::new(&self.matcher, self.output, &actual, &mut self.bytes);
-            let _ = self.searcher.search_path(&self.matcher, &actual, &mut sink);
+            let _ = searcher.search_path(&self.matcher, &actual, &mut sink);
             sink.matched
         };
 
@@ -419,9 +406,9 @@ struct SummaryWorker {
 }
 
 impl SummaryWorker {
-    fn new(search: &CompiledSearch, matcher: RegexMatcher) -> Self {
+    fn new(search: &CompiledSearch, matcher: RegexMatcher, max_results: Option<usize>) -> Self {
         Self {
-            searcher: search.build_searcher(false, None),
+            searcher: search.build_searcher(false, max_results),
             matcher,
         }
     }
