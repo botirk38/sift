@@ -145,27 +145,6 @@ fn resolve_case_mode_from_args(args: &[String]) -> CaseMode {
     result
 }
 
-fn resolve_flag_from_args(args: &[String], short: Option<char>, long: &str) -> bool {
-    for arg in args {
-        if arg == "--" {
-            return false;
-        }
-        let bytes = arg.as_bytes();
-        if bytes.len() > 2 && bytes[0] == b'-' && bytes[1] == b'-' {
-            let suffix = &arg[2..];
-            if suffix == long {
-                return true;
-            }
-        }
-        if let Some(s) = short {
-            if bytes.len() == 2 && bytes[0] == b'-' && bytes[1] == s as u8 {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 fn resolve_invert_match_from_args(args: &[String]) -> bool {
     for arg in args {
         if arg == "--" {
@@ -184,51 +163,64 @@ fn resolve_invert_match_from_args(args: &[String]) -> bool {
     false
 }
 
-#[allow(clippy::fn_params_excessive_bools)]
-fn resolve_output_mode(
-    invert_match: bool,
-    count: bool,
-    files_with_matches: bool,
-    files_without_match: bool,
-    only_matching: bool,
-    quiet: bool,
-) -> Result<SearchMode, String> {
-    let mut modes = 0usize;
-    if count {
-        modes += 1;
-    }
-    if files_with_matches {
-        modes += 1;
-    }
-    if files_without_match {
-        modes += 1;
-    }
-    if only_matching {
-        modes += 1;
-    }
-    if quiet {
-        modes += 1;
+fn resolve_output_mode(args: &[String], invert_match: bool) -> (SearchMode, bool, bool) {
+    let mut last_idx = 0usize;
+    let mut mode = SearchMode::Standard;
+
+    for (i, arg) in args.iter().enumerate() {
+        let bytes = arg.as_bytes();
+        let is_short = bytes.len() == 2 && bytes[0] == b'-';
+        let is_long = bytes.len() > 2 && bytes[0] == b'-' && bytes[1] == b'-';
+
+        let flag = if is_short {
+            match bytes.get(1) {
+                Some(&b'c') => Some((i, "count")),
+                Some(&b'l') => Some((i, "files_with_matches")),
+                Some(&b'L') => Some((i, "files_without_match")),
+                Some(&b'o') => Some((i, "only_matching")),
+                Some(&b'q') => Some((i, "quiet")),
+                _ => None,
+            }
+        } else if is_long {
+            let suffix = &arg[2..];
+            match suffix {
+                "count" => Some((i, "count")),
+                "files-with-matches" => Some((i, "files_with_matches")),
+                "files-without-match" => Some((i, "files_without_match")),
+                "only-matching" => Some((i, "only_matching")),
+                "quiet" => Some((i, "quiet")),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        if let Some((idx, name)) = flag {
+            if idx > last_idx {
+                last_idx = idx;
+                mode = match name {
+                    "count" => SearchMode::Count,
+                    "files_with_matches" => SearchMode::FilesWithMatches,
+                    "files_without_match" => SearchMode::FilesWithoutMatch,
+                    "only_matching" => SearchMode::OnlyMatching,
+                    "quiet" => SearchMode::Quiet,
+                    _ => mode,
+                };
+            }
+        }
     }
 
-    if modes > 1 {
-        return Err("conflicting output options specified".to_string());
+    if mode == SearchMode::OnlyMatching && invert_match {
+        mode = SearchMode::Count;
     }
 
-    if quiet {
-        Ok(SearchMode::Quiet)
-    } else if only_matching && invert_match {
-        Ok(SearchMode::Count)
-    } else if only_matching {
-        Ok(SearchMode::OnlyMatching)
-    } else if count {
-        Ok(SearchMode::Count)
-    } else if files_with_matches {
-        Ok(SearchMode::FilesWithMatches)
-    } else if files_without_match {
-        Ok(SearchMode::FilesWithoutMatch)
-    } else {
-        Ok(SearchMode::Standard)
+    let quiet = mode == SearchMode::Quiet;
+    let only_matching = mode == SearchMode::OnlyMatching;
+    if quiet || only_matching {
+        mode = SearchMode::Standard;
     }
+
+    (mode, only_matching, quiet)
 }
 
 impl Args for SearchFlags {
@@ -405,22 +397,9 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
     )?;
 
     let args: Vec<String> = std::env::args().collect();
-    let count = resolve_flag_from_args(&args, Some('c'), "count");
-    let files_with_matches = resolve_flag_from_args(&args, Some('l'), "files-with-matches");
-    let files_without_match = resolve_flag_from_args(&args, Some('L'), "files-without-match");
-    let only_matching = resolve_flag_from_args(&args, Some('o'), "only-matching");
-    let quiet = resolve_flag_from_args(&args, Some('q'), "quiet");
     let invert_match = resolve_invert_match_from_args(&args);
 
-    let mode = resolve_output_mode(
-        invert_match,
-        count,
-        files_with_matches,
-        files_without_match,
-        only_matching,
-        quiet,
-    )
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let (mode, only_matching, quiet) = resolve_output_mode(&args, invert_match);
 
     let mut opts = cli.search_flags.to_options();
     opts.max_results = cli.paths.max_count;
@@ -437,8 +416,16 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
         opts.flags |= SearchMatchFlags::ONLY_MATCHING;
     }
 
+    let effective_mode = if quiet {
+        SearchMode::Quiet
+    } else if only_matching {
+        SearchMode::OnlyMatching
+    } else {
+        mode
+    };
+
     let output = SearchOutput {
-        mode,
+        mode: effective_mode,
         with_filename: !cli.out3.no_filename,
         line_number: cli.out1.line_number,
     };
