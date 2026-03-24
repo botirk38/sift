@@ -114,11 +114,7 @@ pub struct CompiledSearch {
     plan: TrigramPlan,
 }
 
-#[derive(Debug, Clone)]
-struct Candidate {
-    actual: PathBuf,
-    display: PathBuf,
-}
+type Candidate = PathBuf;
 
 impl CompiledSearch {
     /// Create a compiled search from patterns and options.
@@ -214,10 +210,6 @@ impl CompiledSearch {
         rel_paths
             .into_iter()
             .filter(|rel| path_in_scope(rel, prefixes))
-            .map(|display| Candidate {
-                actual: index.root.join(&display),
-                display,
-            })
             .collect()
     }
 
@@ -245,18 +237,29 @@ impl CompiledSearch {
         let parallel =
             self.opts.max_results.is_none() && candidates.len() >= parallel_candidate_min_files();
         match output.mode {
-            SearchMode::Standard | SearchMode::OnlyMatching => {
-                Ok(self.run_standard(&candidates, &matcher, output, parallel))
-            }
+            SearchMode::Standard | SearchMode::OnlyMatching => Ok(self.run_standard(
+                index.root.as_path(),
+                &candidates,
+                &matcher,
+                output,
+                parallel,
+            )),
             SearchMode::Count
             | SearchMode::FilesWithMatches
             | SearchMode::FilesWithoutMatch
-            | SearchMode::Quiet => Ok(self.run_summary(&candidates, &matcher, output, parallel)),
+            | SearchMode::Quiet => Ok(self.run_summary(
+                index.root.as_path(),
+                &candidates,
+                &matcher,
+                output,
+                parallel,
+            )),
         }
     }
 
     fn run_standard(
         &self,
+        root: &Path,
         candidates: &[Candidate],
         matcher: &RegexMatcher,
         output: SearchOutput,
@@ -281,22 +284,27 @@ impl CompiledSearch {
             candidates.par_chunks(chunk_size).for_each(|chunk| {
                 let mut searcher = self.build_searcher(output.line_number, None);
                 let builder = builder.clone();
+                let mut printer = builder.build(bufwtr.buffer());
+                let mut actual = root.to_path_buf();
                 for candidate in chunk {
                     if stop.load(Ordering::SeqCst) {
                         break;
                     }
-                    let mut printer = builder.build(bufwtr.buffer());
-                    let mut sink = printer.sink_with_path(matcher.clone(), &candidate.display);
-                    let _ = searcher.search_path(matcher, &candidate.actual, &mut sink);
+                    actual.push(candidate);
+                    let depth = candidate.components().count();
+                    let mut sink = printer.sink_with_path(matcher, candidate);
+                    let _ = searcher.search_path(matcher, &actual, &mut sink);
                     if sink.has_match() {
                         any_match.store(true, Ordering::SeqCst);
                     }
                     drop(sink);
-                    if let Err(err) = bufwtr.print(printer.get_mut()) {
-                        if err.kind() == std::io::ErrorKind::BrokenPipe {
-                            stop.store(true, Ordering::SeqCst);
-                            break;
-                        }
+                    for _ in 0..depth {
+                        actual.pop();
+                    }
+                }
+                if let Err(err) = bufwtr.print(printer.get_mut()) {
+                    if err.kind() == std::io::ErrorKind::BrokenPipe {
+                        stop.store(true, Ordering::SeqCst);
                     }
                 }
             });
@@ -304,20 +312,21 @@ impl CompiledSearch {
         } else {
             let mut any_match = false;
             let mut remaining = self.opts.max_results;
+            let mut printer = builder.build(bufwtr.buffer());
+            let mut actual = root.to_path_buf();
             for candidate in candidates {
                 let mut searcher = self.build_searcher(output.line_number, remaining);
-                let mut printer = builder.build(bufwtr.buffer());
-                let mut sink = printer.sink_with_path(matcher.clone(), &candidate.display);
-                let _ = searcher.search_path(matcher, &candidate.actual, &mut sink);
+                actual.push(candidate);
+                let depth = candidate.components().count();
+                let mut sink = printer.sink_with_path(matcher, candidate);
+                let _ = searcher.search_path(matcher, &actual, &mut sink);
                 if sink.has_match() {
                     any_match = true;
                 }
                 let used = usize::try_from(sink.match_count()).unwrap_or(usize::MAX);
                 drop(sink);
-                if let Err(err) = bufwtr.print(printer.get_mut()) {
-                    if err.kind() == std::io::ErrorKind::BrokenPipe {
-                        break;
-                    }
+                for _ in 0..depth {
+                    actual.pop();
                 }
                 if let Some(ref mut left) = remaining {
                     *left = left.saturating_sub(used);
@@ -326,12 +335,18 @@ impl CompiledSearch {
                     }
                 }
             }
+            if let Err(err) = bufwtr.print(printer.get_mut()) {
+                if err.kind() == std::io::ErrorKind::BrokenPipe {
+                    return any_match;
+                }
+            }
             any_match
         }
     }
 
     fn run_summary(
         &self,
+        root: &Path,
         candidates: &[Candidate],
         matcher: &RegexMatcher,
         output: SearchOutput,
@@ -357,27 +372,32 @@ impl CompiledSearch {
             candidates.par_chunks(chunk_size).for_each(|chunk| {
                 let mut searcher = self.build_searcher(false, None);
                 let builder = builder.clone();
+                let mut printer = builder.build(bufwtr.buffer());
+                let mut actual = root.to_path_buf();
                 for candidate in chunk {
                     if stop.load(Ordering::SeqCst) {
                         break;
                     }
-                    let mut printer = builder.build(bufwtr.buffer());
-                    let mut sink = printer.sink_with_path(matcher.clone(), &candidate.display);
-                    let _ = searcher.search_path(matcher, &candidate.actual, &mut sink);
+                    actual.push(candidate);
+                    let depth = candidate.components().count();
+                    let mut sink = printer.sink_with_path(matcher, candidate);
+                    let _ = searcher.search_path(matcher, &actual, &mut sink);
                     if sink.has_match() {
                         any_match.store(true, Ordering::SeqCst);
                     }
                     let file_matched = sink.has_match();
                     drop(sink);
-                    if let Err(err) = bufwtr.print(printer.get_mut()) {
-                        if err.kind() == std::io::ErrorKind::BrokenPipe {
-                            stop.store(true, Ordering::SeqCst);
-                            break;
-                        }
+                    for _ in 0..depth {
+                        actual.pop();
                     }
                     if matches!(output.mode, SearchMode::Quiet) && file_matched {
                         stop.store(true, Ordering::SeqCst);
                         break;
+                    }
+                }
+                if let Err(err) = bufwtr.print(printer.get_mut()) {
+                    if err.kind() == std::io::ErrorKind::BrokenPipe {
+                        stop.store(true, Ordering::SeqCst);
                     }
                 }
             });
@@ -385,21 +405,22 @@ impl CompiledSearch {
         } else {
             let mut any_match = false;
             let mut remaining = self.opts.max_results;
+            let mut printer = builder.build(bufwtr.buffer());
+            let mut actual = root.to_path_buf();
             for candidate in candidates {
                 let mut searcher = self.build_searcher(false, remaining);
-                let mut printer = builder.build(bufwtr.buffer());
-                let mut sink = printer.sink_with_path(matcher.clone(), &candidate.display);
-                let _ = searcher.search_path(matcher, &candidate.actual, &mut sink);
+                actual.push(candidate);
+                let depth = candidate.components().count();
+                let mut sink = printer.sink_with_path(matcher, candidate);
+                let _ = searcher.search_path(matcher, &actual, &mut sink);
                 let file_matched = sink.has_match();
                 if file_matched {
                     any_match = true;
                 }
                 let used = usize::from(file_matched);
                 drop(sink);
-                if let Err(err) = bufwtr.print(printer.get_mut()) {
-                    if err.kind() == std::io::ErrorKind::BrokenPipe {
-                        break;
-                    }
+                for _ in 0..depth {
+                    actual.pop();
                 }
                 if let Some(ref mut left) = remaining {
                     *left = left.saturating_sub(used);
@@ -411,6 +432,11 @@ impl CompiledSearch {
                     break;
                 }
             }
+            if let Err(err) = bufwtr.print(printer.get_mut()) {
+                if err.kind() == std::io::ErrorKind::BrokenPipe {
+                    return any_match;
+                }
+            }
             any_match
         }
     }
@@ -418,7 +444,7 @@ impl CompiledSearch {
     #[cfg(test)]
     pub(crate) fn collect_index_matches(&self, index: &Index) -> crate::Result<Vec<Match>> {
         let candidates = self.candidate_paths(index, &[], false);
-        self.collect_candidates(&candidates, false)
+        self.collect_index_candidates(index.root.as_path(), &candidates)
     }
 
     #[cfg(test)]
@@ -430,35 +456,48 @@ impl CompiledSearch {
             let entry = entry.map_err(crate::Error::Ignore)?;
             if entry.path().is_file() {
                 let actual = entry.path().to_path_buf();
-                candidates.push(Candidate {
-                    display: actual.clone(),
-                    actual,
-                });
+                candidates.push(actual);
             }
         }
-        self.collect_candidates(&candidates, false)
+        self.collect_walk_candidates(&candidates)
     }
 
     #[cfg(test)]
-    fn collect_candidates(
+    fn collect_index_candidates(
         &self,
+        root: &Path,
         candidates: &[Candidate],
-        display_relative: bool,
     ) -> crate::Result<Vec<Match>> {
+        let matcher = self.build_matcher()?;
+        let mut searcher = self.build_searcher(true, None);
+        let mut out = Vec::new();
+        let mut actual = root.to_path_buf();
+        for candidate in candidates {
+            actual.push(candidate);
+            let depth = candidate.components().count();
+            let mut sink =
+                CollectSink::new(actual.clone(), self.opts.only_matching(), matcher.clone());
+            let _ = searcher.search_path(&matcher, &actual, &mut sink);
+            for _ in 0..depth {
+                actual.pop();
+            }
+            out.extend(sink.into_matches());
+        }
+        Ok(out)
+    }
+
+    #[cfg(test)]
+    fn collect_walk_candidates(&self, candidates: &[Candidate]) -> crate::Result<Vec<Match>> {
         let matcher = self.build_matcher()?;
         let mut searcher = self.build_searcher(true, None);
         let mut out = Vec::new();
         for candidate in candidates {
             let mut sink = CollectSink::new(
-                if display_relative {
-                    candidate.display.clone()
-                } else {
-                    candidate.actual.clone()
-                },
+                candidate.clone(),
                 self.opts.only_matching(),
                 matcher.clone(),
             );
-            let _ = searcher.search_path(&matcher, &candidate.actual, &mut sink);
+            let _ = searcher.search_path(&matcher, candidate, &mut sink);
             out.extend(sink.into_matches());
         }
         Ok(out)
