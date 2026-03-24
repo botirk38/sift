@@ -1,0 +1,1025 @@
+#!/usr/bin/env python3
+
+'''
+benchsuite is a benchmark runner for comparing sift and ripgrep on
+code-search workloads. Adapted from the ripgrep benchsuite.
+'''
+
+import argparse
+import csv
+import os
+import os.path as path
+from multiprocessing import cpu_count
+import re
+import shutil
+import statistics
+import subprocess
+import sys
+import time
+
+# Some constants for identifying the corpora we use to run tests.
+SUBTITLES_DIR = 'subtitles'
+SUBTITLES_EN_NAME = 'en.txt'
+SUBTITLES_EN_NAME_SAMPLE = 'en.sample.txt'
+SUBTITLES_EN_NAME_GZ = '%s.gz' % SUBTITLES_EN_NAME
+SUBTITLES_EN_URL = 'https://object.pouta.csc.fi/OPUS-OpenSubtitles/v2016/mono/en.txt.gz'
+SUBTITLES_RU_NAME = 'ru.txt'
+SUBTITLES_RU_NAME_GZ = '%s.gz' % SUBTITLES_RU_NAME
+SUBTITLES_RU_URL = 'https://object.pouta.csc.fi/OPUS-OpenSubtitles/v2016/mono/ru.txt.gz'
+
+LINUX_DIR = 'linux'
+LINUX_CLONE = 'https://github.com/BurntSushi/linux'
+
+# Cache of built sift indices: maps corpus_dir -> (sift_dir, built_flag)
+_sift_index_cache = {}
+
+# Path to the sift binary (assumed built at repo root)
+SIFT_BINARY = os.path.join(os.path.dirname(__file__), '..', 'target', 'release', 'sift')
+if not os.path.exists(SIFT_BINARY):
+    SIFT_BINARY = 'sift'
+
+
+def ensure_sift_index(corpus_dir, suite_dir=None):
+    '''
+    Build the sift index for corpus_dir if not already built.
+    Returns the sift index directory path.
+    '''
+    if corpus_dir in _sift_index_cache:
+        return _sift_index_cache[corpus_dir]
+
+    sift_dir = corpus_dir + '.sift'
+    if os.path.isdir(sift_dir):
+        _sift_index_cache[corpus_dir] = sift_dir
+        return sift_dir
+
+    print(f'# Building sift index for {corpus_dir} -> {sift_dir}', file=sys.stderr)
+    cmd = [SIFT_BINARY, '--sift-dir', sift_dir, 'build', corpus_dir]
+    result = subprocess.run(cmd, cwd=os.path.dirname(corpus_dir) or '.')
+    if result.returncode != 0:
+        raise RuntimeError(f'sift build failed for {corpus_dir}')
+    _sift_index_cache[corpus_dir] = sift_dir
+    return sift_dir
+
+
+def sift_cmd(sift_dir, pat, target=None, flags=None):
+    '''
+    Build a sift search command list.
+    '''
+    cmd = [SIFT_BINARY, '--sift-dir', sift_dir]
+    if flags:
+        cmd.extend(flags)
+    cmd.append(pat)
+    if target:
+        cmd.append(target)
+    return cmd
+
+
+class Benchmark(object):
+    '''
+    A single benchmark corresponding to a grouping of commands.
+    '''
+
+    def __init__(self, name=None, pattern=None, commands=None,
+                 warmup_count=1, count=3, line_count=True,
+                 allow_missing_commands=False,
+                 disabled_cmds=None, order=0,
+                 corpus_dir=None):
+        self.name = name
+        self.pattern = pattern
+        self.commands = commands or []
+        self.warmup_count = warmup_count
+        self.count = count
+        self.line_count = line_count
+        self.allow_missing_commands = allow_missing_commands
+        self.disabled_cmds = set(disabled_cmds or [])
+        self.order = order
+        self.corpus_dir = corpus_dir
+
+    def raise_if_missing(self):
+        missing_commands = []
+        for c in self.commands:
+            if c.binary_name in self.disabled_cmds or c.exists():
+                continue
+            missing_commands.append(c.binary_name)
+        if not self.allow_missing_commands and len(missing_commands) > 0:
+            raise MissingCommands(missing_commands)
+
+    def run(self):
+        self.raise_if_missing()
+        if self.corpus_dir:
+            ensure_sift_index(self.corpus_dir)
+        result = Result(self)
+        for cmd in self.commands:
+            if cmd.binary_name in self.disabled_cmds:
+                continue
+            if self.allow_missing_commands and not cmd.exists():
+                continue
+            for _ in range(self.warmup_count):
+                self.run_one(cmd)
+            for _ in range(self.count):
+                result.add(cmd, **self.run_one(cmd))
+        return result
+
+    def run_one(self, cmd):
+        if not cmd.exists():
+            raise MissingCommands([cmd.cmd[0]])
+        cmd.kwargs['stderr'] = subprocess.DEVNULL
+        if self.line_count:
+            cmd.kwargs['stdout'] = subprocess.PIPE
+        else:
+            cmd.kwargs['stdout'] = subprocess.DEVNULL
+
+        start = time.time()
+        completed = cmd.run()
+        end = time.time()
+
+        line_count = None
+        if self.line_count:
+            line_count = completed.stdout.count(b'\n')
+        return {
+            'duration': end - start,
+            'line_count': line_count,
+        }
+
+
+class Result(object):
+    def __init__(self, benchmark):
+        self.benchmark = benchmark
+        self.samples = []
+
+    def add(self, cmd, duration, line_count=None):
+        self.samples.append({
+            'cmd': cmd,
+            'duration': duration,
+            'line_count': line_count,
+        })
+
+    def fastest_sample(self):
+        return min(self.samples, key=lambda s: s['duration'])
+
+    def fastest_cmd(self):
+        means = []
+        for cmd in self.benchmark.commands:
+            mean, _ = self.distribution_for(cmd)
+            if mean is None:
+                continue
+            means.append((cmd, mean))
+        return min(means, key=lambda tup: tup[1])[0]
+
+    def samples_for(self, cmd):
+        yield from (s for s in self.samples if s['cmd'].name == cmd.name)
+
+    def line_counts_for(self, cmd):
+        return {s['line_count']
+                for s in self.samples_for(cmd)
+                if s['line_count'] is not None}
+
+    def distribution_for(self, cmd):
+        samples = list(s['duration'] for s in self.samples_for(cmd))
+        if len(samples) == 0:
+            return None, None
+        return statistics.mean(samples), statistics.stdev(samples)
+
+
+class Command(object):
+    def __init__(self, name, cmd, *args, **kwargs):
+        assert 'stdin' not in kwargs
+        assert 'stdout' not in kwargs
+        assert 'stderr' not in kwargs
+        self.name = name
+        self.cmd = cmd
+        self.args = args
+        self.kwargs = kwargs
+
+    def exists(self):
+        return shutil.which(self.binary_name) is not None
+
+    @property
+    def binary_name(self):
+        return self.cmd[0]
+
+    def run(self):
+        return subprocess.run(self.cmd, *self.args, **self.kwargs)
+
+
+def eprint(*args, **kwargs):
+    kwargs['file'] = sys.stderr
+    print(*args, **kwargs)
+
+
+def run_cmd(cmd, *args, **kwargs):
+    eprint('# %s' % ' '.join(cmd))
+    kwargs['check'] = True
+    return subprocess.run(cmd, *args, **kwargs)
+
+
+def require(suite_dir, *names):
+    errs = []
+    for name in names:
+        fun_name = name.replace('-', '_')
+        if not globals()['has_%s' % fun_name](suite_dir):
+            errs.append(name)
+    if len(errs) > 0:
+        raise MissingDependencies(errs)
+
+
+def download_linux(suite_dir):
+    checkout_dir = path.join(suite_dir, LINUX_DIR)
+    if not os.path.isdir(checkout_dir):
+        run_cmd(['git', 'clone', '--depth', '1', LINUX_CLONE, checkout_dir])
+    if not os.path.exists(path.join(checkout_dir, 'vmlinux')):
+        eprint('# Building Linux kernel...')
+        run_cmd(['make', 'defconfig'], cwd=checkout_dir)
+        run_cmd(['make', '-j', str(cpu_count())], cwd=checkout_dir)
+
+
+def has_linux(suite_dir):
+    checkout_dir = path.join(suite_dir, LINUX_DIR)
+    return path.exists(path.join(checkout_dir, 'vmlinux'))
+
+
+def download_subtitles_en(suite_dir):
+    subtitle_dir = path.join(suite_dir, SUBTITLES_DIR)
+    en_path_gz = path.join(subtitle_dir, SUBTITLES_EN_NAME_GZ)
+    en_path = path.join(subtitle_dir, SUBTITLES_EN_NAME)
+    en_path_sample = path.join(subtitle_dir, SUBTITLES_EN_NAME_SAMPLE)
+
+    if not os.path.isdir(subtitle_dir):
+        os.makedirs(subtitle_dir)
+    if not os.path.exists(en_path):
+        if not os.path.exists(en_path_gz):
+            run_cmd(['curl', '-LO', SUBTITLES_EN_URL], cwd=subtitle_dir)
+        run_cmd(['gunzip', en_path_gz])
+    if not os.path.exists(en_path_sample):
+        with open(path.join(subtitle_dir, en_path_sample), 'wb+') as f:
+            run_cmd(
+                ['head', '-n', '55000000', en_path],
+                cwd=subtitle_dir, stdout=f)
+
+
+def has_subtitles_en(suite_dir):
+    subtitle_dir = path.join(suite_dir, SUBTITLES_DIR)
+    return path.exists(path.join(subtitle_dir, SUBTITLES_EN_NAME_SAMPLE))
+
+
+def download_subtitles_ru(suite_dir):
+    subtitle_dir = path.join(suite_dir, SUBTITLES_DIR)
+    ru_path_gz = path.join(subtitle_dir, SUBTITLES_RU_NAME_GZ)
+    ru_path = path.join(subtitle_dir, SUBTITLES_RU_NAME)
+
+    if not os.path.isdir(subtitle_dir):
+        os.makedirs(subtitle_dir)
+    if not os.path.exists(ru_path):
+        if not os.path.exists(ru_path_gz):
+            run_cmd(['curl', '-LO', SUBTITLES_RU_URL], cwd=subtitle_dir)
+        run_cmd(['gunzip', ru_path_gz])
+
+
+def has_subtitles_ru(suite_dir):
+    subtitle_dir = path.join(suite_dir, SUBTITLES_DIR)
+    return path.exists(path.join(subtitle_dir, SUBTITLES_RU_NAME))
+
+
+def download(suite_dir, choices):
+    for choice in choices:
+        if choice == 'linux':
+            download_linux(suite_dir)
+        elif choice == 'subtitles-en':
+            download_subtitles_en(suite_dir)
+        elif choice == 'subtitles-ru':
+            download_subtitles_ru(suite_dir)
+        elif choice == 'all':
+            download_linux(suite_dir)
+            download_subtitles_en(suite_dir)
+            download_subtitles_ru(suite_dir)
+        else:
+            eprint('Unrecognized download choice: %s' % choice)
+            sys.exit(1)
+
+
+def collect_benchmarks(suite_dir, filter_pat=None,
+                       allow_missing_commands=False,
+                       disabled_cmds=None,
+                       warmup_iter=1, bench_iter=3):
+    benchmarks = []
+    for global_name in globals():
+        if not global_name.startswith('bench_'):
+            continue
+        name = re.sub('^bench_', '', global_name)
+        if filter_pat is not None and not re.search(filter_pat, name):
+            continue
+        try:
+            fun = globals()[global_name]
+            benchmark = fun(suite_dir)
+            benchmark.name = name
+            benchmark.warmup_count = warmup_iter
+            benchmark.count = bench_iter
+            benchmark.allow_missing_commands = allow_missing_commands
+            benchmark.disabled_cmds = disabled_cmds
+            benchmark.order = fun.__code__.co_firstlineno
+            benchmark.raise_if_missing()
+        except MissingDependencies as e:
+            eprint(
+                'missing: %s, skipping benchmark %s (try running with: %s)' % (
+                    ', '.join(e.missing_names),
+                    name,
+                    ' '.join(['--download %s' % n for n in e.missing_names]),
+                ))
+            continue
+        except MissingCommands as e:
+            fmt = 'missing commands: %s, skipping benchmark %s ' \
+                  '(run with --allow-missing to run incomplete benchmarks)'
+            eprint(fmt % (', '.join(e.missing_names), name))
+            continue
+        benchmarks.append(benchmark)
+    return sorted(benchmarks, key=lambda b: b.order)
+
+
+# =============================================================================
+# Linux benchmarks
+# =============================================================================
+
+def bench_linux_literal_default(suite_dir):
+    '''
+    Benchmark the speed of a literal using *default* settings.
+    Sift uses default settings (includes hidden files unlike rg default).
+    '''
+    require(suite_dir, 'linux')
+    cwd = path.join(suite_dir, LINUX_DIR)
+    pat = 'PM_RESUME'
+
+    def mkcmd(*args, **kwargs):
+        kwargs['cwd'] = cwd
+        return Command(*args, **kwargs)
+
+    sift_dir = ensure_sift_index(cwd)
+    return Benchmark(
+        pattern=pat, corpus_dir=cwd,
+        commands=[
+            mkcmd('rg', ['rg', pat]),
+            mkcmd('sift', sift_cmd(sift_dir, pat, flags=[])),
+        ])
+
+
+def bench_linux_literal(suite_dir):
+    '''
+    Benchmark the speed of a literal, attempting to be fair.
+    '''
+    require(suite_dir, 'linux')
+    cwd = path.join(suite_dir, LINUX_DIR)
+    pat = 'PM_RESUME'
+
+    def mkcmd(*args, **kwargs):
+        kwargs['cwd'] = cwd
+        return Command(*args, **kwargs)
+
+    sift_dir = ensure_sift_index(cwd)
+    return Benchmark(
+        pattern=pat, corpus_dir=cwd,
+        commands=[
+            mkcmd('rg', ['rg', '-n', pat]),
+            mkcmd('sift', sift_cmd(sift_dir, pat, flags=['-n'])),
+        ])
+
+
+def bench_linux_literal_casei(suite_dir):
+    '''
+    Benchmark the speed of a case insensitive literal search.
+    '''
+    require(suite_dir, 'linux')
+    cwd = path.join(suite_dir, LINUX_DIR)
+    pat = 'PM_RESUME'
+
+    def mkcmd(*args, **kwargs):
+        kwargs['cwd'] = cwd
+        return Command(*args, **kwargs)
+
+    sift_dir = ensure_sift_index(cwd)
+    return Benchmark(
+        pattern=pat, corpus_dir=cwd,
+        commands=[
+            mkcmd('rg', ['rg', '-n', '-i', pat]),
+            mkcmd('sift', sift_cmd(sift_dir, pat, flags=['-i', '-n'])),
+        ])
+
+
+def bench_linux_re_literal_suffix(suite_dir):
+    '''
+    Benchmark the speed of a literal inside a regex.
+    '''
+    require(suite_dir, 'linux')
+    cwd = path.join(suite_dir, LINUX_DIR)
+    pat = '[A-Z]+_RESUME'
+
+    def mkcmd(*args, **kwargs):
+        kwargs['cwd'] = cwd
+        return Command(*args, **kwargs)
+
+    sift_dir = ensure_sift_index(cwd)
+    return Benchmark(
+        pattern=pat, corpus_dir=cwd,
+        commands=[
+            mkcmd('rg', ['rg', '-n', pat]),
+            mkcmd('sift', sift_cmd(sift_dir, pat, flags=['-n'])),
+        ])
+
+
+def bench_linux_word(suite_dir):
+    '''
+    Benchmark use of the -w ("match word") flag in each tool.
+    '''
+    require(suite_dir, 'linux')
+    cwd = path.join(suite_dir, LINUX_DIR)
+    pat = 'PM_RESUME'
+
+    def mkcmd(*args, **kwargs):
+        kwargs['cwd'] = cwd
+        return Command(*args, **kwargs)
+
+    sift_dir = ensure_sift_index(cwd)
+    return Benchmark(
+        pattern=pat, corpus_dir=cwd,
+        commands=[
+            mkcmd('rg', ['rg', '-n', '-w', pat]),
+            mkcmd('sift', sift_cmd(sift_dir, pat, flags=['-n', '-w'])),
+        ])
+
+
+def bench_linux_unicode_greek(suite_dir):
+    '''
+    Benchmark matching of a Unicode category.
+    '''
+    require(suite_dir, 'linux')
+    cwd = path.join(suite_dir, LINUX_DIR)
+    pat = r'\p{Greek}'
+
+    def mkcmd(*args, **kwargs):
+        kwargs['cwd'] = cwd
+        return Command(*args, **kwargs)
+
+    sift_dir = ensure_sift_index(cwd)
+    return Benchmark(
+        pattern=pat, corpus_dir=cwd,
+        commands=[
+            mkcmd('rg', ['rg', '-n', pat]),
+            mkcmd('sift', sift_cmd(sift_dir, pat, flags=['-n'])),
+        ])
+
+
+def bench_linux_unicode_greek_casei(suite_dir):
+    '''
+    Benchmark matching of a Unicode category, case insensitively.
+    '''
+    require(suite_dir, 'linux')
+    cwd = path.join(suite_dir, LINUX_DIR)
+    pat = r'\p{Greek}'
+
+    def mkcmd(*args, **kwargs):
+        kwargs['cwd'] = cwd
+        return Command(*args, **kwargs)
+
+    sift_dir = ensure_sift_index(cwd)
+    return Benchmark(
+        pattern=pat, corpus_dir=cwd,
+        commands=[
+            mkcmd('rg', ['rg', '-n', '-i', pat]),
+            mkcmd('sift', sift_cmd(sift_dir, pat, flags=['-n', '-i'])),
+        ])
+
+
+def bench_linux_unicode_word(suite_dir):
+    '''
+    Benchmark Unicode aware \\w character class.
+    '''
+    require(suite_dir, 'linux')
+    cwd = path.join(suite_dir, LINUX_DIR)
+    pat = r'\wAh'
+
+    def mkcmd(*args, **kwargs):
+        kwargs['cwd'] = cwd
+        return Command(*args, **kwargs)
+
+    sift_dir = ensure_sift_index(cwd)
+    return Benchmark(
+        pattern=pat, corpus_dir=cwd,
+        commands=[
+            mkcmd('rg', ['rg', '-n', pat]),
+            mkcmd('rg (ASCII)', ['rg', '-n', '(?-u)' + pat]),
+            mkcmd('sift', sift_cmd(sift_dir, pat, flags=['-n'])),
+            mkcmd('sift (ASCII)', sift_cmd(sift_dir, '(?-u)' + pat, flags=['-n'])),
+        ])
+
+
+def bench_linux_no_literal(suite_dir):
+    '''
+    Benchmark a regex that defeats all literal optimizations.
+    '''
+    require(suite_dir, 'linux')
+    cwd = path.join(suite_dir, LINUX_DIR)
+    pat = r'\w{5}\s+\w{5}\s+\w{5}\s+\w{5}\s+\w{5}'
+
+    def mkcmd(*args, **kwargs):
+        kwargs['cwd'] = cwd
+        return Command(*args, **kwargs)
+
+    sift_dir = ensure_sift_index(cwd)
+    return Benchmark(
+        pattern=pat, corpus_dir=cwd,
+        commands=[
+            mkcmd('rg', ['rg', '-n', pat]),
+            mkcmd('rg (ASCII)', ['rg', '-n', '(?-u)' + pat]),
+            mkcmd('sift', sift_cmd(sift_dir, pat, flags=['-n'])),
+            mkcmd('sift (ASCII)', sift_cmd(sift_dir, '(?-u)' + pat, flags=['-n'])),
+        ])
+
+
+def bench_linux_alternates(suite_dir):
+    '''
+    Benchmark a small alternation of literals.
+    '''
+    require(suite_dir, 'linux')
+    cwd = path.join(suite_dir, LINUX_DIR)
+    pat = 'ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT'
+
+    def mkcmd(*args, **kwargs):
+        kwargs['cwd'] = cwd
+        return Command(*args, **kwargs)
+
+    sift_dir = ensure_sift_index(cwd)
+    return Benchmark(
+        pattern=pat, corpus_dir=cwd,
+        commands=[
+            mkcmd('rg', ['rg', '-n', pat]),
+            mkcmd('sift', sift_cmd(sift_dir, pat, flags=['-n'])),
+        ])
+
+
+def bench_linux_alternates_casei(suite_dir):
+    '''
+    Benchmark a small alternation of literals case insensitively.
+    '''
+    require(suite_dir, 'linux')
+    cwd = path.join(suite_dir, LINUX_DIR)
+    pat = 'ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT'
+
+    def mkcmd(*args, **kwargs):
+        kwargs['cwd'] = cwd
+        return Command(*args, **kwargs)
+
+    sift_dir = ensure_sift_index(cwd)
+    return Benchmark(
+        pattern=pat, corpus_dir=cwd,
+        commands=[
+            mkcmd('rg', ['rg', '-n', '-i', pat]),
+            mkcmd('sift', sift_cmd(sift_dir, pat, flags=['-n', '-i'])),
+        ])
+
+
+# =============================================================================
+# English subtitles benchmarks
+# =============================================================================
+
+def bench_subtitles_en_literal(suite_dir):
+    '''
+    Benchmark the speed of an ASCII string literal.
+    '''
+    require(suite_dir, 'subtitles-en')
+    en = path.join(suite_dir, SUBTITLES_DIR, SUBTITLES_EN_NAME_SAMPLE)
+    pat = 'Sherlock Holmes'
+
+    sift_dir = ensure_sift_index(path.join(suite_dir, SUBTITLES_DIR))
+    return Benchmark(
+        pattern=pat, corpus_dir=path.join(suite_dir, SUBTITLES_DIR),
+        commands=[
+            Command('rg', ['rg', pat, en]),
+            Command('rg (lines)', ['rg', '-n', pat, en]),
+            Command('sift', sift_cmd(sift_dir, pat, target=en)),
+            Command('sift (lines)', sift_cmd(sift_dir, pat, target=en, flags=['-n'])),
+        ])
+
+
+def bench_subtitles_en_literal_casei(suite_dir):
+    '''
+    Benchmark the speed of a Unicode-y string case insensitively.
+    '''
+    require(suite_dir, 'subtitles-en')
+    en = path.join(suite_dir, SUBTITLES_DIR, SUBTITLES_EN_NAME_SAMPLE)
+    pat = 'Sherlock Holmes'
+
+    sift_dir = ensure_sift_index(path.join(suite_dir, SUBTITLES_DIR))
+    return Benchmark(
+        pattern=pat, corpus_dir=path.join(suite_dir, SUBTITLES_DIR),
+        commands=[
+            Command('rg', ['rg', '-i', pat, en]),
+            Command('rg (lines)', ['rg', '-n', '-i', pat, en]),
+            Command('sift', sift_cmd(sift_dir, pat, target=en, flags=['-i'])),
+            Command('sift (lines)', sift_cmd(sift_dir, pat, target=en, flags=['-n', '-i'])),
+        ])
+
+
+def bench_subtitles_en_literal_word(suite_dir):
+    '''
+    Benchmark the speed of finding a literal inside word boundaries.
+    '''
+    require(suite_dir, 'subtitles-en')
+    en = path.join(suite_dir, SUBTITLES_DIR, SUBTITLES_EN_NAME_SAMPLE)
+    pat = 'Sherlock Holmes'
+
+    sift_dir = ensure_sift_index(path.join(suite_dir, SUBTITLES_DIR))
+    return Benchmark(
+        pattern=pat, corpus_dir=path.join(suite_dir, SUBTITLES_DIR),
+        commands=[
+            Command('rg', ['rg', '-n', '-w', pat, en]),
+            Command('rg (ASCII)', [
+                'rg', '-n', r'(?-u:\b)' + pat + r'(?-u:\b)', en,
+            ]),
+            Command('sift', sift_cmd(sift_dir, pat, target=en, flags=['-n', '-w'])),
+            Command('sift (ASCII)', sift_cmd(
+                sift_dir, r'(?-u:\b)' + pat + r'(?-u:\b)', target=en, flags=['-n'],
+            )),
+        ])
+
+
+def bench_subtitles_en_alternate(suite_dir):
+    '''
+    Benchmark the speed of a set of alternate literals.
+    '''
+    require(suite_dir, 'subtitles-en')
+    en = path.join(suite_dir, SUBTITLES_DIR, SUBTITLES_EN_NAME_SAMPLE)
+    pat = '|'.join([
+        'Sherlock Holmes',
+        'John Watson',
+        'Irene Adler',
+        'Inspector Lestrade',
+        'Professor Moriarty',
+    ])
+
+    sift_dir = ensure_sift_index(path.join(suite_dir, SUBTITLES_DIR))
+    return Benchmark(
+        pattern=pat, corpus_dir=path.join(suite_dir, SUBTITLES_DIR),
+        commands=[
+            Command('rg (lines)', ['rg', '-n', pat, en]),
+            Command('rg', ['rg', pat, en]),
+            Command('sift (lines)', sift_cmd(sift_dir, pat, target=en, flags=['-n'])),
+            Command('sift', sift_cmd(sift_dir, pat, target=en)),
+        ])
+
+
+def bench_subtitles_en_alternate_casei(suite_dir):
+    '''
+    Benchmark the speed of a set of alternate literals case insensitively.
+    '''
+    require(suite_dir, 'subtitles-en')
+    en = path.join(suite_dir, SUBTITLES_DIR, SUBTITLES_EN_NAME_SAMPLE)
+    pat = '|'.join([
+        'Sherlock Holmes',
+        'John Watson',
+        'Irene Adler',
+        'Inspector Lestrade',
+        'Professor Moriarty',
+    ])
+
+    sift_dir = ensure_sift_index(path.join(suite_dir, SUBTITLES_DIR))
+    return Benchmark(
+        pattern=pat, corpus_dir=path.join(suite_dir, SUBTITLES_DIR),
+        commands=[
+            Command('rg', ['rg', '-n', '-i', pat, en]),
+            Command('sift', sift_cmd(sift_dir, pat, target=en, flags=['-n', '-i'])),
+        ])
+
+
+def bench_subtitles_en_surrounding_words(suite_dir):
+    '''
+    Benchmark a more complex regex with an inner literal.
+    '''
+    require(suite_dir, 'subtitles-en')
+    en = path.join(suite_dir, SUBTITLES_DIR, SUBTITLES_EN_NAME_SAMPLE)
+    pat = r'\w+\s+Holmes\s+\w+'
+
+    sift_dir = ensure_sift_index(path.join(suite_dir, SUBTITLES_DIR))
+    return Benchmark(
+        pattern=pat, corpus_dir=path.join(suite_dir, SUBTITLES_DIR),
+        commands=[
+            Command('rg', ['rg', '-n', pat, en]),
+            Command('rg (ASCII)', ['rg', '-n', '(?-u)' + pat, en]),
+            Command('sift', sift_cmd(sift_dir, pat, target=en, flags=['-n'])),
+            Command('sift (ASCII)', sift_cmd(sift_dir, '(?-u)' + pat, target=en, flags=['-n'])),
+        ])
+
+
+def bench_subtitles_en_no_literal(suite_dir):
+    '''
+    Benchmark the speed of a regex with no literals.
+    '''
+    require(suite_dir, 'subtitles-en')
+    en = path.join(suite_dir, SUBTITLES_DIR, SUBTITLES_EN_NAME_SAMPLE)
+    pat = r'\w{5}\s+\w{5}\s+\w{5}\s+\w{5}\s+\w{5}\s+\w{5}\s+\w{5}'
+
+    sift_dir = ensure_sift_index(path.join(suite_dir, SUBTITLES_DIR))
+    return Benchmark(
+        pattern=pat, corpus_dir=path.join(suite_dir, SUBTITLES_DIR),
+        commands=[
+            Command('rg', ['rg', '-n', pat, en]),
+            Command('rg (ASCII)', ['rg', '-n', '(?-u)' + pat, en]),
+            Command('sift', sift_cmd(sift_dir, pat, target=en, flags=['-n'])),
+            Command('sift (ASCII)', sift_cmd(sift_dir, '(?-u)' + pat, target=en, flags=['-n'])),
+        ])
+
+
+# =============================================================================
+# Russian subtitles benchmarks
+# =============================================================================
+
+def bench_subtitles_ru_literal(suite_dir):
+    '''
+    Benchmark the speed of a Unicode-y string literal.
+    '''
+    require(suite_dir, 'subtitles-ru')
+    ru = path.join(suite_dir, SUBTITLES_DIR, SUBTITLES_RU_NAME)
+    pat = 'Шерлок Холмс'
+
+    sift_dir = ensure_sift_index(path.join(suite_dir, SUBTITLES_DIR))
+    return Benchmark(
+        pattern=pat, corpus_dir=path.join(suite_dir, SUBTITLES_DIR),
+        commands=[
+            Command('rg', ['rg', pat, ru]),
+            Command('rg (lines)', ['rg', '-n', pat, ru]),
+            Command('sift', sift_cmd(sift_dir, pat, target=ru)),
+            Command('sift (lines)', sift_cmd(sift_dir, pat, target=ru, flags=['-n'])),
+        ])
+
+
+def bench_subtitles_ru_literal_casei(suite_dir):
+    '''
+    Benchmark the speed of a Unicode-y string case insensitively.
+    '''
+    require(suite_dir, 'subtitles-ru')
+    ru = path.join(suite_dir, SUBTITLES_DIR, SUBTITLES_RU_NAME)
+    pat = 'Шерлок Холмс'
+
+    sift_dir = ensure_sift_index(path.join(suite_dir, SUBTITLES_DIR))
+    return Benchmark(
+        pattern=pat, corpus_dir=path.join(suite_dir, SUBTITLES_DIR),
+        commands=[
+            Command('rg', ['rg', '-i', pat, ru]),
+            Command('rg (lines)', ['rg', '-n', '-i', pat, ru]),
+            Command('sift', sift_cmd(sift_dir, pat, target=ru, flags=['-i'])),
+            Command('sift (lines)', sift_cmd(sift_dir, pat, target=ru, flags=['-n', '-i'])),
+        ])
+
+
+def bench_subtitles_ru_literal_word(suite_dir):
+    '''
+    Benchmark the speed of finding a literal inside word boundaries.
+    '''
+    require(suite_dir, 'subtitles-ru')
+    ru = path.join(suite_dir, SUBTITLES_DIR, SUBTITLES_RU_NAME)
+    pat = 'Шерлок Холмс'
+
+    sift_dir = ensure_sift_index(path.join(suite_dir, SUBTITLES_DIR))
+    return Benchmark(
+        pattern=pat, corpus_dir=path.join(suite_dir, SUBTITLES_DIR),
+        commands=[
+            Command('rg', ['rg', '-nw', pat, ru]),
+            Command('rg (ASCII)', [
+                'rg', '-n', r'(?-u:^|\W)' + pat + r'(?-u:$|\W)', ru,
+            ]),
+            Command('sift', sift_cmd(sift_dir, pat, target=ru, flags=['-n', '-w'])),
+            Command('sift (ASCII)', sift_cmd(
+                sift_dir, r'(?-u:^|\W)' + pat + r'(?-u:$|\W)', target=ru, flags=['-n'],
+            )),
+        ])
+
+
+def bench_subtitles_ru_alternate(suite_dir):
+    '''
+    Benchmark the speed of a set of alternate literals.
+    '''
+    require(suite_dir, 'subtitles-ru')
+    ru = path.join(suite_dir, SUBTITLES_DIR, SUBTITLES_RU_NAME)
+    pat = '|'.join([
+        'Шерлок Холмс',
+        'Джон Уотсон',
+        'Ирен Адлер',
+        'инспектор Лестрейд',
+        'профессор Мориарти',
+    ])
+
+    sift_dir = ensure_sift_index(path.join(suite_dir, SUBTITLES_DIR))
+    return Benchmark(
+        pattern=pat, corpus_dir=path.join(suite_dir, SUBTITLES_DIR),
+        commands=[
+            Command('rg (lines)', ['rg', '-n', pat, ru]),
+            Command('rg', ['rg', pat, ru]),
+            Command('sift (lines)', sift_cmd(sift_dir, pat, target=ru, flags=['-n'])),
+            Command('sift', sift_cmd(sift_dir, pat, target=ru)),
+        ])
+
+
+def bench_subtitles_ru_alternate_casei(suite_dir):
+    '''
+    Benchmark the speed of a set of alternate literals case insensitively.
+    '''
+    require(suite_dir, 'subtitles-ru')
+    ru = path.join(suite_dir, SUBTITLES_DIR, SUBTITLES_RU_NAME)
+    pat = '|'.join([
+        'Шерлок Холмс',
+        'Джон Уотсон',
+        'Ирен Адлер',
+        'инспектор Лестрейд',
+        'профессор Мориарти',
+    ])
+
+    sift_dir = ensure_sift_index(path.join(suite_dir, SUBTITLES_DIR))
+    return Benchmark(
+        pattern=pat, corpus_dir=path.join(suite_dir, SUBTITLES_DIR),
+        commands=[
+            Command('rg', ['rg', '-n', '-i', pat, ru]),
+            Command('sift', sift_cmd(sift_dir, pat, target=ru, flags=['-n', '-i'])),
+        ])
+
+
+def bench_subtitles_ru_surrounding_words(suite_dir):
+    '''
+    Benchmark a more complex regex with an inner literal.
+    '''
+    require(suite_dir, 'subtitles-en')
+    ru = path.join(suite_dir, SUBTITLES_DIR, SUBTITLES_RU_NAME)
+    pat = r'\w+\s+Холмс\s+\w+'
+
+    sift_dir = ensure_sift_index(path.join(suite_dir, SUBTITLES_DIR))
+    return Benchmark(
+        pattern=pat, corpus_dir=path.join(suite_dir, SUBTITLES_DIR),
+        commands=[
+            Command('rg', ['rg', '-n', pat, ru]),
+            Command('rg (ASCII)', ['rg', '-n', '(?-u)' + pat, ru]),
+            Command('sift', sift_cmd(sift_dir, pat, target=ru, flags=['-n'])),
+            Command('sift (ASCII)', sift_cmd(sift_dir, '(?-u)' + pat, target=ru, flags=['-n'])),
+        ])
+
+
+def bench_subtitles_ru_no_literal(suite_dir):
+    '''
+    Benchmark the speed of a regex with no literals.
+    '''
+    require(suite_dir, 'subtitles-ru')
+    ru = path.join(suite_dir, SUBTITLES_DIR, SUBTITLES_RU_NAME)
+    pat = r'\w{5}\s+\w{5}\s+\w{5}\s+\w{5}\s+\w{5}\s+\w{5}\s+\w{5}'
+
+    sift_dir = ensure_sift_index(path.join(suite_dir, SUBTITLES_DIR))
+    return Benchmark(
+        pattern=pat, corpus_dir=path.join(suite_dir, SUBTITLES_DIR),
+        commands=[
+            Command('rg', ['rg', '-n', pat, ru]),
+            Command('rg (ASCII)', ['rg', '-n', '(?-u)' + pat, ru]),
+            Command('sift', sift_cmd(sift_dir, pat, target=ru, flags=['-n'])),
+            Command('sift (ASCII)', sift_cmd(sift_dir, '(?-u)' + pat, target=ru, flags=['-n'])),
+        ])
+
+
+class MissingDependencies(Exception):
+    def __init__(self, missing_names):
+        self.missing_names = missing_names
+
+    def __str__(self):
+        return 'MissingDependency(%s)' % repr(self.missing_names)
+
+
+class MissingCommands(Exception):
+    def __init__(self, missing_names):
+        self.missing_names = sorted(set(missing_names))
+
+    def __str__(self):
+        return 'MissingCommands(%s)' % repr(self.missing_names)
+
+
+def main():
+    global SIFT_BINARY
+    download_choices = ['all', 'linux', 'subtitles-en', 'subtitles-ru']
+    p = argparse.ArgumentParser(
+        'Command line search tool benchmark suite (sift + rg).')
+    p.add_argument(
+        '--dir', metavar='PATH', default=os.getcwd(),
+        help='The directory in which to download data and perform searches.')
+    p.add_argument(
+        '--download', metavar='CORPUS', action='append',
+        choices=download_choices,
+        help='Download and prepare corpus data, then exit without running '
+             'any benchmarks.')
+    p.add_argument(
+        '--allow-missing', action='store_true',
+        help='Permit benchmarks to run even if some commands are missing.')
+    p.add_argument(
+        '--disabled', help='A list of comma separated commands to skip.')
+    p.add_argument(
+        '-f', '--force', action='store_true',
+        help='Overwrite existing files if there is a conflict.')
+    p.add_argument(
+        '--list', action='store_true',
+        help='List available benchmarks by name.')
+    p.add_argument(
+        '--raw', metavar='PATH',
+        help='Dump raw data (all samples collected) in CSV format to the '
+             'file path provided.')
+    p.add_argument(
+        '--warmup-iter', metavar='INTEGER', type=int, default=1,
+        help='The number of iterations to run each command before '
+             'recording measurements.')
+    p.add_argument(
+        '--bench-iter', metavar='INTEGER', type=int, default=3,
+        help='The number of iterations to run each command while '
+             'recording measurements.')
+    p.add_argument(
+        '--sift-binary', metavar='PATH', default=None,
+        help='Path to the sift binary.')
+    p.add_argument(
+        'bench', metavar='PAT', nargs='?',
+        help='A regex pattern that will only run benchmarks that match.')
+    args = p.parse_args()
+
+    if args.sift_binary != SIFT_BINARY:
+        SIFT_BINARY = args.sift_binary
+
+    if args.list:
+        benchmarks = collect_benchmarks(
+            args.dir, filter_pat=args.bench,
+            allow_missing_commands=args.allow_missing,
+            disabled_cmds=(args.disabled or '').split(','),
+            warmup_iter=args.warmup_iter, bench_iter=args.bench_iter)
+        for b in benchmarks:
+            print(b.name)
+        sys.exit(0)
+    if args.download is not None and len(args.download) > 0:
+        download(args.dir, args.download)
+        sys.exit(0)
+
+    if not path.isdir(args.dir):
+        os.makedirs(args.dir)
+    if args.raw is not None and path.exists(args.raw) and not args.force:
+        eprint('File %s already exists (delete it or use --force)' % args.raw)
+        sys.exit(1)
+    raw_handle, raw_csv_wtr = None, None
+    if args.raw is not None:
+        fields = [
+            'benchmark', 'warmup_iter', 'iter',
+            'name', 'command', 'duration', 'lines', 'env',
+        ]
+        raw_handle = open(args.raw, 'w+')
+        raw_csv_wtr = csv.DictWriter(raw_handle, fields)
+        raw_csv_wtr.writerow({x: x for x in fields})
+
+    benchmarks = collect_benchmarks(
+        args.dir, filter_pat=args.bench,
+        allow_missing_commands=args.allow_missing,
+        disabled_cmds=(args.disabled or '').split(','),
+        warmup_iter=args.warmup_iter, bench_iter=args.bench_iter)
+    for i, b in enumerate(benchmarks):
+        result = b.run()
+        fastest_cmd = result.fastest_cmd()
+        fastest_sample = result.fastest_sample()
+        max_name_len = max(len(cmd.name) for cmd in b.commands)
+
+        if i > 0:
+            print()
+        header = '%s (pattern: %s)' % (b.name, b.pattern)
+        print('%s\n%s' % (header, '-' * len(header)))
+        for cmd in b.commands:
+            name = cmd.name
+            mean, stdev = result.distribution_for(cmd)
+            if mean is None:
+                continue
+            line_counts = result.line_counts_for(cmd)
+            show_fast_cmd, show_line_counts = '', ''
+            if fastest_cmd.name == cmd.name:
+                show_fast_cmd = '*'
+            if fastest_sample['cmd'].name == cmd.name:
+                name += '*'
+            if len(line_counts) > 0:
+                counts = map(str, line_counts)
+                show_line_counts = ' (lines: %s)' % ', '.join(counts)
+            fmt = '{name:{pad}} {mean:0.3f} +/- {stdev:0.3f}{lines}{fast_cmd}'
+            print(fmt.format(
+                name=name, pad=max_name_len + 2, fast_cmd=show_fast_cmd,
+                mean=mean, stdev=stdev, lines=show_line_counts))
+        sys.stdout.flush()
+
+        if raw_csv_wtr is not None:
+            for sample in result.samples:
+                cmd, duration = sample['cmd'], sample['duration']
+                env = ' '.join(['%s=%s' % (k, v)
+                                for k, v in cmd.kwargs.get('env', {}).items()])
+                raw_csv_wtr.writerow({
+                    'benchmark': b.name,
+                    'warmup_iter': b.warmup_count,
+                    'iter': b.count,
+                    'name': sample['cmd'].name,
+                    'command': ' '.join(cmd.cmd),
+                    'duration': duration,
+                    'lines': sample['line_count'] or '',
+                    'env': env,
+                })
+            raw_handle.flush()
+
+
+if __name__ == '__main__':
+    main()
