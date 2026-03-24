@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use bitflags::bitflags;
 use ignore::WalkBuilder;
@@ -14,15 +15,19 @@ use crate::planner::TrigramPlan;
 use crate::verify;
 use crate::Index;
 
+static PARALLEL_MIN_FILES: OnceLock<usize> = OnceLock::new();
+
 #[must_use]
 pub fn parallel_candidate_min_files() -> usize {
-    let cpus = std::thread::available_parallelism()
-        .map(std::num::NonZeroUsize::get)
-        .unwrap_or(1);
-    let rayon_threads = std::env::var("RAYON_NUM_THREADS")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok());
-    parallel_scan_min_files_inner(cpus, rayon_threads)
+    *PARALLEL_MIN_FILES.get_or_init(|| {
+        let cpus = std::thread::available_parallelism()
+            .map(std::num::NonZeroUsize::get)
+            .unwrap_or(1);
+        let rayon_threads = std::env::var("RAYON_NUM_THREADS")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok());
+        parallel_scan_min_files_inner(cpus, rayon_threads)
+    })
 }
 
 fn parallel_scan_min_files_inner(cpus: usize, rayon_threads: Option<usize>) -> usize {

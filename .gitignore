@@ -6,3 +6,5 @@
 /cargo-flamegraph.trace
 .cursor/
 .index/
+*.data
+*.data.*
