@@ -87,12 +87,19 @@ pub enum SearchMode {
     Count,
     FilesWithMatches,
     FilesWithoutMatch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutputEmission {
+    #[default]
+    Normal,
     Quiet,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SearchOutput {
     pub mode: SearchMode,
+    pub emission: OutputEmission,
     pub with_filename: bool,
     pub line_number: bool,
 }
@@ -101,6 +108,7 @@ impl Default for SearchOutput {
     fn default() -> Self {
         Self {
             mode: SearchMode::Standard,
+            emission: OutputEmission::Normal,
             with_filename: true,
             line_number: false,
         }

@@ -6,5 +6,6 @@ mod types;
 
 pub use execute::{parallel_candidate_min_files, walk_file_paths};
 pub use types::{
-    CaseMode, CompiledSearch, Match, SearchMatchFlags, SearchMode, SearchOptions, SearchOutput,
+    CaseMode, CompiledSearch, Match, OutputEmission, SearchMatchFlags, SearchMode, SearchOptions,
+    SearchOutput,
 };

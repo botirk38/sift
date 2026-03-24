@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use clap::{value_parser, Arg, ArgAction, Args, Command, FromArgMatches, Parser, Subcommand};
 use ignore::overrides::OverrideBuilder;
 use sift_core::{
-    CaseMode, CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchMode, SearchOptions,
-    SearchOutput,
+    CaseMode, CompiledSearch, Index, IndexBuilder, OutputEmission, SearchMatchFlags, SearchMode,
+    SearchOptions, SearchOutput,
 };
 
 #[derive(Parser)]
@@ -175,6 +175,7 @@ fn resolve_invert_match_from_args(args: &[String]) -> bool {
 fn resolve_output_mode(args: &[String], invert_match: bool) -> (SearchMode, bool, bool) {
     let mut last_idx = 0usize;
     let mut mode = SearchMode::Standard;
+    let mut quiet = false;
 
     for (i, arg) in args.iter().enumerate() {
         let bytes = arg.as_bytes();
@@ -207,14 +208,14 @@ fn resolve_output_mode(args: &[String], invert_match: bool) -> (SearchMode, bool
         if let Some((idx, name)) = flag {
             if idx > last_idx {
                 last_idx = idx;
-                mode = match name {
-                    "count" => SearchMode::Count,
-                    "files_with_matches" => SearchMode::FilesWithMatches,
-                    "files_without_match" => SearchMode::FilesWithoutMatch,
-                    "only_matching" => SearchMode::OnlyMatching,
-                    "quiet" => SearchMode::Quiet,
-                    _ => mode,
-                };
+                match name {
+                    "count" => mode = SearchMode::Count,
+                    "files_with_matches" => mode = SearchMode::FilesWithMatches,
+                    "files_without_match" => mode = SearchMode::FilesWithoutMatch,
+                    "only_matching" => mode = SearchMode::OnlyMatching,
+                    "quiet" => quiet = true,
+                    _ => {}
+                }
             }
         }
     }
@@ -223,9 +224,8 @@ fn resolve_output_mode(args: &[String], invert_match: bool) -> (SearchMode, bool
         mode = SearchMode::Count;
     }
 
-    let quiet = mode == SearchMode::Quiet;
     let only_matching = mode == SearchMode::OnlyMatching;
-    if quiet || only_matching {
+    if only_matching {
         mode = SearchMode::Standard;
     }
 
@@ -425,9 +425,7 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
         opts.flags |= SearchMatchFlags::ONLY_MATCHING;
     }
 
-    let effective_mode = if quiet {
-        SearchMode::Quiet
-    } else if only_matching {
+    let effective_mode = if only_matching {
         SearchMode::OnlyMatching
     } else {
         mode
@@ -435,6 +433,11 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
 
     let output = SearchOutput {
         mode: effective_mode,
+        emission: if quiet {
+            OutputEmission::Quiet
+        } else {
+            OutputEmission::Normal
+        },
         with_filename: !cli.out3.no_filename,
         line_number: cli.out1.line_number,
     };

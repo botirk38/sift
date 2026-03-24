@@ -669,3 +669,171 @@ fn build_command_error_exit_code() {
 
     assert_eq!(out.status.code(), Some(2));
 }
+
+#[test]
+fn quiet_with_files_with_matches_match() {
+    let root = fresh_dir("modes-quiet-l-match");
+    fs::write(root.join("a.txt"), "found\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-l")
+        .arg("-q")
+        .arg("found")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(normalized_stdout(&out).is_empty());
+}
+
+#[test]
+fn quiet_with_files_with_matches_no_match() {
+    let root = fresh_dir("modes-quiet-l-nomatch");
+    fs::write(root.join("a.txt"), "found\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-l")
+        .arg("-q")
+        .arg("notfound")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(normalized_stdout(&out).is_empty());
+}
+
+#[test]
+fn quiet_with_files_without_match_match() {
+    let root = fresh_dir("modes-quiet-L-match");
+    fs::write(root.join("a.txt"), "found\n").unwrap();
+    fs::write(root.join("b.txt"), "found\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-L")
+        .arg("-q")
+        .arg("found")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(normalized_stdout(&out).is_empty());
+}
+
+#[test]
+fn quiet_with_files_without_match_no_match() {
+    let root = fresh_dir("modes-quiet-L-nomatch");
+    fs::write(root.join("a.txt"), "found\n").unwrap();
+    fs::write(root.join("b.txt"), "miss\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-L")
+        .arg("-q")
+        .arg("found")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(normalized_stdout(&out).is_empty());
+}
+
+#[test]
+fn quiet_flag_order_independent() {
+    let root = fresh_dir("modes-quiet-order");
+    fs::write(root.join("a.txt"), "found\n").unwrap();
+    fs::write(root.join("b.txt"), "found\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    for args in &[&["-q", "-L"][..], &["-L", "-q"][..]] {
+        let out = command(None)
+            .arg("--sift-dir")
+            .arg(&idx)
+            .args(*args)
+            .arg("found")
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "-L -q should exit 1 when all files match"
+        );
+        assert!(normalized_stdout(&out).is_empty());
+    }
+}
+
+#[test]
+fn quiet_count_no_output() {
+    let root = fresh_dir("modes-quiet-count");
+    fs::write(root.join("a.txt"), "found\nfound\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-c")
+        .arg("-q")
+        .arg("found")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(normalized_stdout(&out).is_empty());
+}
+
+#[test]
+fn quiet_only_matching_match() {
+    let root = fresh_dir("modes-quiet-o-match");
+    fs::write(root.join("a.txt"), "hello world\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-o")
+        .arg("-q")
+        .arg("hello")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(normalized_stdout(&out).is_empty());
+}
+
+#[test]
+fn quiet_only_matching_no_match() {
+    let root = fresh_dir("modes-quiet-o-nomatch");
+    fs::write(root.join("a.txt"), "hello world\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-o")
+        .arg("-q")
+        .arg("notfound")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(normalized_stdout(&out).is_empty());
+}

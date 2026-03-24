@@ -12,8 +12,8 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use std::hint::black_box;
 
 use sift_core::{
-    CaseMode, CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchMode, SearchOptions,
-    SearchOutput,
+    CaseMode, CompiledSearch, Index, IndexBuilder, OutputEmission, SearchMatchFlags, SearchMode,
+    SearchOptions, SearchOutput,
 };
 
 fn make_parity_corpus(root: &Path) {
@@ -88,7 +88,8 @@ fn open_large_index() -> (tempfile::TempDir, Index) {
 
 const fn make_output() -> SearchOutput {
     SearchOutput {
-        mode: SearchMode::Quiet,
+        mode: SearchMode::Standard,
+        emission: OutputEmission::Quiet,
         with_filename: false,
         line_number: false,
     }

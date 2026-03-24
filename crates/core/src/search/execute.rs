@@ -13,7 +13,7 @@ use rayon::prelude::*;
 use crate::planner::TrigramPlan;
 use crate::Index;
 
-use super::{CompiledSearch, SearchMode, SearchOutput};
+use super::{CompiledSearch, OutputEmission, SearchMode, SearchOutput};
 
 #[cfg(test)]
 use super::Match;
@@ -91,10 +91,7 @@ impl CompiledSearch {
             SearchMode::Standard | SearchMode::OnlyMatching => {
                 self.run_standard(index, &candidate_ids, &matcher, output, parallel)
             }
-            SearchMode::Count
-            | SearchMode::FilesWithMatches
-            | SearchMode::FilesWithoutMatch
-            | SearchMode::Quiet => {
+            SearchMode::Count | SearchMode::FilesWithMatches | SearchMode::FilesWithoutMatch => {
                 self.run_summary(index, &candidate_ids, &matcher, output, parallel)
             }
         }
@@ -177,6 +174,9 @@ impl CompiledSearch {
             for _ in 0..depth {
                 actual.pop();
             }
+            if output.emission == OutputEmission::Quiet && any_match {
+                break;
+            }
         }
 
         flush_chunk_output(std::iter::once(ChunkOutput {
@@ -208,7 +208,7 @@ impl CompiledSearch {
             for _ in 0..depth {
                 actual.pop();
             }
-            if matches!(output.mode, SearchMode::Quiet) && result.matched {
+            if output.emission == OutputEmission::Quiet && mode_is_success(output.mode, result) {
                 break;
             }
         }
@@ -338,6 +338,10 @@ impl<'a> StandardWorker<'a> {
             sink.matched
         };
 
+        if self.output.emission == OutputEmission::Quiet && matched {
+            stop.store(true, Ordering::SeqCst);
+        }
+
         FileResult {
             index: result_index,
             output: ChunkOutput {
@@ -381,6 +385,10 @@ impl Sink for StandardSink<'_> {
     fn matched(&mut self, _: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, Self::Error> {
         self.matched = true;
         self.match_count += 1;
+
+        if self.output.emission == OutputEmission::Quiet {
+            return Ok(true);
+        }
 
         if matches!(self.output.mode, SearchMode::OnlyMatching) {
             let line_number = mat.line_number();
@@ -455,7 +463,7 @@ impl SummaryWorker {
         let matched = mode_is_success(output.mode, result);
         let mut bytes = Vec::new();
         let _ = write_summary_record(&mut bytes, output, &actual, result);
-        if matches!(output.mode, SearchMode::Quiet) && result.matched {
+        if output.emission == OutputEmission::Quiet && mode_is_success(output.mode, result) {
             stop.store(true, Ordering::SeqCst);
         }
 
@@ -534,6 +542,9 @@ fn write_summary_record(
     path: &Path,
     result: FileSummary,
 ) -> io::Result<()> {
+    if output.emission == OutputEmission::Quiet {
+        return Ok(());
+    }
     match output.mode {
         SearchMode::Count => {
             if output.with_filename {
@@ -556,7 +567,6 @@ fn write_summary_record(
                 Ok(())
             }
         }
-        SearchMode::Quiet => Ok(()),
         SearchMode::Standard | SearchMode::OnlyMatching => unreachable!(),
     }
 }
@@ -578,7 +588,7 @@ fn write_standard_prefix(
 
 const fn mode_is_success(mode: SearchMode, result: FileSummary) -> bool {
     match mode {
-        SearchMode::Count | SearchMode::FilesWithMatches | SearchMode::Quiet => result.matched,
+        SearchMode::Count | SearchMode::FilesWithMatches => result.matched,
         SearchMode::FilesWithoutMatch => !result.matched,
         SearchMode::Standard | SearchMode::OnlyMatching => unreachable!(),
     }
