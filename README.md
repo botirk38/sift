@@ -30,13 +30,13 @@ Patterns use Rust’s **`regex`** syntax unless **`-F`** (fixed string). Literal
 
 ## Performance snapshot
 
-Current Linux benchsuite snapshot against the Linux corpus, generated from benchsuite raw CSV and aggregated by category median speedup:
+Current Linux benchsuite snapshot against the Linux corpus.
 
 - correctness parity: **11/11**
 - `sift` faster: **8/11**
 - `rg` faster: **3/11**
 
-![Linux performance summary](docs/perf/linux-summary.svg)
+![Linux performance summary](docs/perf/linux-summary.jpg)
 
 | Search class | Snapshot | Takeaway |
 |---|---:|---|
@@ -51,13 +51,6 @@ Fast path takeaways:
 - indexed literal, word, suffix-literal, and alternation searches are decisively faster with `sift`
 - full-scan Unicode class searches are the main remaining gap versus `rg`
 - see [`crates/core/benches/README.md`](crates/core/benches/README.md) for the benchmark and profiling workflow
-
-Regenerate the snapshot and chart:
-
-```bash
-SIFT_BINARY=target/release/sift python3 benchsuite/benchsuite --dir benchsuite --summary-only --raw docs/perf/linux-summary.csv --force linux
-uv run --with matplotlib python scripts/bench_chart.py docs/perf/linux-summary.csv docs/perf/linux-summary.svg
-```
 
 ## Develop
 
