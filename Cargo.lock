@@ -812,6 +812,7 @@ dependencies = [
  "grep-searcher",
  "ignore",
  "memchr",
+ "memmap2",
  "rayon",
  "regex-automata",
  "regex-syntax",

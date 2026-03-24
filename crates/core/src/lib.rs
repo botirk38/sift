@@ -5,7 +5,7 @@
 mod index;
 mod planner;
 mod search;
-mod storage;
+pub mod storage;
 mod verify;
 
 pub use index::{Index, IndexBuilder, QueryPlan};
@@ -73,7 +73,7 @@ mod tests {
         let _ = IndexBuilder::new(&tmp).with_dir(&idx).build().unwrap();
 
         let index = Index::open(&idx).unwrap();
-        assert!(!index.lexicon.is_empty());
+        assert!(index.file_count() > 0);
         let pat = vec![r"let\s+x".to_string()];
         let q = CompiledSearch::new(&pat, SearchOptions::default()).unwrap();
         let hits = q.search_index(&index).unwrap();
@@ -164,7 +164,7 @@ mod tests {
         let idx = tmp.join(".index");
         let _ = IndexBuilder::new(&tmp).with_dir(&idx).build().unwrap();
         let index = Index::open(&idx).unwrap();
-        assert_eq!(index.files.len(), n_files);
+        assert_eq!(index.file_count(), n_files);
 
         let pat = vec!["needle".to_string()];
         let opts = SearchOptions::default();

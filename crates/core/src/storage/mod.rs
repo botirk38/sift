@@ -2,4 +2,5 @@
 
 pub mod format;
 pub mod lexicon;
+pub(crate) mod mmap;
 pub mod postings;

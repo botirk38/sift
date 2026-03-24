@@ -7,8 +7,6 @@ pub mod trigram;
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
-use crate::storage::lexicon::LexiconEntry;
-
 pub use builder::build_index_tables;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,32 +15,20 @@ pub struct QueryPlan {
     pub mode: &'static str,
 }
 
+/// In-memory trigram index backed by memory-mapped storage.
+///
+/// All data is accessed zero-copy from mapped files. Opening an index is cheap
+/// — just memory-mapping the three index files, no deserialization.
 #[derive(Debug)]
 pub struct Index {
     pub root: PathBuf,
-    pub files: Vec<PathBuf>,
-    pub lexicon: Vec<LexiconEntry>,
-    pub postings: Vec<u8>,
+    files: files::MappedFilesView,
+    lexicon: crate::storage::lexicon::MappedLexicon,
+    postings: crate::storage::postings::MappedPostings,
     pub index_dir: Option<PathBuf>,
 }
 
 impl Index {
-    #[must_use]
-    pub const fn new(
-        root: PathBuf,
-        files: Vec<PathBuf>,
-        lexicon: Vec<LexiconEntry>,
-        postings: Vec<u8>,
-    ) -> Self {
-        Self {
-            root,
-            files,
-            lexicon,
-            postings,
-            index_dir: None,
-        }
-    }
-
     /// Open an index directory produced by [`IndexBuilder::build`].
     ///
     /// # Errors
@@ -50,7 +36,7 @@ impl Index {
     /// Returns [`crate::Error::MissingMeta`] if `sift.meta` is absent,
     /// [`crate::Error::InvalidMeta`] if metadata is empty or malformed,
     /// [`crate::Error::MissingComponent`] if a trigram table file is missing,
-    /// or [`crate::Error::Io`] on read failure.
+    /// or [`crate::Error::Io`] on read/mmap failure.
     pub fn open(path: &Path) -> crate::Result<Self> {
         let index_dir = path.to_path_buf();
         let meta_path = index_dir.join(crate::META_FILENAME);
@@ -73,14 +59,18 @@ impl Index {
                 return Err(crate::Error::MissingComponent(p.clone()));
             }
         }
-        let files = files::read_files_table(&paths[0])?;
-        let lex = crate::storage::lexicon::read_lexicon(&paths[1])?;
-        let postings_blob = crate::storage::postings::read_postings(&paths[2])?;
+
+        let files = files::MappedFilesView::open(&paths[0]).map_err(crate::Error::Io)?;
+        let lexicon =
+            crate::storage::lexicon::MappedLexicon::open(&paths[1]).map_err(crate::Error::Io)?;
+        let postings =
+            crate::storage::postings::MappedPostings::open(&paths[2]).map_err(crate::Error::Io)?;
+
         Ok(Self {
             root,
             files,
-            lexicon: lex,
-            postings: postings_blob,
+            lexicon,
+            postings,
             index_dir: Some(index_dir),
         })
     }
@@ -94,9 +84,13 @@ impl Index {
         std::fs::create_dir_all(dir)?;
         let meta_path = dir.join(crate::META_FILENAME);
         std::fs::write(&meta_path, format!("{}\n", self.root.display()))?;
-        files::write_files_table(&dir.join(crate::FILES_BIN), &self.files)?;
-        crate::storage::postings::write_postings(&dir.join(crate::POSTINGS_BIN), &self.postings)?;
-        crate::storage::lexicon::write_lexicon(&dir.join(crate::LEXICON_BIN), &self.lexicon)?;
+
+        std::fs::write(dir.join(crate::FILES_BIN), self.files.backing_slice())
+            .map_err(crate::Error::Io)?;
+        std::fs::write(dir.join(crate::LEXICON_BIN), self.lexicon.backing_slice())
+            .map_err(crate::Error::Io)?;
+        std::fs::write(dir.join(crate::POSTINGS_BIN), self.postings.backing_slice())
+            .map_err(crate::Error::Io)?;
         Ok(())
     }
 
@@ -122,25 +116,20 @@ impl Index {
 
     #[must_use]
     pub fn posting_bytes_slice(&self, tri: [u8; 3]) -> &[u8] {
-        let Ok(idx) = self.lexicon.binary_search_by_key(&tri, |e| e.trigram) else {
+        let Some(entry) = self.lexicon.get(tri) else {
             return &[];
         };
-        let e = &self.lexicon[idx];
-        let Some(start) = usize::try_from(e.offset).ok() else {
-            return &[];
-        };
-        let Some(n) = usize::try_from(e.len).ok() else {
-            return &[];
-        };
-        let Some(nbytes) = n.checked_mul(4) else {
-            return &[];
-        };
-        let Some(end) = start.checked_add(nbytes) else {
-            return &[];
-        };
-        self.postings.get(start..end).unwrap_or(&[])
+        let start = usize::try_from(entry.offset).unwrap_or(usize::MAX);
+        let n = usize::try_from(entry.len).unwrap_or(usize::MAX);
+        let nbytes = n.saturating_mul(4);
+        self.postings.slice(start, nbytes)
     }
 
+    /// Get sorted file IDs for a trigram. Materializes from mapped bytes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if postings data for this trigram is corrupted.
     #[must_use]
     pub fn posting_list_for_trigram(&self, tri: [u8; 3]) -> Vec<u32> {
         let slice = self.posting_bytes_slice(tri);
@@ -149,7 +138,7 @@ impl Index {
         }
         slice
             .chunks_exact(4)
-            .filter_map(|c| <[u8; 4]>::try_from(c).ok().map(u32::from_le_bytes))
+            .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
             .collect()
     }
 
@@ -180,8 +169,23 @@ impl Index {
     pub fn candidate_paths(&self, arms: &[crate::planner::Arm]) -> Vec<PathBuf> {
         self.candidate_file_ids(arms)
             .iter()
-            .filter_map(|&id| self.files.get(id as usize).cloned())
+            .filter_map(|&id| self.files.get(id as usize))
             .collect()
+    }
+
+    #[must_use]
+    pub fn file_path(&self, id: usize) -> Option<PathBuf> {
+        self.files.get(id)
+    }
+
+    #[must_use]
+    pub const fn file_count(&self) -> usize {
+        self.files.len()
+    }
+
+    #[must_use]
+    pub const fn iter_files(&self) -> files::MappedFilesIter<'_> {
+        self.files.iter()
     }
 }
 
@@ -256,7 +260,7 @@ fn u32_vec_from_le_bytes(slice: &[u8]) -> Vec<u32> {
     }
     slice
         .chunks_exact(4)
-        .filter_map(|c| <[u8; 4]>::try_from(c).ok().map(u32::from_le_bytes))
+        .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
         .collect()
 }
 
@@ -295,12 +299,24 @@ impl<'a> IndexBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// Propagates IO errors from walking, reading files, or writing persistence files (if `with_dir`
-    /// was called).
+    /// Propagates IO errors from walking, reading files, or writing persistence files
+    /// (if `with_dir` was called).
     pub fn build(self) -> crate::Result<Index> {
         let root = self.root.canonicalize()?;
         let tables = build_index_tables(&root)?;
-        let mut index = Index::new(root, tables.files, tables.lexicon, tables.postings);
+
+        let files = files::MappedFilesView::from_paths(&tables.files);
+        let lexicon = crate::storage::lexicon::MappedLexicon::from_entries(&tables.lexicon);
+        let postings = crate::storage::postings::MappedPostings::from_bytes(&tables.postings);
+
+        let mut index = Index {
+            root,
+            files,
+            lexicon,
+            postings,
+            index_dir: None,
+        };
+
         if let Some(dir) = self.dir {
             index.index_dir = Some(dir.clone());
             index.save_to_dir(&dir)?;

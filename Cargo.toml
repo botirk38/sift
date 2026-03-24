@@ -15,7 +15,7 @@ categories = ["command-line-utilities", "development-tools"]
 
 # Shared lint levels (members use `[lints] workspace = true`).
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 # No blanket allows — fix code or adjust workspace defaults here, not with #[allow].

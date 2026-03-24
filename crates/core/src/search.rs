@@ -201,14 +201,14 @@ impl CompiledSearch {
     /// Returns [`Error::RegexBuild`] if the regex cannot be built.
     pub fn search_index(&self, index: &Index) -> crate::Result<Vec<Match>> {
         let candidates: Vec<PathBuf> = match &self.plan {
-            TrigramPlan::FullScan => index.files.iter().map(|p| index.root.join(p)).collect(),
+            TrigramPlan::FullScan => index.iter_files().map(|p| index.root.join(p)).collect(),
             TrigramPlan::Narrow { arms } => {
                 let cids = index.candidate_file_ids(arms.as_slice());
                 if cids.is_empty() {
                     return Ok(Vec::new());
                 }
                 cids.iter()
-                    .filter_map(|&id| index.files.get(id as usize).cloned())
+                    .filter_map(|&id| index.file_path(id as usize))
                     .map(|p| index.root.join(p))
                     .collect()
             }
@@ -300,14 +300,14 @@ impl CompiledSearch {
         let mut searcher = self.build_searcher();
 
         let candidates: Vec<PathBuf> = match &self.plan {
-            TrigramPlan::FullScan => index.files.iter().map(|p| index.root.join(p)).collect(),
+            TrigramPlan::FullScan => index.iter_files().map(|p| index.root.join(p)).collect(),
             TrigramPlan::Narrow { arms } => {
                 let cids = index.candidate_file_ids(arms.as_slice());
                 if cids.is_empty() {
                     return Ok(());
                 }
                 cids.iter()
-                    .filter_map(|&id| index.files.get(id as usize).cloned())
+                    .filter_map(|&id| index.file_path(id as usize))
                     .map(|p| index.root.join(p))
                     .collect()
             }
