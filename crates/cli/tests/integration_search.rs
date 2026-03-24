@@ -221,3 +221,64 @@ fn build_single_file_then_search_path_scope_accepts_that_file() {
         "unexpected stdout: {stdout}"
     );
 }
+
+#[test]
+fn binary_files_are_skipped_by_default() {
+    let root = fresh_dir("search-binary-skip");
+    fs::write(root.join("text.txt"), "alpha βeta\n").unwrap();
+    fs::write(
+        root.join("bin.dat"),
+        b"prefix\0\xce\xb2\xce\xb5\xcf\x84\xce\xb1\n",
+    )
+    .unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg(r"\p{Greek}+")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let stdout = normalized_stdout(&out);
+    assert!(
+        stdout.contains("text.txt:alpha βeta"),
+        "unexpected stdout: {stdout}"
+    );
+    assert!(
+        !stdout.contains("bin.dat"),
+        "binary file should be skipped: {stdout}"
+    );
+}
+
+#[cfg(not(windows))]
+#[test]
+fn symlinked_files_are_not_searched_by_default() {
+    use std::os::unix::fs::symlink;
+
+    let root = fresh_dir("search-symlink-skip");
+    fs::create_dir_all(root.join("real")).unwrap();
+    fs::create_dir_all(root.join("link")).unwrap();
+    fs::write(root.join("real/target.txt"), "needle here\n").unwrap();
+    symlink(root.join("real/target.txt"), root.join("link/target.txt")).unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("needle")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let lines: Vec<_> = normalized_stdout(&out)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(lines, ["real/target.txt:needle here"]);
+}

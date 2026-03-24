@@ -9,7 +9,7 @@ use grep_matcher::LineTerminator;
 use grep_matcher::Matcher;
 use grep_printer::{StandardBuilder, SummaryBuilder, SummaryKind};
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
-use grep_searcher::SearcherBuilder;
+use grep_searcher::{BinaryDetection, SearcherBuilder};
 use rayon::prelude::*;
 use termcolor::{BufferWriter, ColorChoice};
 
@@ -175,6 +175,7 @@ impl CompiledSearch {
     ) -> grep_searcher::Searcher {
         let mut builder = SearcherBuilder::new();
         builder
+            .binary_detection(BinaryDetection::quit(b'\x00'))
             .line_terminator(LineTerminator::byte(b'\n'))
             .invert_match(self.opts.invert_match())
             .line_number(line_number)
@@ -459,7 +460,7 @@ impl CompiledSearch {
         let walker = ignore::WalkBuilder::new(&root).follow_links(false).build();
         for entry in walker {
             let entry = entry.map_err(crate::Error::Ignore)?;
-            if entry.path().is_file() {
+            if entry.file_type().is_some_and(|ft| ft.is_file()) {
                 let actual = entry.path().to_path_buf();
                 candidates.push(actual);
             }
@@ -542,7 +543,7 @@ pub fn walk_file_paths(root: &Path) -> crate::Result<HashSet<PathBuf>> {
     let walker = ignore::WalkBuilder::new(&root).follow_links(false).build();
     for entry in walker {
         let entry = entry.map_err(crate::Error::Ignore)?;
-        if !entry.path().is_file() {
+        if !entry.file_type().is_some_and(|ft| ft.is_file()) {
             continue;
         }
         let path = entry.path();

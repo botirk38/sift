@@ -937,7 +937,7 @@ def main():
         help='A regex pattern that will only run benchmarks that match.')
     args = p.parse_args()
 
-    if args.sift_binary != SIFT_BINARY:
+    if args.sift_binary is not None:
         SIFT_BINARY = args.sift_binary
 
     if args.list:

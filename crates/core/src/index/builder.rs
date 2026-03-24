@@ -39,7 +39,7 @@ fn collect_paths(root: &Path) -> crate::Result<(CorpusKind, Vec<PathBuf>)> {
     let walker = WalkBuilder::new(root).follow_links(false).build();
     for entry in walker {
         let entry = entry.map_err(crate::Error::Ignore)?;
-        if !entry.path().is_file() {
+        if !entry.file_type().is_some_and(|ft| ft.is_file()) {
             continue;
         }
         let path = entry.path();
