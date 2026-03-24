@@ -4,7 +4,6 @@
 
 mod index;
 mod planner;
-mod prefilter;
 mod search;
 mod storage;
 mod verify;

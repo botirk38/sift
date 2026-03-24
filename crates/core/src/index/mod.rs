@@ -154,12 +154,7 @@ impl Index {
     }
 
     #[must_use]
-    pub fn candidate_paths(
-        &self,
-        arms: &[crate::planner::Arm],
-    ) -> std::collections::HashSet<PathBuf> {
-        use std::collections::HashSet;
-
+    pub fn candidate_file_ids(&self, arms: &[crate::planner::Arm]) -> Vec<u32> {
         let mut id_lists: Vec<Vec<u32>> = Vec::with_capacity(arms.len());
         for arm in arms {
             if arm.is_empty() {
@@ -178,14 +173,15 @@ impl Index {
             }
         }
         let refs: Vec<&[u32]> = id_lists.iter().map(Vec::as_slice).collect();
-        let union_ids = union_sorted_runs(&refs);
-        let mut out = HashSet::new();
-        for id in union_ids {
-            if let Some(p) = self.files.get(id as usize) {
-                out.insert(p.clone());
-            }
-        }
-        out
+        union_sorted_runs(&refs)
+    }
+
+    #[must_use]
+    pub fn candidate_paths(&self, arms: &[crate::planner::Arm]) -> Vec<PathBuf> {
+        self.candidate_file_ids(arms)
+            .iter()
+            .filter_map(|&id| self.files.get(id as usize).cloned())
+            .collect()
     }
 }
 

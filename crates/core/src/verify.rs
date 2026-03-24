@@ -1,10 +1,9 @@
 //! Regex compilation — Rust regex syntax (ERE-like), with grep-style `-F`/`-w`/`-x` shaping.
 
-use regex::Regex;
+use regex::bytes::Regex;
 
 use crate::search::SearchOptions;
 
-/// Build one branch from a user pattern (before OR-combining multiple `-e` patterns).
 pub fn pattern_branch(p: &str, opts: &SearchOptions) -> String {
     let mut s = if opts.fixed_strings() {
         regex::escape(p)
@@ -12,7 +11,6 @@ pub fn pattern_branch(p: &str, opts: &SearchOptions) -> String {
         p.to_string()
     };
     if opts.line_regexp() {
-        // Whole line: ^(?: … )$
         s = format!("^(?:{s})$");
     } else if opts.word_regexp() {
         s = format!(r"\b(?:{s})\b");
@@ -20,7 +18,7 @@ pub fn pattern_branch(p: &str, opts: &SearchOptions) -> String {
     s
 }
 
-/// Combine multiple grep `-e` patterns with alternation (match if any branch matches).
+/// Build a combined `Regex` from one or more patterns.
 ///
 /// # Errors
 ///
@@ -40,18 +38,18 @@ pub fn compile_search_pattern(
             .collect::<Vec<_>>()
             .join("|")
     };
-    regex::RegexBuilder::new(&combined)
+    regex::bytes::RegexBuilder::new(&combined)
         .case_insensitive(opts.case_insensitive())
         .multi_line(false)
         .dot_matches_new_line(false)
         .build()
 }
 
-/// Single-pattern helper (tests, simple callers).
+/// Build a `Regex` for a single pattern.
 ///
 /// # Errors
 ///
-/// Returns [`regex::Error`] if `pattern` is not a valid Rust regex.
+/// Returns [`regex::Error`] if `pattern` is invalid.
 pub fn compile_pattern(pattern: &str, case_insensitive: bool) -> Result<Regex, regex::Error> {
     use crate::search::SearchMatchFlags;
 
@@ -83,41 +81,41 @@ mod tests {
         let flags = SearchMatchFlags::empty();
         let re =
             compile_search_pattern(&["foo".to_string(), "bar".to_string()], &opts(flags)).unwrap();
-        assert!(re.is_match("foo"));
-        assert!(re.is_match("bar"));
-        assert!(!re.is_match("baz"));
+        assert!(re.is_match(b"foo"));
+        assert!(re.is_match(b"bar"));
+        assert!(!re.is_match(b"baz"));
     }
 
     #[test]
     fn fixed_strings_escape_metacharacters() {
         let flags = SearchMatchFlags::FIXED_STRINGS;
         let re = compile_search_pattern(&[r"a.c".to_string()], &opts(flags)).unwrap();
-        assert!(re.is_match("a.c"));
-        assert!(!re.is_match("abc"));
+        assert!(re.is_match(b"a.c"));
+        assert!(!re.is_match(b"abc"));
     }
 
     #[test]
     fn case_insensitive() {
         let flags = SearchMatchFlags::CASE_INSENSITIVE;
         let re = compile_search_pattern(&["Hello".to_string()], &opts(flags)).unwrap();
-        assert!(re.is_match("hello"));
-        assert!(re.is_match("HELLO"));
+        assert!(re.is_match(b"hello"));
+        assert!(re.is_match(b"HELLO"));
     }
 
     #[test]
     fn word_regexp() {
         let flags = SearchMatchFlags::WORD_REGEXP;
         let re = compile_search_pattern(&["cat".to_string()], &opts(flags)).unwrap();
-        assert!(re.is_match("a cat here"));
-        assert!(!re.is_match("concat"));
+        assert!(re.is_match(b"a cat here"));
+        assert!(!re.is_match(b"concat"));
     }
 
     #[test]
     fn line_regexp() {
         let flags = SearchMatchFlags::LINE_REGEXP;
         let re = compile_search_pattern(&["yes".to_string()], &opts(flags)).unwrap();
-        assert!(re.is_match("yes"));
-        assert!(!re.is_match("oh yes sir"));
+        assert!(re.is_match(b"yes"));
+        assert!(!re.is_match(b"oh yes sir"));
     }
 
     #[test]

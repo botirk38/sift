@@ -1,4 +1,4 @@
-//! Naive full-corpus search (phase 1): `ignore::WalkBuilder` + line scan + `regex`.
+//! Naive full-corpus search: `ignore::WalkBuilder` + byte line scan + `regex::bytes::Regex`.
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -8,16 +8,12 @@ use std::path::{Path, PathBuf};
 use bitflags::bitflags;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
-use regex::Regex;
+use regex::bytes::Regex;
 
 use crate::planner::TrigramPlan;
-use crate::prefilter::RegexPrefilter;
 use crate::verify;
 use crate::Index;
 
-/// Minimum candidate file count before using Rayon: at least one file per **effective** worker,
-/// where workers = `min(logical CPUs, RAYON_NUM_THREADS)` when the env var is set to a positive
-/// integer (see [Rayon’s thread pool](https://docs.rs/rayon/latest/rayon/struct.ThreadPoolBuilder.html#method.num_threads)).
 #[must_use]
 pub fn parallel_candidate_min_files() -> usize {
     let cpus = std::thread::available_parallelism()
@@ -30,8 +26,10 @@ pub fn parallel_candidate_min_files() -> usize {
 }
 
 fn parallel_scan_min_files_inner(cpus: usize, rayon_threads: Option<usize>) -> usize {
-    let configured = rayon_threads.filter(|&n| n > 0);
-    let effective = configured.map_or(cpus, |rt| rt.min(cpus)).max(1);
+    let effective = rayon_threads
+        .filter(|&n| n > 0)
+        .map_or(cpus, |rt| rt.min(cpus))
+        .max(1);
     if effective <= 1 {
         usize::MAX
     } else {
@@ -40,7 +38,6 @@ fn parallel_scan_min_files_inner(cpus: usize, rayon_threads: Option<usize>) -> u
 }
 
 bitflags! {
-    /// Grep-style match modifiers (maps to CLI flags).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
     pub struct SearchMatchFlags: u8 {
         const CASE_INSENSITIVE = 1 << 0;
@@ -52,7 +49,6 @@ bitflags! {
     }
 }
 
-/// User-tunable search behavior (grep-style flags).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SearchOptions {
     pub flags: SearchMatchFlags,
@@ -90,14 +86,12 @@ impl SearchOptions {
         self.flags.contains(SearchMatchFlags::ONLY_MATCHING)
     }
 
-    /// Grep flags that prevent safe trigram-based candidate narrowing (case/word/line/invert).
     #[must_use]
     pub const fn precludes_trigram_index(self) -> bool {
         self.case_insensitive() || self.invert_match() || self.word_regexp() || self.line_regexp()
     }
 }
 
-/// One grep-style hit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Match {
     pub file: PathBuf,
@@ -105,20 +99,13 @@ pub struct Match {
     pub text: String,
 }
 
-/// Compiled regex + planner state for one query. Build once, then run [`Self::search_index`] or
-/// [`Self::search_walk`] many times without recompiling.
 #[derive(Debug, Clone)]
 pub struct CompiledSearch {
     re: Regex,
     opts: SearchOptions,
     patterns: Vec<String>,
     plan: TrigramPlan,
-    /// When set, plain substring checks implement `-F` without word/line/`-i` wrappers (regex still
-    /// used for [`SearchMatchFlags::ONLY_MATCHING`] spans).
-    substring_literals: Option<Vec<String>>,
-    /// When set (regex mode only), every match must contain these substrings; used to skip
-    /// [`Regex::is_match`] when impossible. `None` if unsupported or `-F`/`-i`/`-v`.
-    regex_prefilter: Option<RegexPrefilter>,
+    substring_literals: Option<Vec<Vec<u8>>>,
 }
 
 impl CompiledSearch {
@@ -139,14 +126,9 @@ impl CompiledSearch {
             && !opts.word_regexp()
             && !opts.line_regexp()
         {
-            Some(patterns.to_vec())
+            Some(patterns.iter().map(|p| p.as_bytes().to_vec()).collect())
         } else {
             None
-        };
-        let regex_prefilter = if substring_literals.is_some() {
-            None
-        } else {
-            crate::prefilter::regex_prefilter_for_patterns(patterns, &opts)
         };
         Ok(Self {
             re,
@@ -154,7 +136,6 @@ impl CompiledSearch {
             patterns: patterns.to_vec(),
             plan,
             substring_literals,
-            regex_prefilter,
         })
     }
 
@@ -167,12 +148,14 @@ impl CompiledSearch {
         match &self.plan {
             TrigramPlan::FullScan => search_files(self, &index.root, Some(index.files.as_slice())),
             TrigramPlan::Narrow { arms } => {
-                let cands = index.candidate_paths(arms.as_slice());
+                let cands = index.candidate_file_ids(arms.as_slice());
                 if cands.is_empty() {
                     return Ok(Vec::new());
                 }
-                let mut paths: Vec<PathBuf> = cands.into_iter().collect();
-                paths.sort();
+                let paths: Vec<PathBuf> = cands
+                    .iter()
+                    .filter_map(|&id| index.files.get(id as usize).cloned())
+                    .collect();
                 search_files(self, &index.root, Some(&paths))
             }
         }
@@ -180,14 +163,9 @@ impl CompiledSearch {
 
     /// Walk `root` with ignore rules (or scan only `candidates` when `Some`).
     ///
-    /// With `candidates: None`, every file under `root` (respecting ignore rules) is scanned.
-    /// With `Some(paths)`, only those corpus-relative paths are scanned. If the slice is not already
-    /// lexicographically sorted, it is copied and sorted; when it is sorted (e.g. `files.bin`
-    /// order), no extra allocation is performed.
-    ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::Io`] if the corpus root cannot be canonicalized, [`crate::Error::Ignore`]
+    /// Returns [`crate::Error::Io`] if the corpus root cannot be canonicalized, or [`crate::Error::Ignore`]
     /// for directory walk failures.
     pub fn search_walk(
         &self,
@@ -197,7 +175,6 @@ impl CompiledSearch {
         search_files(self, root, candidates)
     }
 
-    /// Patterns used to build this query (same order as passed to [`Self::new`]).
     #[must_use]
     pub fn patterns(&self) -> &[String] {
         &self.patterns
@@ -207,6 +184,11 @@ impl CompiledSearch {
 /// Walk `root` with ripgrep-class ignore rules, run regex on each line.
 ///
 /// `candidates: None` walks the tree; `Some` scans only those relative paths.
+///
+/// # Errors
+///
+/// Returns [`crate::Error::Io`] if the corpus root cannot be canonicalized, or [`crate::Error::Ignore`]
+/// for directory walk failures.
 pub fn search_files(
     compiled: &CompiledSearch,
     root: &Path,
@@ -311,8 +293,10 @@ fn parallel_scan_candidate_files(
     matches
 }
 
-fn line_contains_any_literal(line: &str, needles: &[String]) -> bool {
-    needles.iter().any(|n| line.contains(n.as_str()))
+fn bytes_contains_any(line: &[u8], needles: &[Vec<u8>]) -> bool {
+    needles
+        .iter()
+        .any(|n| memchr::memmem::find(line, n).is_some())
 }
 
 fn scan_lines(
@@ -325,17 +309,11 @@ fn scan_lines(
     let re = &compiled.re;
     let opts = compiled.opts;
     let literals = compiled.substring_literals.as_deref();
-    let prefilter_ok = |line: &str| {
-        compiled
-            .regex_prefilter
-            .as_ref()
-            .is_none_or(|p| p.may_match_line(line))
-    };
     let Ok(file) = File::open(path) else {
         return false;
     };
     let mut reader = BufReader::new(file);
-    let mut line = String::new();
+    let mut line = Vec::new();
     let mut line_no = 0usize;
 
     loop {
@@ -343,19 +321,25 @@ fn scan_lines(
             return true;
         }
         line.clear();
-        match reader.read_line(&mut line) {
-            Ok(n) if n > 0 => {}
-            _ => break,
+        match reader.read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                if n == 0 {
+                    break;
+                }
+            }
         }
         line_no += 1;
-        while line.ends_with('\n') || line.ends_with('\r') {
+        while line.len() > 1 && (line[line.len() - 1] == b'\n' || line[line.len() - 1] == b'\r') {
+            line.pop();
+        }
+        if line.len() == 1 && line[0] == b'\n' {
             line.pop();
         }
 
         let matched = match literals {
-            Some(needles) if !opts.only_matching() => line_contains_any_literal(&line, needles),
-            Some(needles) if !line_contains_any_literal(&line, needles) => false,
-            _ if !prefilter_ok(&line) => false,
+            Some(needles) if !opts.only_matching() => bytes_contains_any(&line, needles),
+            Some(needles) if !bytes_contains_any(&line, needles) => false,
             _ => re.is_match(&line),
         };
 
@@ -370,9 +354,6 @@ fn scan_lines(
         }
 
         if opts.only_matching() && !opts.invert_match() {
-            if !prefilter_ok(&line) {
-                continue;
-            }
             for m in re.find_iter(&line) {
                 if *budget == Some(0) {
                     return true;
@@ -380,7 +361,7 @@ fn scan_lines(
                 out.push(Match {
                     file: display.to_path_buf(),
                     line: line_no,
-                    text: m.as_str().to_string(),
+                    text: String::from_utf8_lossy(m.as_bytes()).into_owned(),
                 });
                 if let Some(b) = *budget {
                     *budget = Some(b - 1);
@@ -390,9 +371,7 @@ fn scan_lines(
             out.push(Match {
                 file: display.to_path_buf(),
                 line: line_no,
-                // Clone matched line only; keep `line`'s buffer capacity for `read_line` (unlike
-                // `mem::take`, which would drop capacity and force reallocations every line).
-                text: line.clone(),
+                text: String::from_utf8_lossy(&line).into_owned(),
             });
             if let Some(b) = *budget {
                 *budget = Some(b - 1);
@@ -491,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn regex_prefilter_alternation_finds_both_branches() {
+    fn alternation_finds_both_branches() {
         let dir = tmp_corpus("regex-or");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
