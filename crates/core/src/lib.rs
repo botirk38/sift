@@ -110,14 +110,15 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
         let root_path = std::env::temp_dir().join("sift-test-root");
-        let meta = format!(
-            r#"{{
-  "root": "{}",
-  "kind": "directory"
-}}"#,
-            root_path.display()
-        );
-        fs::write(tmp.join(META_FILENAME), meta).unwrap();
+        let meta = crate::index::IndexMeta {
+            root: root_path,
+            kind: crate::index::CorpusKind::Directory,
+        };
+        fs::write(
+            tmp.join(META_FILENAME),
+            serde_json::to_string_pretty(&meta).unwrap(),
+        )
+        .unwrap();
         assert!(matches!(Index::open(&tmp), Err(Error::MissingComponent(_))));
     }
 
