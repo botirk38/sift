@@ -26,7 +26,7 @@ Patterns use Rust’s **`regex`** syntax unless **`-F`** (fixed string). Literal
 
 - Search needs a **prior index** (`build`).
 - Optional path arguments must lie **under** the indexed corpus root.
-- No glob `-g` / smart-case here yet; **`--no-filename`** is used instead of **`-h`** (help).
+- No glob `-g` here yet; **`--no-filename`** is used instead of **`-h`** (help).
 
 ## Performance snapshot
 

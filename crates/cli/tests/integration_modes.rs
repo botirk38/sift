@@ -80,7 +80,7 @@ fn files_without_match_all_match_prints_nothing_and_exits_1() {
 }
 
 #[test]
-fn files_with_matches_takes_precedence_over_files_without_match() {
+fn files_with_matches_conflicts_with_files_without_match() {
     let root = fresh_dir("modes-files-without-overrides-files-with");
     fs::write(root.join("a.txt"), "hello\n").unwrap();
     fs::write(root.join("b.txt"), "hello\n").unwrap();
@@ -96,13 +96,15 @@ fn files_with_matches_takes_precedence_over_files_without_match() {
         .arg("hello")
         .output()
         .unwrap();
-    assert_success(&out);
-
-    let lines: Vec<_> = normalized_stdout(&out)
-        .lines()
-        .map(str::to_string)
-        .collect();
-    assert_eq!(lines, [abs(&root, "a.txt"), abs(&root, "b.txt")]);
+    assert!(
+        !out.status.success(),
+        "expected conflict error, got success"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("conflicting output options specified"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -129,7 +131,7 @@ fn count_shows_zero_for_non_matching_files() {
 }
 
 #[test]
-fn count_takes_precedence_over_files_without_match() {
+fn count_conflicts_with_files_without_match() {
     let root = fresh_dir("modes-count-suppressed");
     fs::write(root.join("a.txt"), "hello\n").unwrap();
     fs::write(root.join("b.txt"), "hello\n").unwrap();
@@ -145,18 +147,14 @@ fn count_takes_precedence_over_files_without_match() {
         .arg("hello")
         .output()
         .unwrap();
-    assert_success(&out);
-
-    let lines: Vec<_> = normalized_stdout(&out)
-        .lines()
-        .map(str::to_string)
-        .collect();
-    assert_eq!(
-        lines,
-        [
-            abs_match(&root, "a.txt", "1"),
-            abs_match(&root, "b.txt", "1")
-        ]
+    assert!(
+        !out.status.success(),
+        "expected conflict error, got success"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("conflicting output options specified"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
 }
 
