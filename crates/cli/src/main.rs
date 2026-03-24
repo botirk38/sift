@@ -3,18 +3,15 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{
+    value_parser, Arg, ArgAction, Args, CommandFactory, FromArgMatches, Parser, Subcommand,
+};
 use sift_core::{
-    CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchMode, SearchOptions, SearchOutput,
+    CaseMode, CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchMode, SearchOptions,
+    SearchOutput,
 };
 
 #[derive(Parser)]
-#[command(
-    name = "sift",
-    version,
-    about = "Search the indexed corpus (ripgrep-like: PATTERN [PATH...]). Uses Rust regex unless -F. \
-             Unlike ripgrep: search needs a prior `sift build`; the `build` subcommand updates the on-disk index."
-)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -55,10 +52,9 @@ struct SearchScope {
 
 #[derive(Args)]
 struct RegexFlagsA {
-    #[arg(short = 'i', long)]
-    ignore_case: bool,
     #[arg(short = 'v', long)]
     invert_match: bool,
+
     #[arg(short = 'w', long)]
     word_regexp: bool,
 }
@@ -116,51 +112,52 @@ enum Commands {
 fn resolve_patterns(
     regexp: &[String],
     pattern_file: Option<&Path>,
-    positional: Option<&str>,
+    pattern: Option<&str>,
 ) -> anyhow::Result<Vec<String>> {
-    let mut v = Vec::new();
-    if let Some(path) = pattern_file {
-        let s = std::fs::read_to_string(path)?;
-        for line in s.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
+    let mut patterns = Vec::new();
+    for p in regexp {
+        patterns.push(p.clone());
+    }
+    if let Some(file) = pattern_file {
+        let content = std::fs::read_to_string(file)?;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                patterns.push(trimmed.to_string());
             }
-            v.push(line.to_string());
         }
     }
-    v.extend(regexp.iter().cloned());
-    if let Some(p) = positional {
-        v.push(p.to_string());
+    if let Some(p) = pattern {
+        patterns.push(p.to_string());
     }
-    if v.is_empty() {
-        anyhow::bail!("no patterns: use -e, -f, or PATTERN");
+    if patterns.is_empty() {
+        anyhow::bail!("no pattern given");
     }
-    Ok(v)
+    Ok(patterns)
 }
 
 fn corpus_path_prefixes(
     index_root: &Path,
     cwd: &Path,
-    user_paths: &[PathBuf],
+    requested: &[PathBuf],
 ) -> anyhow::Result<Vec<PathBuf>> {
-    let index_root = index_root.canonicalize()?;
-    if user_paths.is_empty() {
-        return Ok(Vec::new());
+    if requested.is_empty() {
+        return Ok(vec![PathBuf::from("")]);
     }
     let mut out = Vec::new();
-    for p in user_paths {
-        let abs = if p.is_absolute() {
-            p.clone()
+    for rel in requested {
+        let abs = if rel.is_absolute() {
+            rel.clone()
         } else {
-            cwd.join(p)
+            cwd.join(rel)
         };
-        let abs = abs
+        let abs = abs.canonicalize().unwrap_or(abs);
+        let index_root = index_root
             .canonicalize()
-            .map_err(|e| anyhow::anyhow!("could not resolve path {}: {e}", abs.display()))?;
+            .unwrap_or_else(|_| index_root.to_path_buf());
         if !abs.starts_with(&index_root) {
             anyhow::bail!(
-                "search path {} is not under indexed corpus root {}",
+                "path {} is not under indexed corpus root {}",
                 abs.display(),
                 index_root.display()
             );
@@ -174,11 +171,29 @@ fn corpus_path_prefixes(
     Ok(out)
 }
 
-fn search_options(cli: &Cli) -> SearchOptions {
-    let mut flags = SearchMatchFlags::empty();
-    if cli.regex1.ignore_case {
-        flags |= SearchMatchFlags::CASE_INSENSITIVE;
+fn resolve_case_mode(matches: &clap::ArgMatches) -> CaseMode {
+    let case_flags = [
+        ("ci", CaseMode::Insensitive),
+        ("cs", CaseMode::Sensitive),
+        ("sc", CaseMode::Smart),
+    ];
+    let mut last_idx = 0usize;
+    let mut result = CaseMode::Sensitive;
+    for (name, mode) in &case_flags {
+        if let Some(mut indices) = matches.indices_of(name) {
+            if let Some(last) = indices.next_back() {
+                if last > last_idx {
+                    last_idx = last;
+                    result = *mode;
+                }
+            }
+        }
     }
+    result
+}
+
+fn search_options(cli: &Cli, case_mode: CaseMode) -> SearchOptions {
+    let mut flags = SearchMatchFlags::empty();
     if cli.regex1.invert_match {
         flags |= SearchMatchFlags::INVERT_MATCH;
     }
@@ -196,6 +211,7 @@ fn search_options(cli: &Cli) -> SearchOptions {
     }
     SearchOptions {
         flags,
+        case_mode,
         max_results: cli.paths.max_count,
     }
 }
@@ -216,13 +232,13 @@ const fn search_mode(cli: &Cli) -> SearchMode {
     }
 }
 
-fn run_search(cli: &Cli) -> anyhow::Result<bool> {
+fn run_search(cli: &Cli, case_mode: CaseMode) -> anyhow::Result<bool> {
     let patterns = resolve_patterns(
         &cli.patterns.regexp,
         cli.patterns.pattern_file.as_deref(),
         cli.patterns.pattern.as_deref(),
     )?;
-    let opts = search_options(cli);
+    let opts = search_options(cli, case_mode);
     let query = CompiledSearch::new(&patterns, opts).map_err(|e| anyhow::anyhow!("{e}"))?;
     let index = Index::open(&cli.paths.sift_dir)?;
     let cwd = std::env::current_dir()?;
@@ -238,7 +254,51 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let mut cmd = Cli::command();
+
+    cmd = cmd
+        .arg(
+            Arg::new("ci")
+                .short('i')
+                .long("ignore-case")
+                .action(ArgAction::Append)
+                .num_args(0..=0)
+                .value_parser(value_parser!(bool))
+                .default_missing_value("true"),
+        )
+        .arg(
+            Arg::new("cs")
+                .short('s')
+                .long("case-sensitive")
+                .action(ArgAction::Append)
+                .num_args(0..=0)
+                .value_parser(value_parser!(bool))
+                .default_missing_value("true"),
+        )
+        .arg(
+            Arg::new("sc")
+                .short('S')
+                .long("smart-case")
+                .action(ArgAction::Append)
+                .num_args(0..=0)
+                .value_parser(value_parser!(bool))
+                .default_missing_value("true"),
+        );
+
+    let matches = match cmd.try_get_matches_from_mut(std::env::args_os()) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("sift: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let cli = match Cli::from_arg_matches(&matches) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("sift: {e}");
+            return ExitCode::from(2);
+        }
+    };
 
     if let Some(Commands::Build { path }) = cli.command {
         return match IndexBuilder::new(&path)
@@ -260,7 +320,9 @@ fn main() -> ExitCode {
         };
     }
 
-    match run_search(&cli) {
+    let case_mode = resolve_case_mode(&matches);
+
+    match run_search(&cli, case_mode) {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::from(1),
         Err(e) => {

@@ -14,7 +14,7 @@ pub use verify::{compile_pattern, compile_search_pattern};
 
 pub use planner::TrigramPlan;
 pub use search::{
-    walk_file_paths, CompiledSearch, Match, SearchMatchFlags, SearchMode, SearchOptions,
+    walk_file_paths, CaseMode, CompiledSearch, Match, SearchMatchFlags, SearchMode, SearchOptions,
     SearchOutput,
 };
 

@@ -2,16 +2,23 @@ use grep_matcher::LineTerminator;
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder};
 
-use super::CompiledSearch;
+use super::{CaseMode, CompiledSearch};
 
 impl CompiledSearch {
     /// # Errors
     /// Returns an error if pattern compilation fails.
     pub fn build_matcher(&self) -> crate::Result<RegexMatcher> {
         let mut builder = RegexMatcherBuilder::new();
-        builder
-            .multi_line(true)
-            .case_insensitive(self.opts.case_insensitive());
+        builder.multi_line(true);
+        match self.opts.case_mode {
+            CaseMode::Sensitive => {}
+            CaseMode::Insensitive => {
+                builder.case_insensitive(true);
+            }
+            CaseMode::Smart => {
+                builder.case_smart(true);
+            }
+        }
         builder.fixed_strings(self.opts.fixed_strings());
         if self.opts.word_regexp() {
             builder.word(true);

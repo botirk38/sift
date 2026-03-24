@@ -150,7 +150,7 @@ fn missing_pattern_exits_2() {
 
     let out = command(None).arg("--sift-dir").arg(&idx).output().unwrap();
     assert_eq!(out.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("no patterns"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no pattern"));
 }
 
 #[test]

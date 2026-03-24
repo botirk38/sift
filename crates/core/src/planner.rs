@@ -190,68 +190,72 @@ fn plan_pattern(pattern: &str, opts: &SearchOptions) -> Option<Vec<Vec<u8>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::search::SearchMatchFlags;
+    use crate::search::{CaseMode, SearchMatchFlags};
 
-    fn narrow(patterns: &[String], flags: SearchMatchFlags) -> bool {
-        let opts = SearchOptions {
-            flags,
-            max_results: None,
-        };
+    fn narrow(patterns: &[String], opts: &SearchOptions) -> bool {
         matches!(
-            TrigramPlan::for_patterns(patterns, &opts),
+            TrigramPlan::for_patterns(patterns, opts),
             TrigramPlan::Narrow { .. }
         )
     }
 
-    fn full_scan(patterns: &[String], flags: SearchMatchFlags) -> bool {
-        let opts = SearchOptions {
-            flags,
-            max_results: None,
-        };
+    fn full_scan(patterns: &[String], opts: &SearchOptions) -> bool {
         matches!(
-            TrigramPlan::for_patterns(patterns, &opts),
+            TrigramPlan::for_patterns(patterns, opts),
             TrigramPlan::FullScan
         )
     }
 
     #[test]
     fn literal_narrows() {
-        assert!(narrow(&["beta".to_string()], SearchMatchFlags::empty()));
+        assert!(narrow(&["beta".to_string()], &SearchOptions::default()));
     }
 
     #[test]
     fn dot_star_full_scan() {
-        assert!(full_scan(&[".*".to_string()], SearchMatchFlags::empty()));
+        assert!(full_scan(&[".*".to_string()], &SearchOptions::default()));
     }
 
     #[test]
     fn alternation_narrows() {
-        assert!(narrow(&[r"foo|bar".to_string()], SearchMatchFlags::empty()));
+        assert!(narrow(&[r"foo|bar".to_string()], &SearchOptions::default()));
     }
 
     #[test]
     fn word_literal_narrows() {
-        assert!(narrow(&["beta".to_string()], SearchMatchFlags::WORD_REGEXP));
+        let opts = SearchOptions {
+            flags: SearchMatchFlags::WORD_REGEXP,
+            case_mode: CaseMode::Sensitive,
+            max_results: None,
+        };
+        assert!(narrow(&["beta".to_string()], &opts));
     }
 
     #[test]
     fn line_regexp_narrows() {
-        assert!(narrow(&["beta".to_string()], SearchMatchFlags::LINE_REGEXP));
+        let opts = SearchOptions {
+            flags: SearchMatchFlags::LINE_REGEXP,
+            case_mode: CaseMode::Sensitive,
+            max_results: None,
+        };
+        assert!(narrow(&["beta".to_string()], &opts));
     }
 
     #[test]
     fn case_insensitive_narrows() {
-        assert!(narrow(
-            &["beta".to_string()],
-            SearchMatchFlags::CASE_INSENSITIVE
-        ));
+        let opts = SearchOptions {
+            flags: SearchMatchFlags::empty(),
+            case_mode: CaseMode::Insensitive,
+            max_results: None,
+        };
+        assert!(narrow(&["beta".to_string()], &opts));
     }
 
     #[test]
     fn required_literal_inside_regex_narrows() {
         assert!(narrow(
             &["[A-Z]+_RESUME".to_string()],
-            SearchMatchFlags::empty()
+            &SearchOptions::default()
         ));
     }
 
@@ -259,7 +263,7 @@ mod tests {
     fn unicode_class_full_scan() {
         assert!(full_scan(
             &[r"\p{Greek}".to_string()],
-            SearchMatchFlags::empty()
+            &SearchOptions::default()
         ));
     }
 
@@ -267,20 +271,22 @@ mod tests {
     fn no_literal_full_scan() {
         assert!(full_scan(
             &[r"\w{5}\s+\w{5}".to_string()],
-            SearchMatchFlags::empty()
+            &SearchOptions::default()
         ));
     }
 
     #[test]
     fn short_literal_full_scan() {
-        assert!(full_scan(&["ab".to_string()], SearchMatchFlags::empty()));
+        assert!(full_scan(&["ab".to_string()], &SearchOptions::default()));
     }
 
     #[test]
     fn fixed_string_narrows() {
-        assert!(narrow(
-            &["beta.gamma".to_string()],
-            SearchMatchFlags::FIXED_STRINGS
-        ));
+        let opts = SearchOptions {
+            flags: SearchMatchFlags::FIXED_STRINGS,
+            case_mode: CaseMode::Sensitive,
+            max_results: None,
+        };
+        assert!(narrow(&["beta.gamma".to_string()], &opts));
     }
 }

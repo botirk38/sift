@@ -2,28 +2,43 @@ use std::path::PathBuf;
 
 use crate::planner::TrigramPlan;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CaseMode {
+    #[default]
+    Sensitive,
+    Insensitive,
+    Smart,
+}
+
+impl CaseMode {
+    #[must_use]
+    pub const fn is_case_insensitive(self) -> bool {
+        matches!(self, Self::Insensitive)
+    }
+}
+
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
     pub struct SearchMatchFlags: u8 {
-        const CASE_INSENSITIVE = 1 << 0;
-        const INVERT_MATCH     = 1 << 1;
-        const FIXED_STRINGS    = 1 << 2;
-        const WORD_REGEXP      = 1 << 3;
-        const LINE_REGEXP      = 1 << 4;
-        const ONLY_MATCHING    = 1 << 5;
+        const INVERT_MATCH     = 1 << 0;
+        const FIXED_STRINGS    = 1 << 1;
+        const WORD_REGEXP      = 1 << 2;
+        const LINE_REGEXP      = 1 << 3;
+        const ONLY_MATCHING    = 1 << 4;
     }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SearchOptions {
     pub flags: SearchMatchFlags,
+    pub case_mode: CaseMode,
     pub max_results: Option<usize>,
 }
 
 impl SearchOptions {
     #[must_use]
     pub const fn case_insensitive(self) -> bool {
-        self.flags.contains(SearchMatchFlags::CASE_INSENSITIVE)
+        self.case_mode.is_case_insensitive()
     }
 
     #[must_use]

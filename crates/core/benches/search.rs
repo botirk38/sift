@@ -12,7 +12,8 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use std::hint::black_box;
 
 use sift_core::{
-    CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchMode, SearchOptions, SearchOutput,
+    CaseMode, CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchMode, SearchOptions,
+    SearchOutput,
 };
 
 fn make_parity_corpus(root: &Path) {
@@ -166,6 +167,7 @@ fn bench_search_word_literal(c: &mut Criterion) {
     let (_tmp, index) = open_parity_index();
     let opts = SearchOptions {
         flags: SearchMatchFlags::WORD_REGEXP,
+        case_mode: CaseMode::Sensitive,
         max_results: None,
     };
     let pat = vec!["beta".to_string()];
@@ -186,7 +188,8 @@ fn bench_search_word_literal(c: &mut Criterion) {
 fn bench_search_casei_literal(c: &mut Criterion) {
     let (_tmp, index) = open_parity_index();
     let opts = SearchOptions {
-        flags: SearchMatchFlags::CASE_INSENSITIVE,
+        flags: SearchMatchFlags::default(),
+        case_mode: CaseMode::Insensitive,
         max_results: None,
     };
     let pat = vec!["beta".to_string()];
@@ -279,7 +282,8 @@ fn bench_search_alternation(c: &mut Criterion) {
 fn bench_search_alternation_casei(c: &mut Criterion) {
     let (_tmp, index) = open_large_index();
     let opts = SearchOptions {
-        flags: SearchMatchFlags::CASE_INSENSITIVE,
+        flags: SearchMatchFlags::default(),
+        case_mode: CaseMode::Insensitive,
         max_results: None,
     };
     let pat = vec!["ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT".to_string()];
@@ -301,6 +305,7 @@ fn bench_search_line_regexp(c: &mut Criterion) {
     let (_tmp, index) = open_parity_index();
     let opts = SearchOptions {
         flags: SearchMatchFlags::LINE_REGEXP,
+        case_mode: CaseMode::Sensitive,
         max_results: None,
     };
     let pat = vec!["beta".to_string()];
@@ -322,6 +327,7 @@ fn bench_search_fixed_string(c: &mut Criterion) {
     let (_tmp, index) = open_parity_index();
     let opts = SearchOptions {
         flags: SearchMatchFlags::FIXED_STRINGS,
+        case_mode: CaseMode::Sensitive,
         max_results: None,
     };
     let pat = vec!["beta.gamma".to_string()];
@@ -357,6 +363,50 @@ fn bench_search_full_scan(c: &mut Criterion) {
     g.finish();
 }
 
+fn bench_search_smart_case_lowercase(c: &mut Criterion) {
+    let (_tmp, index) = open_parity_index();
+    let opts = SearchOptions {
+        flags: SearchMatchFlags::default(),
+        case_mode: CaseMode::Smart,
+        max_results: None,
+    };
+    let pat = vec!["beta".to_string()];
+    let query = CompiledSearch::new(&pat, opts).unwrap();
+    let mut g = c.benchmark_group("search_smart_case_lowercase");
+    g.bench_function("beta_smart_lower_parity", |b| {
+        b.iter(|| {
+            black_box(
+                query
+                    .run_index(black_box(&index), &[], make_output())
+                    .unwrap(),
+            );
+        });
+    });
+    g.finish();
+}
+
+fn bench_search_smart_case_uppercase(c: &mut Criterion) {
+    let (_tmp, index) = open_parity_index();
+    let opts = SearchOptions {
+        flags: SearchMatchFlags::default(),
+        case_mode: CaseMode::Smart,
+        max_results: None,
+    };
+    let pat = vec!["Beta".to_string()];
+    let query = CompiledSearch::new(&pat, opts).unwrap();
+    let mut g = c.benchmark_group("search_smart_case_uppercase");
+    g.bench_function("Beta_smart_upper_parity", |b| {
+        b.iter(|| {
+            black_box(
+                query
+                    .run_index(black_box(&index), &[], make_output())
+                    .unwrap(),
+            );
+        });
+    });
+    g.finish();
+}
+
 criterion_group! {
     name = benches;
     config = sift_criterion();
@@ -374,5 +424,7 @@ criterion_group! {
         bench_search_line_regexp,
         bench_search_fixed_string,
         bench_search_full_scan,
+        bench_search_smart_case_lowercase,
+        bench_search_smart_case_uppercase,
 }
 criterion_main!(benches);

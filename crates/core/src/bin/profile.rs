@@ -34,6 +34,12 @@
 //! **Fixed string**:
 //!   `fixed_string`          -F beta.gamma
 //!
+//! **Smart-case (lowercase, all-literal)**:
+//!   `smart_case_lowercase`   -S beta  (all lowercase → case-insensitive)
+//!
+//! **Smart-case (uppercase, all-literal)**:
+//!   `smart_case_uppercase`   -S Beta  (has uppercase → case-sensitive)
+//!
 //! **Corpus size**:
 //!   Default: tiny **parity** fixture (2 files, ~2k iters).
 //!   `SIFT_LARGE=1`: ~8k files × 100 lines across 256 crate dirs.
@@ -51,8 +57,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use sift_core::{
-    CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchMode, SearchOptions, SearchOutput,
-    TrigramPlan,
+    CaseMode, CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchMode, SearchOptions,
+    SearchOutput, TrigramPlan,
 };
 
 #[derive(Clone, Debug)]
@@ -287,6 +293,7 @@ impl Scenario {
             patterns: vec!["beta".to_string()],
             opts: SearchOptions {
                 flags: SearchMatchFlags::WORD_REGEXP,
+                case_mode: CaseMode::Sensitive,
                 max_results: None,
             },
         }
@@ -297,7 +304,8 @@ impl Scenario {
             name: "casei_literal",
             patterns: vec!["beta".to_string()],
             opts: SearchOptions {
-                flags: SearchMatchFlags::CASE_INSENSITIVE,
+                flags: SearchMatchFlags::default(),
+                case_mode: CaseMode::Insensitive,
                 max_results: None,
             },
         }
@@ -340,7 +348,8 @@ impl Scenario {
             name: "alternation_casei",
             patterns: vec!["ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT".to_string()],
             opts: SearchOptions {
-                flags: SearchMatchFlags::CASE_INSENSITIVE,
+                flags: SearchMatchFlags::default(),
+                case_mode: CaseMode::Insensitive,
                 max_results: None,
             },
         }
@@ -352,6 +361,7 @@ impl Scenario {
             patterns: vec!["beta".to_string()],
             opts: SearchOptions {
                 flags: SearchMatchFlags::LINE_REGEXP,
+                case_mode: CaseMode::Sensitive,
                 max_results: None,
             },
         }
@@ -363,6 +373,31 @@ impl Scenario {
             patterns: vec!["beta.gamma".to_string()],
             opts: SearchOptions {
                 flags: SearchMatchFlags::FIXED_STRINGS,
+                case_mode: CaseMode::Sensitive,
+                max_results: None,
+            },
+        }
+    }
+
+    fn smart_case_lowercase() -> Self {
+        Self {
+            name: "smart_case_lowercase",
+            patterns: vec!["beta".to_string()],
+            opts: SearchOptions {
+                flags: SearchMatchFlags::default(),
+                case_mode: CaseMode::Smart,
+                max_results: None,
+            },
+        }
+    }
+
+    fn smart_case_uppercase() -> Self {
+        Self {
+            name: "smart_case_uppercase",
+            patterns: vec!["Beta".to_string()],
+            opts: SearchOptions {
+                flags: SearchMatchFlags::default(),
+                case_mode: CaseMode::Smart,
                 max_results: None,
             },
         }
@@ -381,6 +416,8 @@ const ALL_SCENARIOS: &[(&str, fn() -> Scenario)] = &[
     ("alternation_casei", Scenario::alternation_casei),
     ("line_regexp", Scenario::line_regexp),
     ("fixed_string", Scenario::fixed_string),
+    ("smart_case_lowercase", Scenario::smart_case_lowercase),
+    ("smart_case_uppercase", Scenario::smart_case_uppercase),
 ];
 
 fn find_scenario(name: &str) -> Option<Scenario> {

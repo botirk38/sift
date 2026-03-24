@@ -3,7 +3,7 @@
 use regex_automata::meta::Regex;
 use regex_syntax::escape;
 
-use crate::search::SearchOptions;
+use crate::search::{CaseMode, SearchMatchFlags, SearchOptions};
 
 pub fn pattern_branch(p: &str, opts: &SearchOptions) -> String {
     let mut s = if opts.fixed_strings() {
@@ -55,15 +55,14 @@ pub fn compile_pattern(
     pattern: &str,
     case_insensitive: bool,
 ) -> Result<Regex, Box<regex_automata::meta::BuildError>> {
-    use crate::search::SearchMatchFlags;
-
-    let flags = if case_insensitive {
-        SearchMatchFlags::CASE_INSENSITIVE
+    let case_mode = if case_insensitive {
+        CaseMode::Insensitive
     } else {
-        SearchMatchFlags::empty()
+        CaseMode::Sensitive
     };
     let opts = SearchOptions {
-        flags,
+        flags: SearchMatchFlags::default(),
+        case_mode,
         max_results: None,
     };
     compile_search_pattern(&[pattern.to_string()], &opts)
@@ -72,20 +71,23 @@ pub fn compile_pattern(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::search::{SearchMatchFlags, SearchOptions};
+    use crate::search::{CaseMode, SearchMatchFlags, SearchOptions};
 
-    fn opts(flags: SearchMatchFlags) -> SearchOptions {
+    fn opts(flags: SearchMatchFlags, case_mode: CaseMode) -> SearchOptions {
         SearchOptions {
             flags,
+            case_mode,
             max_results: None,
         }
     }
 
     #[test]
     fn alternation_matches_either_pattern() {
-        let flags = SearchMatchFlags::empty();
-        let re =
-            compile_search_pattern(&["foo".to_string(), "bar".to_string()], &opts(flags)).unwrap();
+        let re = compile_search_pattern(
+            &["foo".to_string(), "bar".to_string()],
+            &opts(SearchMatchFlags::default(), CaseMode::Sensitive),
+        )
+        .unwrap();
         let mut cache = regex_automata::meta::Cache::new(&re);
         assert!(re
             .search_with(&mut cache, &regex_automata::Input::new(b"foo"))
@@ -100,8 +102,11 @@ mod tests {
 
     #[test]
     fn fixed_strings_escape_metacharacters() {
-        let flags = SearchMatchFlags::FIXED_STRINGS;
-        let re = compile_search_pattern(&[r"a.c".to_string()], &opts(flags)).unwrap();
+        let re = compile_search_pattern(
+            &[r"a.c".to_string()],
+            &opts(SearchMatchFlags::FIXED_STRINGS, CaseMode::Sensitive),
+        )
+        .unwrap();
         let mut cache = regex_automata::meta::Cache::new(&re);
         assert!(re
             .search_with(&mut cache, &regex_automata::Input::new(b"a.c"))
@@ -113,8 +118,11 @@ mod tests {
 
     #[test]
     fn case_insensitive() {
-        let flags = SearchMatchFlags::CASE_INSENSITIVE;
-        let re = compile_search_pattern(&["Hello".to_string()], &opts(flags)).unwrap();
+        let re = compile_search_pattern(
+            &["Hello".to_string()],
+            &opts(SearchMatchFlags::default(), CaseMode::Insensitive),
+        )
+        .unwrap();
         let mut cache = regex_automata::meta::Cache::new(&re);
         assert!(re
             .search_with(&mut cache, &regex_automata::Input::new(b"hello"))
@@ -126,8 +134,11 @@ mod tests {
 
     #[test]
     fn word_regexp() {
-        let flags = SearchMatchFlags::WORD_REGEXP;
-        let re = compile_search_pattern(&["cat".to_string()], &opts(flags)).unwrap();
+        let re = compile_search_pattern(
+            &["cat".to_string()],
+            &opts(SearchMatchFlags::WORD_REGEXP, CaseMode::Sensitive),
+        )
+        .unwrap();
         let mut cache = regex_automata::meta::Cache::new(&re);
         assert!(re
             .search_with(&mut cache, &regex_automata::Input::new(b"a cat here"))
@@ -139,8 +150,11 @@ mod tests {
 
     #[test]
     fn line_regexp() {
-        let flags = SearchMatchFlags::LINE_REGEXP;
-        let re = compile_search_pattern(&["yes".to_string()], &opts(flags)).unwrap();
+        let re = compile_search_pattern(
+            &["yes".to_string()],
+            &opts(SearchMatchFlags::LINE_REGEXP, CaseMode::Sensitive),
+        )
+        .unwrap();
         let mut cache = regex_automata::meta::Cache::new(&re);
         assert!(re
             .search_with(&mut cache, &regex_automata::Input::new(b"yes"))
@@ -152,7 +166,10 @@ mod tests {
 
     #[test]
     fn invalid_regex_returns_err() {
-        let flags = SearchMatchFlags::empty();
-        assert!(compile_search_pattern(&["(".to_string()], &opts(flags)).is_err());
+        assert!(compile_search_pattern(
+            &["(".to_string()],
+            &opts(SearchMatchFlags::default(), CaseMode::Sensitive)
+        )
+        .is_err());
     }
 }
