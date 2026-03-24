@@ -10,8 +10,8 @@ Depends only on **`sift-core`**. The binary parses flags with **clap**, maps the
 
 ```bash
 cargo run -p sift-cli -- --help
-cargo run -p sift-cli -- --index .index build /path/to/corpus
-cargo run -p sift-cli -- --index .index PATTERN [PATH...]
+cargo run -p sift-cli -- --sift-dir .sift build /path/to/corpus
+cargo run -p sift-cli -- --sift-dir .sift PATTERN [PATH...]
 ```
 
 Release binary name: **`sift`** (`Cargo.toml` `[[bin]]`).

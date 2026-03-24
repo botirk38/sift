@@ -16,7 +16,7 @@ description: >-
 
 ## Invariants
 
-1. **Global options before `build`:** e.g. `sift --index .idx build [corpus]` — `--index` is global on `Cli`, not on the `build` subcommand.
+1. **Global options before `build`:** e.g. `sift --sift-dir .sift build [corpus]` — `--sift-dir` is global on `Cli`, not on the `build` subcommand.
 2. **Search paths** must resolve under the **indexed corpus root** (metadata in the index dir); see `corpus_path_prefixes` and related errors in `main.rs`.
 3. **Patterns:** Rust `regex` unless `-F`. Literal `build`: `sift -- build` or `-e build` (documented in clap `about`).
 
@@ -26,7 +26,7 @@ description: >-
 |--------|----------|
 | Flags / help text | `PatternArgs`, `RegexFlags*`, `OutputFlags*`, `PathArgs`, `Subcommand` in `main.rs` |
 | Exit codes / output | `run_search`, `print_matches`, `ExitCode` paths |
-| Index path / open | `--index` default `.index`, `Index::open` |
+| Index path / open | `--sift-dir` default `.sift`, `Index::open` |
 | E2E behavior | `crates/cli/tests/integration_*.rs` (spawn the real `sift` binary) |
 
 ## Commands

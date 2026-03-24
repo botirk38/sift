@@ -16,8 +16,8 @@
 
 ```bash
 cargo build --release -p sift-cli
-./target/release/sift --index .index build /path/to/corpus
-./target/release/sift --index .index pattern
+./target/release/sift --sift-dir .sift build /path/to/corpus
+./target/release/sift --sift-dir .sift pattern
 ```
 
 Patterns use Rust’s **`regex`** syntax unless **`-F`** (fixed string). Literal **`build`**: `sift -- build` or `-e build`.

@@ -28,10 +28,10 @@ pub fn command(cwd: Option<&Path>) -> Command {
     cmd
 }
 
-pub fn build_index(cwd: Option<&Path>, index: &Path, corpus: &Path) {
+pub fn build_index(cwd: Option<&Path>, sift_dir: &Path, corpus: &Path) {
     let status = command(cwd)
-        .arg("--index")
-        .arg(index)
+        .arg("--sift-dir")
+        .arg(sift_dir)
         .arg("build")
         .arg(corpus)
         .status()

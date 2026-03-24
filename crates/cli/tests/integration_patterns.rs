@@ -10,14 +10,14 @@ fn pattern_file_roundtrip() {
     fs::write(root.join("t.txt"), "alpha beta\n").unwrap();
     let pat = root.join("patterns.txt");
     fs::write(&pat, "# comment\nbeta\n").unwrap();
-    let idx = root.join(".idx");
+    let idx = root.join(".sift");
 
     build_index(None, &idx, &root);
 
     let out = command(None)
         .arg("-f")
         .arg(&pat)
-        .arg("--index")
+        .arg("--sift-dir")
         .arg(&idx)
         .output()
         .unwrap();
@@ -32,7 +32,7 @@ fn repeated_e_patterns_are_or_combined() {
     let root = fresh_dir("patterns-repeated-e");
     fs::write(root.join("a.txt"), "alpha\n").unwrap();
     fs::write(root.join("b.txt"), "beta\n").unwrap();
-    let idx = root.join(".idx");
+    let idx = root.join(".sift");
 
     build_index(None, &idx, &root);
 
@@ -41,7 +41,7 @@ fn repeated_e_patterns_are_or_combined() {
         .arg("alpha")
         .arg("-e")
         .arg("beta")
-        .arg("--index")
+        .arg("--sift-dir")
         .arg(&idx)
         .output()
         .unwrap();
@@ -59,14 +59,14 @@ fn pattern_file_and_positional_pattern_are_combined() {
     fs::write(root.join("b.txt"), "beta\n").unwrap();
     let pat = root.join("patterns.txt");
     fs::write(&pat, "alpha\n").unwrap();
-    let idx = root.join(".idx");
+    let idx = root.join(".sift");
 
     build_index(None, &idx, &root);
 
     let out = command(None)
         .arg("-f")
         .arg(&pat)
-        .arg("--index")
+        .arg("--sift-dir")
         .arg(&idx)
         .arg("beta")
         .output()

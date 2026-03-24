@@ -12,12 +12,12 @@ fn relative_path_scope_limits_matches() {
     fs::create_dir_all(root.join("b")).unwrap();
     fs::write(root.join("a/x.txt"), "ONLY_IN_A\n").unwrap();
     fs::write(root.join("b/y.txt"), "ONLY_IN_B\n").unwrap();
-    let idx = root.join(".idx");
+    let idx = root.join(".sift");
 
     build_index(Some(&root), &idx, Path::new("."));
 
     let out = command(Some(&root))
-        .arg("--index")
+        .arg("--sift-dir")
         .arg(&idx)
         .arg("ONLY_IN_")
         .arg("a")
@@ -30,7 +30,7 @@ fn relative_path_scope_limits_matches() {
     assert!(!stdout.contains("b/y.txt"), "unexpected stdout: {stdout}");
 
     let out_both = command(Some(&root))
-        .arg("--index")
+        .arg("--sift-dir")
         .arg(&idx)
         .arg("ONLY_IN_")
         .arg("a")
@@ -50,12 +50,12 @@ fn absolute_path_scope_within_corpus_works() {
     fs::create_dir_all(root.join("b")).unwrap();
     fs::write(root.join("a/x.txt"), "alpha\n").unwrap();
     fs::write(root.join("b/y.txt"), "alpha\n").unwrap();
-    let idx = root.join(".idx");
+    let idx = root.join(".sift");
 
     build_index(None, &idx, &root);
 
     let out = command(None)
-        .arg("--index")
+        .arg("--sift-dir")
         .arg(&idx)
         .arg("alpha")
         .arg(root.join("a"))
@@ -74,12 +74,12 @@ fn search_path_outside_corpus_exits_2() {
     fs::write(root.join("a.txt"), "hello\n").unwrap();
     let outside = fresh_dir("paths-outside-corpus-elsewhere");
     fs::write(outside.join("b.txt"), "hello\n").unwrap();
-    let idx = root.join(".idx");
+    let idx = root.join(".sift");
 
     build_index(None, &idx, &root);
 
     let out = command(None)
-        .arg("--index")
+        .arg("--sift-dir")
         .arg(&idx)
         .arg("hello")
         .arg(outside)

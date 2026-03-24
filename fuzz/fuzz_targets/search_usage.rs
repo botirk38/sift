@@ -25,7 +25,7 @@ fn indexed() -> &'static Index {
             fs::create_dir_all(&corpus).expect("mkdir");
             fs::write(corpus.join("a.txt"), b"hello world\nfoo bar\n").expect("a.txt");
             fs::write(corpus.join("b.txt"), b"baz\nquux line\n").expect("b.txt");
-            let index_dir = tmp.path().join("idx");
+            let index_dir = tmp.path().join(".sift");
             build_index(&corpus, &index_dir).expect("build_index");
             let index = Index::open(&index_dir).expect("open");
             IndexHolder { _tmp: tmp, index }

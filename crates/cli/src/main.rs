@@ -101,8 +101,8 @@ struct OutputFlagsC {
 struct PathArgs {
     #[arg(short = 'm', long = "max-count", value_name = "NUM")]
     max_count: Option<usize>,
-    #[arg(long, default_value = ".index")]
-    index: PathBuf,
+    #[arg(long, default_value = ".sift")]
+    sift_dir: PathBuf,
 }
 
 #[derive(Subcommand)]
@@ -224,7 +224,7 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
     )?;
     let opts = search_options(cli);
     let query = CompiledSearch::new(&patterns, opts).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let index = Index::open(&cli.paths.index)?;
+    let index = Index::open(&cli.paths.sift_dir)?;
     let cwd = std::env::current_dir()?;
     let prefixes = corpus_path_prefixes(&index.root, &cwd, &cli.search_scope.paths)?;
     let output = SearchOutput {
@@ -241,12 +241,15 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     if let Some(Commands::Build { path }) = cli.command {
-        return match IndexBuilder::new(&path).with_dir(&cli.paths.index).build() {
+        return match IndexBuilder::new(&path)
+            .with_dir(&cli.paths.sift_dir)
+            .build()
+        {
             Ok(_) => {
                 eprintln!(
                     "indexed corpus {} → {}",
                     path.display(),
-                    cli.paths.index.display()
+                    cli.paths.sift_dir.display()
                 );
                 ExitCode::SUCCESS
             }

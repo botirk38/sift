@@ -29,8 +29,8 @@ cargo test --workspace --all-features
 
 - Workspace lints: `unsafe` forbidden; clippy pedantic/nursery/cargo as warn (treat `-D warnings` in CI as hard).
 - Prefer small, focused changes; match existing style.
-- Do not commit `target/`, `.cursor/`, local `.index/` (see root `.gitignore`).
+- Do not commit `target/`, `.cursor/`, local `.sift/` (see root `.gitignore`).
 
 ## Embedding / API
 
-Consumers typically call `build_index`, `Index::open`, `CompiledSearch::new`, then `search_index` or `search_walk`. Details live in `crates/core/README.md`.
+Consumers typically call `IndexBuilder::build`, `Index::open`, `CompiledSearch::new`, then `run_index` or `walk_file_paths`. Details live in `crates/core/README.md`.

@@ -8,13 +8,13 @@ use common::{assert_success, build_index, command, fresh_dir, normalized_stdout}
 fn quiet_exit_codes() {
     let root = fresh_dir("output-quiet");
     fs::write(root.join("a.txt"), "found\n").unwrap();
-    let idx = root.join(".idx");
+    let idx = root.join(".sift");
 
     build_index(None, &idx, &root);
 
     let ok = command(None)
         .arg("-q")
-        .arg("--index")
+        .arg("--sift-dir")
         .arg(&idx)
         .arg("found")
         .status()
@@ -23,7 +23,7 @@ fn quiet_exit_codes() {
 
     let miss = command(None)
         .arg("-q")
-        .arg("--index")
+        .arg("--sift-dir")
         .arg(&idx)
         .arg("nopeeee")
         .status()
@@ -36,12 +36,12 @@ fn files_with_matches_print_each_path_once() {
     let root = fresh_dir("output-files-with-matches");
     fs::write(root.join("a.txt"), "match\nmatch again\n").unwrap();
     fs::write(root.join("b.txt"), "match\n").unwrap();
-    let idx = root.join(".idx");
+    let idx = root.join(".sift");
 
     build_index(None, &idx, &root);
 
     let out = command(None)
-        .arg("--index")
+        .arg("--sift-dir")
         .arg(&idx)
         .arg("-l")
         .arg("match")
@@ -62,12 +62,12 @@ fn files_without_match_print_only_non_matching_paths() {
     fs::write(root.join("a.txt"), "hit\n").unwrap();
     fs::write(root.join("b.txt"), "miss\n").unwrap();
     fs::write(root.join("c.txt"), "hit too\n").unwrap();
-    let idx = root.join(".idx");
+    let idx = root.join(".sift");
 
     build_index(None, &idx, &root);
 
     let out = command(None)
-        .arg("--index")
+        .arg("--sift-dir")
         .arg(&idx)
         .arg("-L")
         .arg("hit")
@@ -87,12 +87,12 @@ fn count_prints_match_totals_per_file() {
     let root = fresh_dir("output-count");
     fs::write(root.join("a.txt"), "hit\nhit\n").unwrap();
     fs::write(root.join("b.txt"), "miss\n").unwrap();
-    let idx = root.join(".idx");
+    let idx = root.join(".sift");
 
     build_index(None, &idx, &root);
 
     let out = command(None)
-        .arg("--index")
+        .arg("--sift-dir")
         .arg(&idx)
         .arg("-c")
         .arg("hit")
@@ -111,12 +111,12 @@ fn count_prints_match_totals_per_file() {
 fn line_number_and_no_filename_format_output() {
     let root = fresh_dir("output-line-number-no-filename");
     fs::write(root.join("t.txt"), "alpha\nbeta\n").unwrap();
-    let idx = root.join(".idx");
+    let idx = root.join(".sift");
 
     build_index(None, &idx, &root);
 
     let out = command(None)
-        .arg("--index")
+        .arg("--sift-dir")
         .arg(&idx)
         .arg("-n")
         .arg("--no-filename")
@@ -136,12 +136,12 @@ fn line_number_and_no_filename_format_output() {
 fn only_matching_prints_each_match_span() {
     let root = fresh_dir("output-only-matching");
     fs::write(root.join("t.txt"), "alpha beta beta\n").unwrap();
-    let idx = root.join(".idx");
+    let idx = root.join(".sift");
 
     build_index(None, &idx, &root);
 
     let out = command(None)
-        .arg("--index")
+        .arg("--sift-dir")
         .arg(&idx)
         .arg("-o")
         .arg("--no-filename")
@@ -162,12 +162,12 @@ fn max_count_limits_total_matches() {
     let root = fresh_dir("output-max-count");
     fs::write(root.join("a.txt"), "match one\nmatch two\n").unwrap();
     fs::write(root.join("b.txt"), "match three\n").unwrap();
-    let idx = root.join(".idx");
+    let idx = root.join(".sift");
 
     build_index(None, &idx, &root);
 
     let out = command(None)
-        .arg("--index")
+        .arg("--sift-dir")
         .arg(&idx)
         .arg("--max-count")
         .arg("1")

@@ -39,8 +39,9 @@ impl Index {
     /// [`crate::Error::MissingComponent`] if a trigram table file is missing,
     /// or [`crate::Error::Io`] on read/mmap failure.
     pub fn open(path: &Path) -> crate::Result<Self> {
-        let index_dir = path.to_path_buf();
-        let meta_path = index_dir.join(crate::META_FILENAME);
+        let sift_dir = path.to_path_buf();
+        let index_dir = sift_dir.join(crate::INDEX_SUBDIR);
+        let meta_path = sift_dir.join(crate::META_FILENAME);
         if !meta_path.is_file() {
             return Err(crate::Error::MissingMeta(meta_path));
         }
@@ -74,7 +75,7 @@ impl Index {
             file_paths,
             lexicon,
             postings,
-            index_dir: Some(index_dir),
+            index_dir: Some(sift_dir),
         })
     }
 
@@ -88,12 +89,20 @@ impl Index {
         let meta_path = dir.join(crate::META_FILENAME);
         std::fs::write(&meta_path, format!("{}\n", self.root.display()))?;
 
-        std::fs::write(dir.join(crate::FILES_BIN), self.files.backing_slice())
+        let index_dir = dir.join(crate::INDEX_SUBDIR);
+        std::fs::create_dir_all(&index_dir)?;
+        std::fs::write(index_dir.join(crate::FILES_BIN), self.files.backing_slice())
             .map_err(crate::Error::Io)?;
-        std::fs::write(dir.join(crate::LEXICON_BIN), self.lexicon.backing_slice())
-            .map_err(crate::Error::Io)?;
-        std::fs::write(dir.join(crate::POSTINGS_BIN), self.postings.backing_slice())
-            .map_err(crate::Error::Io)?;
+        std::fs::write(
+            index_dir.join(crate::LEXICON_BIN),
+            self.lexicon.backing_slice(),
+        )
+        .map_err(crate::Error::Io)?;
+        std::fs::write(
+            index_dir.join(crate::POSTINGS_BIN),
+            self.postings.backing_slice(),
+        )
+        .map_err(crate::Error::Io)?;
         Ok(())
     }
 

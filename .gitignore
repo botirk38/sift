@@ -5,6 +5,6 @@
 /flamegraph.svg
 /cargo-flamegraph.trace
 .cursor/
-.index/
+.sift/
 *.data
 *.data.*

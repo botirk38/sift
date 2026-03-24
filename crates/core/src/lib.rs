@@ -26,6 +26,8 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
+pub const SIFT_DIR: &str = ".sift";
+pub const INDEX_SUBDIR: &str = ".index";
 pub const META_FILENAME: &str = "sift.meta";
 pub const FILES_BIN: &str = "files.bin";
 pub const LEXICON_BIN: &str = "lexicon.bin";
@@ -72,7 +74,7 @@ mod tests {
         fs::create_dir_all(tmp.join("src")).unwrap();
         fs::write(tmp.join("src/lib.rs"), "fn hello() {\n  let x = 1;\n}\n").unwrap();
 
-        let idx = tmp.join(".index");
+        let idx = tmp.join(".sift");
         let _ = IndexBuilder::new(&tmp).with_dir(&idx).build().unwrap();
 
         let index = Index::open(&idx).unwrap();
@@ -116,7 +118,7 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("sift-explain-{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
-        let idx = tmp.join(".index");
+        let idx = tmp.join(".sift");
         let _ = IndexBuilder::new(&tmp).with_dir(&idx).build().unwrap();
         let index = Index::open(&idx).unwrap();
         let plan = index.explain("foo.*");
@@ -133,7 +135,7 @@ mod tests {
         fs::write(tmp.join("a/x.txt"), "alpha beta\n").unwrap();
         fs::write(tmp.join("b/y.txt"), "gamma delta\n").unwrap();
 
-        let idx = tmp.join(".index");
+        let idx = tmp.join(".sift");
         let _ = IndexBuilder::new(&tmp).with_dir(&idx).build().unwrap();
         let index = Index::open(&idx).unwrap();
 
@@ -164,7 +166,7 @@ mod tests {
             )
             .unwrap();
         }
-        let idx = tmp.join(".index");
+        let idx = tmp.join(".sift");
         let _ = IndexBuilder::new(&tmp).with_dir(&idx).build().unwrap();
         let index = Index::open(&idx).unwrap();
         assert_eq!(index.file_count(), n_files);
@@ -187,7 +189,7 @@ mod tests {
         fs::create_dir_all(tmp.join("ignored")).unwrap();
         fs::write(tmp.join("ignored/hidden.txt"), "beta skip\n").unwrap();
 
-        let idx = tmp.join(".index");
+        let idx = tmp.join(".sift");
         let _ = IndexBuilder::new(&tmp).with_dir(&idx).build().unwrap();
         let index = Index::open(&idx).unwrap();
 
