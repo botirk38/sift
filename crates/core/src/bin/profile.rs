@@ -442,7 +442,7 @@ fn run_scenario(index: &Index, scenario: &Scenario, loop_cfg: &Loop) {
     let total_files = index.file_count();
 
     let t_candidates = Instant::now();
-    let candidate_ids = query.candidate_file_ids(index, &[], false);
+    let candidate_ids = query.candidate_file_ids(index, &[], None, false);
     let candidates_us = t_candidates.elapsed().as_micros();
     let candidate_count = candidate_ids.len();
 
@@ -461,6 +461,7 @@ fn run_scenario(index: &Index, scenario: &Scenario, loop_cfg: &Loop) {
                         .run_index(
                             index,
                             &[],
+                            None,
                             SearchOutput {
                                 mode: SearchMode::Quiet,
                                 with_filename: false,
@@ -480,6 +481,7 @@ fn run_scenario(index: &Index, scenario: &Scenario, loop_cfg: &Loop) {
                         .run_index(
                             index,
                             &[],
+                            None,
                             SearchOutput {
                                 mode: SearchMode::Quiet,
                                 with_filename: false,

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{value_parser, Arg, ArgAction, Args, Command, FromArgMatches, Parser, Subcommand};
+use ignore::overrides::OverrideBuilder;
 use sift_core::{
     CaseMode, CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchMode, SearchOptions,
     SearchOutput,
@@ -28,6 +29,8 @@ struct Cli {
     search_flags: SearchFlags,
     #[command(flatten)]
     out3: OutputFlagsC,
+    #[command(flatten)]
+    glob_flags: GlobFlags,
     #[command(flatten)]
     paths: PathArgs,
 }
@@ -73,6 +76,12 @@ struct OutputFlagsA {
 struct OutputFlagsC {
     #[arg(long = "no-filename")]
     no_filename: bool,
+}
+
+#[derive(Args)]
+struct GlobFlags {
+    #[arg(short = 'g', long = "glob", value_name = "GLOB")]
+    glob: Vec<String>,
 }
 
 #[derive(Args)]
@@ -435,8 +444,24 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
     let cwd = std::env::current_dir()?;
     let prefixes = corpus_path_prefixes(&index.root, &cwd, &cli.search_scope.paths)?;
 
+    let glob_override = if cli.glob_flags.glob.is_empty() {
+        None
+    } else {
+        let mut builder = OverrideBuilder::new(&index.root);
+        for g in &cli.glob_flags.glob {
+            builder
+                .add(g)
+                .map_err(|e| anyhow::anyhow!("invalid glob pattern '{g}': {e}"))?;
+        }
+        Some(
+            builder
+                .build()
+                .map_err(|e| anyhow::anyhow!("invalid glob pattern: {e}"))?,
+        )
+    };
+
     query
-        .run_index(&index, &prefixes, output)
+        .run_index(&index, &prefixes, glob_override.as_ref(), output)
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
 

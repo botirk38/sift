@@ -3,6 +3,8 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use ignore::overrides::Override;
+
 use grep_matcher::Matcher;
 use grep_regex::RegexMatcher;
 use grep_searcher::{Searcher, Sink, SinkMatch};
@@ -22,6 +24,7 @@ impl CompiledSearch {
         &self,
         index: &Index,
         prefixes: &[PathBuf],
+        glob: Option<&Override>,
         exhaustive: bool,
     ) -> Vec<usize> {
         let ids: Vec<usize> = if exhaustive {
@@ -39,9 +42,20 @@ impl CompiledSearch {
 
         ids.into_iter()
             .filter(|&id| {
-                index
-                    .file_path(id)
-                    .is_some_and(|rel| path_in_scope(rel, prefixes))
+                let Some(rel) = index.file_path(id) else {
+                    return false;
+                };
+                if !path_in_scope(rel, prefixes) {
+                    return false;
+                }
+                if let Some(glob) = glob {
+                    let rel_str = rel.to_string_lossy().replace('\\', "/");
+                    let matched = glob.matched(std::path::Path::new(&rel_str), false);
+                    if !matched.is_whitelist() {
+                        return false;
+                    }
+                }
+                true
             })
             .collect()
     }
@@ -55,11 +69,13 @@ impl CompiledSearch {
         &self,
         index: &Index,
         prefixes: &[PathBuf],
+        glob: Option<&Override>,
         output: SearchOutput,
     ) -> crate::Result<bool> {
         let candidate_ids = self.candidate_file_ids(
             index,
             prefixes,
+            glob,
             Self::uses_exhaustive_candidates(output.mode),
         );
         if candidate_ids.is_empty() {
@@ -218,7 +234,7 @@ impl CompiledSearch {
 
     #[cfg(test)]
     pub(crate) fn collect_index_matches(&self, index: &Index) -> crate::Result<Vec<Match>> {
-        let candidate_ids = self.candidate_file_ids(index, &[], false);
+        let candidate_ids = self.candidate_file_ids(index, &[], None, false);
         self.collect_index_candidates(index, &candidate_ids)
     }
 
