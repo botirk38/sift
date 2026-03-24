@@ -28,6 +28,30 @@ Patterns use Rust’s **`regex`** syntax unless **`-F`** (fixed string). Literal
 - Optional path arguments must lie **under** the indexed corpus root.
 - No glob `-g` / smart-case here yet; **`--no-filename`** is used instead of **`-h`** (help).
 
+## Performance snapshot
+
+Current Linux benchsuite snapshot against the Linux corpus:
+
+- correctness parity: **11/11**
+- `sift` faster: **8/11**
+- `rg` faster: **3/11**
+
+![Linux performance summary](docs/perf/linux-summary.svg)
+
+| Search class | Snapshot | Takeaway |
+|---|---:|---|
+| Indexed literals | `~5.6x` faster | Trigram narrowing is doing the heavy lifting |
+| Indexed word matches | `~5.5x` faster | Whole-word literal shaping stays cheap |
+| Indexed alternation | `~2.4x` faster | Candidate narrowing plus `build_many` helps a lot |
+| Full-scan Unicode | `~0.9x` | Near parity overall, but Greek classes still trail |
+| Full-scan no-literal regex | `~0.6x` | Regex-engine full scans remain the hardest cases |
+
+Fast path takeaways:
+
+- indexed literal, word, suffix-literal, and alternation searches are decisively faster with `sift`
+- full-scan Unicode class searches are the main remaining gap versus `rg`
+- see [`crates/core/benches/README.md`](crates/core/benches/README.md) for the benchmark and profiling workflow
+
 ## Develop
 
 ```bash

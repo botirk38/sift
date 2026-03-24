@@ -1,0 +1,37 @@
+{
+  "title": "sift vs rg by search class (Linux corpus)",
+  "subtitle": "Current benchsuite snapshot: correctness parity 11/11, sift faster in 8/11 cases",
+  "x_max": 6.0,
+  "categories": [
+    {
+      "label": "Indexed literals",
+      "speedup": 5.6,
+      "status": "win",
+      "detail": "Trigram narrowing dominates"
+    },
+    {
+      "label": "Indexed word",
+      "speedup": 5.5,
+      "status": "win",
+      "detail": "Word-shaped literals stay cheap"
+    },
+    {
+      "label": "Indexed alternation",
+      "speedup": 2.4,
+      "status": "win",
+      "detail": "Candidate narrowing plus build_many helps"
+    },
+    {
+      "label": "Full-scan Unicode",
+      "speedup": 0.9,
+      "status": "near",
+      "detail": "Greek classes remain the main holdout"
+    },
+    {
+      "label": "Full-scan no-literal",
+      "speedup": 0.6,
+      "status": "loss",
+      "detail": "Regex-engine full scans are still hardest"
+    }
+  ]
+}
