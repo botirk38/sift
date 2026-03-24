@@ -52,7 +52,7 @@ fn bench_build_index(c: &mut Criterion) {
             let tmp = tempfile::tempdir().unwrap();
             let corpus = tmp.path().join("corpus");
             make_many_files_corpus(&corpus, 32);
-            let idx = tmp.path().join("idx");
+            let idx = tmp.path().join(".sift");
             IndexBuilder::new(&corpus).with_dir(&idx).build().unwrap();
         });
     });
@@ -63,7 +63,7 @@ fn open_parity_index() -> (tempfile::TempDir, Index) {
     let tmp = tempfile::tempdir().unwrap();
     let corpus = tmp.path().join("corpus");
     make_parity_corpus(&corpus);
-    let idx = tmp.path().join("idx");
+    let idx = tmp.path().join(".sift");
     IndexBuilder::new(&corpus).with_dir(&idx).build().unwrap();
     let index = Index::open(&idx).unwrap();
     (tmp, index)

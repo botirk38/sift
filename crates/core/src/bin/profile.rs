@@ -170,7 +170,7 @@ fn open_corpus_index(kind: &CorpusKind) -> (tempfile::TempDir, Index) {
         }
     }
 
-    let idx = tmp.path().join("idx");
+    let idx = tmp.path().join(".sift");
     let t0 = Instant::now();
     let _ = IndexBuilder::new(&corpus).with_dir(&idx).build().unwrap();
     let build_ms = t0.elapsed().as_secs_f64() * 1e3;
@@ -400,7 +400,7 @@ fn run_build(iters: usize, kind: &CorpusKind) {
         let tmp = tempfile::tempdir().unwrap();
         let corpus = tmp.path().join("corpus");
         materialize_build_corpus(&corpus, kind);
-        let idx = tmp.path().join("idx");
+        let idx = tmp.path().join(".sift");
         let _ = IndexBuilder::new(&corpus).with_dir(&idx).build().unwrap();
     }
     let elapsed = t0.elapsed();
