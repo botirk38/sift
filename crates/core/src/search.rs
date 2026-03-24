@@ -1,4 +1,4 @@
-//! Naive full-corpus search: `ignore::WalkBuilder` + byte line scan + `regex::bytes::Regex`.
+//! Naive full-corpus search: `ignore::WalkBuilder` + byte line scan + `regex_automata::meta::Regex`.
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 use bitflags::bitflags;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
-use regex::bytes::Regex;
+use regex_automata::{meta::Regex, Input};
 
 use crate::planner::TrigramPlan;
 use crate::verify;
@@ -314,6 +314,7 @@ fn scan_lines(
     let mut reader = BufReader::new(file);
     let mut line = Vec::new();
     let mut line_no = 0usize;
+    let mut cache = re.create_cache();
 
     loop {
         if *budget == Some(0) {
@@ -339,7 +340,7 @@ fn scan_lines(
         let matched = match literals {
             Some(needles) if !opts.only_matching() => bytes_contains_any(&line, needles),
             Some(needles) if !bytes_contains_any(&line, needles) => false,
-            _ => re.is_match(&line),
+            _ => re.search_with(&mut cache, &Input::new(&line)).is_some(),
         };
 
         let take = if opts.invert_match() {
@@ -353,18 +354,23 @@ fn scan_lines(
         }
 
         if opts.only_matching() && !opts.invert_match() {
-            for m in re.find_iter(&line) {
+            let mut input = Input::new(&line);
+            while let Some(m) = re.search_with(&mut cache, &input) {
                 if *budget == Some(0) {
                     return true;
                 }
+                let start = m.span().start;
+                let end = m.span().end;
+                let matched_text = String::from_utf8_lossy(&line[start..end]).into_owned();
                 out.push(Match {
                     file: display.to_path_buf(),
                     line: line_no,
-                    text: String::from_utf8_lossy(m.as_bytes()).into_owned(),
+                    text: matched_text,
                 });
                 if let Some(b) = *budget {
                     *budget = Some(b - 1);
                 }
+                input = Input::new(&line).range(end..);
             }
         } else {
             out.push(Match {

@@ -713,7 +713,7 @@ dependencies = [
  "ignore",
  "memchr",
  "rayon",
- "regex",
+ "regex-automata",
  "regex-syntax",
  "tempfile",
  "thiserror",

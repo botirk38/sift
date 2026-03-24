@@ -22,7 +22,7 @@ bitflags = "2"
 ignore = "0.4"
 memchr = "2"
 rayon = "1"
-regex = "1"
+regex-automata = "0.4"
 regex-syntax = "0.8"
 thiserror = "2"
 tempfile = { version = "3", optional = true }

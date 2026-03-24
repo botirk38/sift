@@ -1,12 +1,13 @@
 //! Regex compilation — Rust regex syntax (ERE-like), with grep-style `-F`/`-w`/`-x` shaping.
 
-use regex::bytes::Regex;
+use regex_automata::meta::Regex;
+use regex_syntax::escape;
 
 use crate::search::SearchOptions;
 
 pub fn pattern_branch(p: &str, opts: &SearchOptions) -> String {
     let mut s = if opts.fixed_strings() {
-        regex::escape(p)
+        escape(p)
     } else {
         p.to_string()
     };
@@ -22,11 +23,11 @@ pub fn pattern_branch(p: &str, opts: &SearchOptions) -> String {
 ///
 /// # Errors
 ///
-/// Returns [`regex::Error`] if the combined pattern is invalid.
+/// Returns [`regex_automata::meta::BuildError`] if the combined pattern is invalid.
 pub fn compile_search_pattern(
     patterns: &[String],
     opts: &SearchOptions,
-) -> Result<Regex, regex::Error> {
+) -> Result<Regex, Box<regex_automata::meta::BuildError>> {
     debug_assert!(!patterns.is_empty());
     let branches: Vec<String> = patterns.iter().map(|p| pattern_branch(p, opts)).collect();
     let combined = if branches.len() == 1 {
@@ -38,25 +39,29 @@ pub fn compile_search_pattern(
             .collect::<Vec<_>>()
             .join("|")
     };
-    regex::bytes::RegexBuilder::new(&combined)
-        .case_insensitive(opts.case_insensitive())
-        .multi_line(false)
-        .dot_matches_new_line(false)
-        .build()
+    let mut builder = Regex::builder();
+    if opts.case_insensitive() {
+        builder.syntax(regex_automata::util::syntax::Config::new().case_insensitive(true));
+    }
+    builder.build(&combined).map_err(Box::new)
 }
 
 /// Build a `Regex` for a single pattern.
 ///
 /// # Errors
 ///
-/// Returns [`regex::Error`] if `pattern` is invalid.
-pub fn compile_pattern(pattern: &str, case_insensitive: bool) -> Result<Regex, regex::Error> {
+/// Returns [`regex_automata::meta::BuildError`] if `pattern` is invalid.
+pub fn compile_pattern(
+    pattern: &str,
+    case_insensitive: bool,
+) -> Result<Regex, Box<regex_automata::meta::BuildError>> {
     use crate::search::SearchMatchFlags;
 
-    let mut flags = SearchMatchFlags::empty();
-    if case_insensitive {
-        flags |= SearchMatchFlags::CASE_INSENSITIVE;
-    }
+    let flags = if case_insensitive {
+        SearchMatchFlags::CASE_INSENSITIVE
+    } else {
+        SearchMatchFlags::empty()
+    };
     let opts = SearchOptions {
         flags,
         max_results: None,
@@ -81,41 +86,68 @@ mod tests {
         let flags = SearchMatchFlags::empty();
         let re =
             compile_search_pattern(&["foo".to_string(), "bar".to_string()], &opts(flags)).unwrap();
-        assert!(re.is_match(b"foo"));
-        assert!(re.is_match(b"bar"));
-        assert!(!re.is_match(b"baz"));
+        let mut cache = regex_automata::meta::Cache::new(&re);
+        assert!(re
+            .search_with(&mut cache, &regex_automata::Input::new(b"foo"))
+            .is_some());
+        assert!(re
+            .search_with(&mut cache, &regex_automata::Input::new(b"bar"))
+            .is_some());
+        assert!(re
+            .search_with(&mut cache, &regex_automata::Input::new(b"baz"))
+            .is_none());
     }
 
     #[test]
     fn fixed_strings_escape_metacharacters() {
         let flags = SearchMatchFlags::FIXED_STRINGS;
         let re = compile_search_pattern(&[r"a.c".to_string()], &opts(flags)).unwrap();
-        assert!(re.is_match(b"a.c"));
-        assert!(!re.is_match(b"abc"));
+        let mut cache = regex_automata::meta::Cache::new(&re);
+        assert!(re
+            .search_with(&mut cache, &regex_automata::Input::new(b"a.c"))
+            .is_some());
+        assert!(re
+            .search_with(&mut cache, &regex_automata::Input::new(b"abc"))
+            .is_none());
     }
 
     #[test]
     fn case_insensitive() {
         let flags = SearchMatchFlags::CASE_INSENSITIVE;
         let re = compile_search_pattern(&["Hello".to_string()], &opts(flags)).unwrap();
-        assert!(re.is_match(b"hello"));
-        assert!(re.is_match(b"HELLO"));
+        let mut cache = regex_automata::meta::Cache::new(&re);
+        assert!(re
+            .search_with(&mut cache, &regex_automata::Input::new(b"hello"))
+            .is_some());
+        assert!(re
+            .search_with(&mut cache, &regex_automata::Input::new(b"HELLO"))
+            .is_some());
     }
 
     #[test]
     fn word_regexp() {
         let flags = SearchMatchFlags::WORD_REGEXP;
         let re = compile_search_pattern(&["cat".to_string()], &opts(flags)).unwrap();
-        assert!(re.is_match(b"a cat here"));
-        assert!(!re.is_match(b"concat"));
+        let mut cache = regex_automata::meta::Cache::new(&re);
+        assert!(re
+            .search_with(&mut cache, &regex_automata::Input::new(b"a cat here"))
+            .is_some());
+        assert!(re
+            .search_with(&mut cache, &regex_automata::Input::new(b"concat"))
+            .is_none());
     }
 
     #[test]
     fn line_regexp() {
         let flags = SearchMatchFlags::LINE_REGEXP;
         let re = compile_search_pattern(&["yes".to_string()], &opts(flags)).unwrap();
-        assert!(re.is_match(b"yes"));
-        assert!(!re.is_match(b"oh yes sir"));
+        let mut cache = regex_automata::meta::Cache::new(&re);
+        assert!(re
+            .search_with(&mut cache, &regex_automata::Input::new(b"yes"))
+            .is_some());
+        assert!(re
+            .search_with(&mut cache, &regex_automata::Input::new(b"oh yes sir"))
+            .is_none());
     }
 
     #[test]
