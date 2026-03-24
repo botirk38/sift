@@ -94,10 +94,10 @@ fn wrap_line(hir: Hir) -> Hir {
 
 /// Shape the HIR according to search options (word/line boundaries).
 fn shape_hir(hir: Hir, opts: &SearchOptions) -> Hir {
-    if opts.word_regexp() {
-        wrap_word(hir, true)
-    } else if opts.line_regexp() {
+    if opts.line_regexp() {
         wrap_line(hir)
+    } else if opts.word_regexp() {
+        wrap_word(hir, true)
     } else {
         hir
     }

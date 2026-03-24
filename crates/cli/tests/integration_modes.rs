@@ -1025,3 +1025,195 @@ fn files_without_match_still_path_mode_under_no_filename() {
     assert_eq!(lines.len(), 1);
     assert!(lines[0].contains("c.txt"));
 }
+
+#[test]
+fn word_regexp_with_alternation() {
+    let root = fresh_dir("modes-word-alt");
+    fs::write(root.join("t.txt"), "cat\ndog\ncatdog\ncategory\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-w")
+        .arg("cat|dog")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let stdout = normalized_stdout(&out);
+    assert!(stdout.contains("cat"));
+    assert!(stdout.contains("dog"));
+    assert!(
+        !stdout.contains("catdog"),
+        "catdog should not match: {stdout}"
+    );
+    assert!(
+        !stdout.contains("category"),
+        "category should not match: {stdout}"
+    );
+}
+
+#[test]
+fn line_regexp_with_alternation() {
+    let root = fresh_dir("modes-line-alt");
+    fs::write(root.join("t.txt"), "cat\ndog\ncatdog\ncat\r\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-x")
+        .arg("cat|dog")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let stdout = normalized_stdout(&out);
+    let lines: Vec<_> = stdout.lines().map(str::to_string).collect();
+    assert_eq!(
+        lines.len(),
+        2,
+        "only exact cat or dog lines should match: {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|l| l.ends_with("cat") || l.ends_with("dog")),
+        "both lines should be exact match: {lines:?}"
+    );
+}
+
+#[test]
+fn word_and_line_regexp_line_takes_precedence() {
+    let root = fresh_dir("modes-wx-precedence");
+    fs::write(root.join("t.txt"), "cat\ncat dog\ndog cat\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-w")
+        .arg("-x")
+        .arg("cat")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let stdout = normalized_stdout(&out);
+    let lines: Vec<_> = stdout.lines().map(str::to_string).collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "line anchor should take precedence, only exact line matches: {lines:?}"
+    );
+    assert!(
+        stdout.contains("cat"),
+        "exact line cat should match: {stdout}"
+    );
+    assert!(
+        !stdout.contains("cat dog"),
+        "cat dog should not match: {stdout}"
+    );
+    assert!(
+        !stdout.contains("dog cat"),
+        "dog cat should not match: {stdout}"
+    );
+}
+
+#[test]
+fn line_regexp_only_matching() {
+    let root = fresh_dir("modes-line-only");
+    fs::write(root.join("t.txt"), "cat\ncat dog\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-x")
+        .arg("-o")
+        .arg("cat")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let stdout = normalized_stdout(&out);
+    let lines: Vec<_> = stdout.lines().map(str::to_string).collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "only exact match span should print: {lines:?}"
+    );
+    assert!(stdout.contains("cat"), "should print cat span: {stdout}");
+}
+
+#[test]
+fn word_regexp_only_matching() {
+    let root = fresh_dir("modes-word-only");
+    fs::write(root.join("t.txt"), "cat\ncat dog\nconcatenate\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-w")
+        .arg("-o")
+        .arg("cat")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let stdout = normalized_stdout(&out);
+    let lines: Vec<_> = stdout.lines().map(str::to_string).collect();
+    assert_eq!(
+        lines.len(),
+        2,
+        "both whole-word cat matches should print: {lines:?}"
+    );
+    assert!(
+        !stdout.contains("concatenate"),
+        "concatenate should not match: {stdout}"
+    );
+}
+
+#[test]
+fn word_line_regexp_only_matching() {
+    let root = fresh_dir("modes-wx-only");
+    fs::write(root.join("t.txt"), "cat\ncat dog\ndog cat\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-w")
+        .arg("-x")
+        .arg("-o")
+        .arg("cat")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let stdout = normalized_stdout(&out);
+    let lines: Vec<_> = stdout.lines().map(str::to_string).collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "line anchor takes precedence, only exact match prints: {lines:?}"
+    );
+    assert!(
+        stdout.contains("cat"),
+        "exact match span should print: {stdout}"
+    );
+}
