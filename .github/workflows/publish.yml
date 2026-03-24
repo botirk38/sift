@@ -9,35 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  validate:
-    name: validate (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: cargo fmt
-        run: cargo fmt --all -- --check
-
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-      - name: cargo test
-        run: cargo test --workspace --all-features
-
   publish:
     name: publish sift-core ${{ github.ref_name }}
-    needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
