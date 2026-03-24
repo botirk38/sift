@@ -68,7 +68,7 @@ impl SearchOptions {
 
     #[must_use]
     pub const fn precludes_trigram_index(self) -> bool {
-        self.case_insensitive() || self.invert_match() || self.word_regexp() || self.line_regexp()
+        self.invert_match()
     }
 }
 
