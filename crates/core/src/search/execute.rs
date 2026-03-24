@@ -51,7 +51,7 @@ impl CompiledSearch {
                 if let Some(glob) = glob {
                     let rel_str = rel.to_string_lossy().replace('\\', "/");
                     let matched = glob.matched(std::path::Path::new(&rel_str), false);
-                    if !matched.is_whitelist() {
+                    if matched.is_ignore() {
                         return false;
                     }
                 }
