@@ -67,6 +67,15 @@ mod tests {
     use super::*;
     use std::fs;
 
+    fn normalized_path(p: &std::path::Path) -> std::path::PathBuf {
+        let s = p.display().to_string();
+        #[cfg(windows)]
+        let s = s.strip_prefix("\\\\?\\").unwrap_or(&s).to_string();
+        #[cfg(target_os = "macos")]
+        let s = s.replace("/private", "");
+        std::path::PathBuf::from(s)
+    }
+
     #[test]
     fn build_open_search_finds_line() {
         let tmp = std::env::temp_dir().join(format!("sift-core-test-{}", std::process::id()));
@@ -100,14 +109,15 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("sift-missing-table-{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
-        fs::write(
-            tmp.join(META_FILENAME),
-            r#"{
-  "root": "/tmp/foo",
+        let root_path = std::env::temp_dir().join("sift-test-root");
+        let meta = format!(
+            r#"{{
+  "root": "{}",
   "kind": "directory"
-}"#,
-        )
-        .unwrap();
+}}"#,
+            root_path.display()
+        );
+        fs::write(tmp.join(META_FILENAME), meta).unwrap();
         assert!(matches!(Index::open(&tmp), Err(Error::MissingComponent(_))));
     }
 
@@ -238,7 +248,11 @@ mod tests {
         let _ = IndexBuilder::new(&file).with_dir(&idx).build().unwrap();
         let index = Index::open(&idx).unwrap();
 
-        assert_eq!(index.root, tmp.canonicalize().unwrap());
+        let expected_root = file.canonicalize().unwrap().parent().unwrap().to_path_buf();
+        assert_eq!(
+            normalized_path(&index.root),
+            normalized_path(&expected_root)
+        );
         assert!(matches!(index.corpus_kind, index::CorpusKind::File { .. }));
         assert_eq!(index.file_count(), 1);
         assert_eq!(index.file_path(0).unwrap(), std::path::Path::new("one.txt"));
@@ -247,7 +261,10 @@ mod tests {
         let q = CompiledSearch::new(&pat, SearchOptions::default()).unwrap();
         let hits = q.collect_index_matches(&index).unwrap();
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].file, file);
+        assert_eq!(
+            normalized_path(&hits[0].file),
+            normalized_path(&file.canonicalize().unwrap())
+        );
         assert_eq!(hits[0].line, 2);
     }
 
