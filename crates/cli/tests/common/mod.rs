@@ -53,9 +53,7 @@ pub fn stdout(output: &Output) -> String {
 
 fn normalize_path_str(path: &str) -> String {
     let mut normalized = path.replace("\r\n", "\n").replace('\\', "/");
-    if let Some(stripped) = normalized.strip_prefix("//?/") {
-        normalized = stripped.to_string();
-    }
+    normalized = normalized.replace("//?/", "");
     normalized
 }
 

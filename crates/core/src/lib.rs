@@ -238,7 +238,7 @@ mod tests {
         let _ = IndexBuilder::new(&file).with_dir(&idx).build().unwrap();
         let index = Index::open(&idx).unwrap();
 
-        assert_eq!(index.root, tmp);
+        assert_eq!(index.root, tmp.canonicalize().unwrap());
         assert!(matches!(index.corpus_kind, index::CorpusKind::File { .. }));
         assert_eq!(index.file_count(), 1);
         assert_eq!(index.file_path(0).unwrap(), std::path::Path::new("one.txt"));
