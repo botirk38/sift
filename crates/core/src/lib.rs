@@ -39,6 +39,9 @@ pub enum Error {
     #[error("regex error: {0}")]
     Regex(#[from] Box<regex_automata::meta::BuildError>),
 
+    #[error("regex build error: {0}")]
+    RegexBuild(String),
+
     #[error("search patterns must not be empty")]
     EmptyPatterns,
 

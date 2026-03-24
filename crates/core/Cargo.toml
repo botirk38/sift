@@ -19,11 +19,18 @@ profile = ["dep:tempfile"]
 
 [dependencies]
 bitflags = "2"
+bstr = "1"
+grep-cli = "0.1"
+grep-matcher = "0.1"
+grep-printer = "0.3"
+grep-regex = "0.1"
+grep-searcher = "0.1"
 ignore = "0.4"
 memchr = "2"
 rayon = "1"
 regex-automata = "0.4"
 regex-syntax = "0.8"
+termcolor = "1"
 thiserror = "2"
 tempfile = { version = "3", optional = true }
 

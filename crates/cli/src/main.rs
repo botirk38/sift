@@ -3,6 +3,7 @@
 //! Patterns use the Rust `regex` dialect (ERE-like), except `-F` (fixed string). See `--help`.
 
 use std::collections::{HashMap, HashSet};
+use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -260,17 +261,37 @@ fn count_lines_per_file(matches: &[Match], only_matching: bool) -> HashMap<PathB
     m
 }
 
-fn print_match(m: &Match, show_path: bool, line_number: bool) {
+fn trim_line_ending(text: &str) -> &str {
+    text.trim_end_matches(['\r', '\n'])
+}
+
+fn relativize_match_paths(hits: Vec<Match>, root: &Path) -> Vec<Match> {
+    hits.into_iter()
+        .map(|mut m| {
+            if let Ok(rel) = m.file.strip_prefix(root) {
+                m.file = rel.to_path_buf();
+            }
+            m
+        })
+        .collect()
+}
+
+fn print_match<W: Write>(
+    w: &mut W,
+    m: &Match,
+    show_path: bool,
+    line_number: bool,
+) -> io::Result<()> {
     if show_path {
         if line_number {
-            print!("{}:{}:", m.file.display(), m.line);
+            write!(w, "{}:{}:", m.file.display(), m.line)?;
         } else {
-            print!("{}:", m.file.display());
+            write!(w, "{}:", m.file.display())?;
         }
     } else if line_number {
-        print!("{}:", m.line);
+        write!(w, "{}:", m.line)?;
     }
-    println!("{}", m.text);
+    writeln!(w, "{}", trim_line_ending(&m.text))
 }
 
 fn search_options(cli: &Cli) -> SearchOptions {
@@ -316,7 +337,11 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
 
     let query = CompiledSearch::new(&patterns, opts).map_err(|e| anyhow::anyhow!("{e}"))?;
     let mut hits = query.search_index(&index)?;
+    hits = relativize_match_paths(hits, &index.root);
     hits = filter_matches(hits, &prefixes);
+
+    let stdout = io::stdout();
+    let mut out = BufWriter::new(stdout.lock());
 
     let has_match = !hits.is_empty();
 
@@ -328,9 +353,10 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
         let mut seen = HashSet::new();
         for m in &hits {
             if seen.insert(&m.file) {
-                println!("{}", m.file.display());
+                writeln!(out, "{}", m.file.display())?;
             }
         }
+        out.flush()?;
         return Ok(has_match);
     }
 
@@ -344,8 +370,9 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
         let mut rest: Vec<_> = all.difference(&files_with_hits).cloned().collect();
         rest.sort();
         for p in &rest {
-            println!("{}", p.display());
+            writeln!(out, "{}", p.display())?;
         }
+        out.flush()?;
         return Ok(!rest.is_empty());
     }
 
@@ -357,16 +384,18 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
         paths.sort();
         for p in paths {
             let n = counts.get(&p).copied().unwrap_or(0);
-            println!("{}:{}", p.display(), n);
+            writeln!(out, "{}:{}", p.display(), n)?;
         }
+        out.flush()?;
         return Ok(true);
     }
 
     let show_path = !cli.out3.no_filename;
 
     for m in &hits {
-        print_match(m, show_path, cli.out1.line_number);
+        print_match(&mut out, m, show_path, cli.out1.line_number)?;
     }
+    out.flush()?;
 
     Ok(has_match)
 }
