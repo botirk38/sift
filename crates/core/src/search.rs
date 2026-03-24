@@ -114,8 +114,6 @@ pub struct CompiledSearch {
     plan: TrigramPlan,
 }
 
-type Candidate = PathBuf;
-
 impl CompiledSearch {
     /// Create a compiled search from patterns and options.
     ///
@@ -188,28 +186,31 @@ impl CompiledSearch {
         matches!(mode, SearchMode::Count | SearchMode::FilesWithoutMatch)
     }
 
-    fn candidate_paths(
+    fn candidate_file_ids(
         &self,
         index: &Index,
         prefixes: &[PathBuf],
         exhaustive: bool,
-    ) -> Vec<Candidate> {
-        let rel_paths: Vec<PathBuf> = if exhaustive {
-            index.iter_files().collect()
+    ) -> Vec<usize> {
+        let ids: Vec<usize> = if exhaustive {
+            (0..index.file_count()).collect()
         } else {
             match &self.plan {
-                TrigramPlan::FullScan => index.iter_files().collect(),
+                TrigramPlan::FullScan => (0..index.file_count()).collect(),
                 TrigramPlan::Narrow { arms } => index
                     .candidate_file_ids(arms.as_slice())
                     .into_iter()
-                    .filter_map(|id| index.file_path(id as usize))
+                    .map(|id| id as usize)
                     .collect(),
             }
         };
 
-        rel_paths
-            .into_iter()
-            .filter(|rel| path_in_scope(rel, prefixes))
+        ids.into_iter()
+            .filter(|&id| {
+                index
+                    .file_path(id)
+                    .is_some_and(|rel| path_in_scope(rel, prefixes))
+            })
             .collect()
     }
 
@@ -224,43 +225,35 @@ impl CompiledSearch {
         prefixes: &[PathBuf],
         output: SearchOutput,
     ) -> crate::Result<bool> {
-        let candidates = self.candidate_paths(
+        let candidate_ids = self.candidate_file_ids(
             index,
             prefixes,
             Self::uses_exhaustive_candidates(output.mode),
         );
-        if candidates.is_empty() {
+        if candidate_ids.is_empty() {
             return Ok(false);
         }
 
         let matcher = self.build_matcher()?;
-        let parallel =
-            self.opts.max_results.is_none() && candidates.len() >= parallel_candidate_min_files();
+        let parallel = self.opts.max_results.is_none()
+            && candidate_ids.len() >= parallel_candidate_min_files();
         match output.mode {
-            SearchMode::Standard | SearchMode::OnlyMatching => Ok(self.run_standard(
-                index.root.as_path(),
-                &candidates,
-                &matcher,
-                output,
-                parallel,
-            )),
+            SearchMode::Standard | SearchMode::OnlyMatching => {
+                Ok(self.run_standard(index, &candidate_ids, &matcher, output, parallel))
+            }
             SearchMode::Count
             | SearchMode::FilesWithMatches
             | SearchMode::FilesWithoutMatch
-            | SearchMode::Quiet => Ok(self.run_summary(
-                index.root.as_path(),
-                &candidates,
-                &matcher,
-                output,
-                parallel,
-            )),
+            | SearchMode::Quiet => {
+                Ok(self.run_summary(index, &candidate_ids, &matcher, output, parallel))
+            }
         }
     }
 
     fn run_standard(
         &self,
-        root: &Path,
-        candidates: &[Candidate],
+        index: &Index,
+        candidate_ids: &[usize],
         matcher: &RegexMatcher,
         output: SearchOutput,
         parallel: bool,
@@ -275,21 +268,24 @@ impl CompiledSearch {
         if parallel {
             let any_match = AtomicBool::new(false);
             let stop = AtomicBool::new(false);
-            let chunk_size = (candidates.len()
+            let chunk_size = (candidate_ids.len()
                 / std::thread::available_parallelism()
                     .map(std::num::NonZeroUsize::get)
                     .unwrap_or(1))
             .max(1);
 
-            candidates.par_chunks(chunk_size).for_each(|chunk| {
+            candidate_ids.par_chunks(chunk_size).for_each(|chunk| {
                 let mut searcher = self.build_searcher(output.line_number, None);
                 let builder = builder.clone();
                 let mut printer = builder.build(bufwtr.buffer());
-                let mut actual = root.to_path_buf();
-                for candidate in chunk {
+                let mut actual = index.root.clone();
+                for &id in chunk {
                     if stop.load(Ordering::SeqCst) {
                         break;
                     }
+                    let Some(candidate) = index.file_path(id) else {
+                        continue;
+                    };
                     actual.push(candidate);
                     let depth = candidate.components().count();
                     let mut sink = printer.sink_with_path(matcher, candidate);
@@ -313,9 +309,12 @@ impl CompiledSearch {
             let mut any_match = false;
             let mut remaining = self.opts.max_results;
             let mut printer = builder.build(bufwtr.buffer());
-            let mut actual = root.to_path_buf();
-            for candidate in candidates {
+            let mut actual = index.root.clone();
+            for &id in candidate_ids {
                 let mut searcher = self.build_searcher(output.line_number, remaining);
+                let Some(candidate) = index.file_path(id) else {
+                    continue;
+                };
                 actual.push(candidate);
                 let depth = candidate.components().count();
                 let mut sink = printer.sink_with_path(matcher, candidate);
@@ -346,8 +345,8 @@ impl CompiledSearch {
 
     fn run_summary(
         &self,
-        root: &Path,
-        candidates: &[Candidate],
+        index: &Index,
+        candidate_ids: &[usize],
         matcher: &RegexMatcher,
         output: SearchOutput,
         parallel: bool,
@@ -363,21 +362,24 @@ impl CompiledSearch {
         if parallel {
             let any_match = AtomicBool::new(false);
             let stop = AtomicBool::new(false);
-            let chunk_size = (candidates.len()
+            let chunk_size = (candidate_ids.len()
                 / std::thread::available_parallelism()
                     .map(std::num::NonZeroUsize::get)
                     .unwrap_or(1))
             .max(1);
 
-            candidates.par_chunks(chunk_size).for_each(|chunk| {
+            candidate_ids.par_chunks(chunk_size).for_each(|chunk| {
                 let mut searcher = self.build_searcher(false, None);
                 let builder = builder.clone();
                 let mut printer = builder.build(bufwtr.buffer());
-                let mut actual = root.to_path_buf();
-                for candidate in chunk {
+                let mut actual = index.root.clone();
+                for &id in chunk {
                     if stop.load(Ordering::SeqCst) {
                         break;
                     }
+                    let Some(candidate) = index.file_path(id) else {
+                        continue;
+                    };
                     actual.push(candidate);
                     let depth = candidate.components().count();
                     let mut sink = printer.sink_with_path(matcher, candidate);
@@ -406,9 +408,12 @@ impl CompiledSearch {
             let mut any_match = false;
             let mut remaining = self.opts.max_results;
             let mut printer = builder.build(bufwtr.buffer());
-            let mut actual = root.to_path_buf();
-            for candidate in candidates {
+            let mut actual = index.root.clone();
+            for &id in candidate_ids {
                 let mut searcher = self.build_searcher(false, remaining);
+                let Some(candidate) = index.file_path(id) else {
+                    continue;
+                };
                 actual.push(candidate);
                 let depth = candidate.components().count();
                 let mut sink = printer.sink_with_path(matcher, candidate);
@@ -443,8 +448,8 @@ impl CompiledSearch {
 
     #[cfg(test)]
     pub(crate) fn collect_index_matches(&self, index: &Index) -> crate::Result<Vec<Match>> {
-        let candidates = self.candidate_paths(index, &[], false);
-        self.collect_index_candidates(index.root.as_path(), &candidates)
+        let candidate_ids = self.candidate_file_ids(index, &[], false);
+        self.collect_index_candidates(index, &candidate_ids)
     }
 
     #[cfg(test)]
@@ -465,14 +470,17 @@ impl CompiledSearch {
     #[cfg(test)]
     fn collect_index_candidates(
         &self,
-        root: &Path,
-        candidates: &[Candidate],
+        index: &Index,
+        candidate_ids: &[usize],
     ) -> crate::Result<Vec<Match>> {
         let matcher = self.build_matcher()?;
         let mut searcher = self.build_searcher(true, None);
         let mut out = Vec::new();
-        let mut actual = root.to_path_buf();
-        for candidate in candidates {
+        let mut actual = index.root.clone();
+        for &id in candidate_ids {
+            let Some(candidate) = index.file_path(id) else {
+                continue;
+            };
             actual.push(candidate);
             let depth = candidate.components().count();
             let mut sink =
@@ -487,7 +495,7 @@ impl CompiledSearch {
     }
 
     #[cfg(test)]
-    fn collect_walk_candidates(&self, candidates: &[Candidate]) -> crate::Result<Vec<Match>> {
+    fn collect_walk_candidates(&self, candidates: &[PathBuf]) -> crate::Result<Vec<Match>> {
         let matcher = self.build_matcher()?;
         let mut searcher = self.build_searcher(true, None);
         let mut out = Vec::new();

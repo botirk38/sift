@@ -23,6 +23,7 @@ pub struct QueryPlan {
 pub struct Index {
     pub root: PathBuf,
     files: files::MappedFilesView,
+    file_paths: Vec<PathBuf>,
     lexicon: crate::storage::lexicon::MappedLexicon,
     postings: crate::storage::postings::MappedPostings,
     pub index_dir: Option<PathBuf>,
@@ -61,6 +62,7 @@ impl Index {
         }
 
         let files = files::MappedFilesView::open(&paths[0]).map_err(crate::Error::Io)?;
+        let file_paths: Vec<PathBuf> = files.iter().collect();
         let lexicon =
             crate::storage::lexicon::MappedLexicon::open(&paths[1]).map_err(crate::Error::Io)?;
         let postings =
@@ -69,6 +71,7 @@ impl Index {
         Ok(Self {
             root,
             files,
+            file_paths,
             lexicon,
             postings,
             index_dir: Some(index_dir),
@@ -169,13 +172,13 @@ impl Index {
     pub fn candidate_paths(&self, arms: &[crate::planner::Arm]) -> Vec<PathBuf> {
         self.candidate_file_ids(arms)
             .iter()
-            .filter_map(|&id| self.files.get(id as usize))
+            .filter_map(|&id| self.file_paths.get(id as usize).cloned())
             .collect()
     }
 
     #[must_use]
-    pub fn file_path(&self, id: usize) -> Option<PathBuf> {
-        self.files.get(id)
+    pub fn file_path(&self, id: usize) -> Option<&Path> {
+        self.file_paths.get(id).map(PathBuf::as_path)
     }
 
     #[must_use]
@@ -183,9 +186,8 @@ impl Index {
         self.files.len()
     }
 
-    #[must_use]
-    pub const fn iter_files(&self) -> files::MappedFilesIter<'_> {
-        self.files.iter()
+    pub fn iter_files(&self) -> impl Iterator<Item = &Path> {
+        self.file_paths.iter().map(PathBuf::as_path)
     }
 }
 
@@ -312,6 +314,7 @@ impl<'a> IndexBuilder<'a> {
         let mut index = Index {
             root,
             files,
+            file_paths: tables.files,
             lexicon,
             postings,
             index_dir: None,
