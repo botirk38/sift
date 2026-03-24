@@ -7,9 +7,9 @@
 | `crates/core` | `sift-core` — index build, `Index`, `CompiledSearch`, search pipeline |
 | `crates/cli` | `sift-cli` — `sift` binary (clap), thin wrapper over core |
 | `fuzz/` | `cargo-fuzz` crate (excluded from workspace); see `fuzz/README.md` |
-| `scripts/` | `bench.sh`, `profile.sh`, `fuzz.sh`, smoke helpers |
+| `scripts/` | `bench.sh`, `profile.sh`, `fuzz.sh`, integration helpers |
 | `skills/` | Installable agent skills for [skills.sh](https://skills.sh) / `npx skills` (see `skills/README.md`) |
-| `BENCH.md` | Criterion + profiling workflow |
+| `crates/core/benches/README.md` | Criterion + profiling workflow |
 | `plan.md` | Product / design roadmap (human-oriented) |
 
 ## Commands
@@ -23,7 +23,7 @@ cargo test --workspace --all-features
 
 **CI:** `.github/workflows/ci.yml` runs the same `fmt` / `clippy` / `test` steps on pushes and PRs to `main` / `master` on **Ubuntu, macOS, and Windows** (stable Rust, `Swatinem/rust-cache`, `fail-fast: false`). Fuzz stays manual (`./scripts/fuzz.sh`).
 
-`cargo bench` / `sift-profile` need the right package and features; see `BENCH.md` and `crates/core/README.md`.
+`cargo bench` / `sift-profile` need the right package and features; see `crates/core/benches/README.md` and `crates/core/README.md`.
 
 ## Conventions
 

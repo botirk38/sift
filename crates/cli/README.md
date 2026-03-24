@@ -18,4 +18,4 @@ Release binary name: **`sift`** (`Cargo.toml` `[[bin]]`).
 
 ## Tests
 
-Integration smoke tests: `crates/cli/tests/cli_smoke.rs` — `cargo test -p sift-cli`.
+Integration tests live under `crates/cli/tests/` and are split by domain (`integration_search.rs`, `integration_paths.rs`, `integration_output.rs`, `integration_patterns.rs`) — run them with `cargo test -p sift-cli`.

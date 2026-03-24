@@ -8,7 +8,7 @@ cargo build -p sift-cli -q
 SIFT="${CARGO_TARGET_DIR:-$repo_root/target}/debug/sift"
 
 tdir="${TMPDIR:-/tmp}"
-tmp=$(mktemp -d "${tdir}/sift-usage-smoke.XXXXXX")
+tmp=$(mktemp -d "${tdir}/sift-usage-integration.XXXXXX")
 cleanup() { rm -rf "$tmp"; }
 trap cleanup EXIT
 
@@ -62,4 +62,4 @@ code=$?
 set -e
 assert_exit_ok "$code" "missing pattern"
 
-printf 'cli_usage_smoke: ok\n'
+printf 'cli_usage_integration: ok\n'

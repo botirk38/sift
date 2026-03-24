@@ -27,4 +27,4 @@ cargo test -p sift-core
 cargo bench -p sift-core --bench search   # or ./scripts/bench.sh
 ```
 
-See repo root **`BENCH.md`** for interpretation and Linux `perf` tips.
+See **`crates/core/benches/README.md`** for benchmark and profiling entry points.

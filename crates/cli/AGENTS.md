@@ -5,7 +5,7 @@ Installable agent skill ([skills.sh](https://skills.sh) / `npx skills`): [`skill
 ## Structure
 
 - **`src/main.rs`** — single binary: `Cli` (clap `Parser`), subcommand `build`, default search mode when no subcommand.
-- **`tests/cli_smoke.rs`** — spawns the `sift` binary for end-to-end checks.
+- **`tests/integration_*.rs`** — domain-focused integration tests that spawn the real `sift` binary.
 
 ## Behavior notes
 

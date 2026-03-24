@@ -8,7 +8,7 @@
 | `crates/cli` | `sift-cli` | `sift` binary (ripgrep-shaped flags) |
 | `fuzz/` | (standalone) | `cargo-fuzz` against `sift-core` only |
 
-**Docs:** [`BENCH.md`](BENCH.md) (benchmarks & profiling), [`plan.md`](plan.md) (roadmap), [`AGENTS.md`](AGENTS.md) (repo / automation hints). Per-crate **`README.md`** and **`AGENTS.md`** live under each crate and under `fuzz/`.
+**Docs:** [`crates/core/benches/README.md`](crates/core/benches/README.md) (benchmarks & profiling), [`plan.md`](plan.md) (roadmap), [`AGENTS.md`](AGENTS.md) (repo / automation hints). Per-crate **`README.md`** and **`AGENTS.md`** live under each crate and under `fuzz/`.
 
 **Agent skills** ([skills.sh](https://skills.sh) / `npx skills`): [`skills/README.md`](skills/README.md).
 

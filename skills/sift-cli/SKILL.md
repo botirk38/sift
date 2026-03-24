@@ -2,8 +2,9 @@
 name: sift-cli
 description: >-
   Develops and debugs the sift grep-like CLI (sift-cli crate, `sift` binary).
-  Use when changing CLI flags, subcommands, output, path handling, or smoke
-  tests; when the user mentions sift CLI, clap, crates/cli, or `cargo run -p sift-cli`.
+  Use when changing CLI flags, subcommands, output, path handling, or
+  integration tests; when the user mentions sift CLI, clap, crates/cli, or
+  `cargo run -p sift-cli`.
 ---
 
 # sift CLI
@@ -26,7 +27,7 @@ description: >-
 | Flags / help text | `PatternArgs`, `RegexFlags*`, `OutputFlags*`, `PathArgs`, `Subcommand` in `main.rs` |
 | Exit codes / output | `run_search`, `print_matches`, `ExitCode` paths |
 | Index path / open | `--index` default `.index`, `Index::open` |
-| E2E behavior | `crates/cli/tests/cli_smoke.rs` (spawns real `sift` binary) |
+| E2E behavior | `crates/cli/tests/integration_*.rs` (spawn the real `sift` binary) |
 
 ## Commands
 
@@ -46,5 +47,5 @@ After core API changes, run **`cargo test --workspace --all-features`** — CLI 
 ## Checklist for new flags
 
 - [ ] Thread through clap field → `SearchOptions` / `SearchMatchFlags` (or explicit branch) consistently with `sift-core`.
-- [ ] Update `--help` strings; add or extend **`cli_smoke`** if behavior is user-visible.
+- [ ] Update `--help` strings; add or extend the relevant CLI integration test if behavior is user-visible.
 - [ ] No duplicate regex/planner logic — keep it in **`sift-core`**.
