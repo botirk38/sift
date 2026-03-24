@@ -4,7 +4,7 @@ members = ["crates/core", "crates/cli"]
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Indexed regex search over codebases (library + grep-like CLI)"
