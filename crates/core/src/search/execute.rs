@@ -72,6 +72,9 @@ impl CompiledSearch {
         glob: Option<&Override>,
         output: SearchOutput,
     ) -> crate::Result<bool> {
+        if self.opts.max_results == Some(0) {
+            return Err(crate::Error::InvalidMaxCount);
+        }
         let candidate_ids = self.candidate_file_ids(
             index,
             prefixes,

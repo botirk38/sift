@@ -50,6 +50,9 @@ pub enum Error {
     #[error("search patterns must not be empty")]
     EmptyPatterns,
 
+    #[error("invalid max-count: 0 matches requested")]
+    InvalidMaxCount,
+
     #[error("invalid index metadata: {0}")]
     InvalidMeta(PathBuf),
 
