@@ -151,7 +151,9 @@ impl CompiledSearch {
     /// Same as [`Self::search_walk`].
     pub fn search_index(&self, index: &Index) -> crate::Result<Vec<Match>> {
         match &self.plan {
-            TrigramPlan::FullScan => search_files(self, &index.root, Some(index.files.as_slice())),
+            TrigramPlan::FullScan => {
+                search_files_impl(self, &index.root, Some(index.files.as_slice()))
+            }
             TrigramPlan::Narrow { arms } => {
                 let cands = index.candidate_file_ids(arms.as_slice());
                 if cands.is_empty() {
@@ -161,7 +163,7 @@ impl CompiledSearch {
                     .iter()
                     .filter_map(|&id| index.files.get(id as usize).cloned())
                     .collect();
-                search_files(self, &index.root, Some(&paths))
+                search_files_impl(self, &index.root, Some(&paths))
             }
         }
     }
@@ -177,7 +179,8 @@ impl CompiledSearch {
         root: &Path,
         candidates: Option<&[PathBuf]>,
     ) -> crate::Result<Vec<Match>> {
-        search_files(self, root, candidates)
+        let root = root.canonicalize()?;
+        search_files_impl(self, &root, candidates)
     }
 
     #[must_use]
@@ -186,20 +189,11 @@ impl CompiledSearch {
     }
 }
 
-/// Walk `root` with ripgrep-class ignore rules, run regex on each line.
-///
-/// `candidates: None` walks the tree; `Some` scans only those relative paths.
-///
-/// # Errors
-///
-/// Returns [`crate::Error::Io`] if the corpus root cannot be canonicalized, or [`crate::Error::Ignore`]
-/// for directory walk failures.
-pub fn search_files(
+fn search_files_impl(
     compiled: &CompiledSearch,
     root: &Path,
     candidates: Option<&[PathBuf]>,
 ) -> crate::Result<Vec<Match>> {
-    let root = root.canonicalize()?;
     if let Some(set) = candidates {
         if set.is_empty() {
             return Ok(Vec::new());
@@ -218,7 +212,7 @@ pub fn search_files(
                 v.sort();
                 v
             };
-            return Ok(parallel_scan_candidate_files(compiled, &root, &paths));
+            return Ok(parallel_scan_candidate_files(compiled, root, &paths));
         }
         if sorted {
             'subset: for display in set {
@@ -252,7 +246,7 @@ pub fn search_files(
         return Ok(out);
     }
 
-    let walker = WalkBuilder::new(&root).follow_links(false).build();
+    let walker = WalkBuilder::new(root).follow_links(false).build();
 
     'files: for entry in walker {
         let entry = entry.map_err(crate::Error::Ignore)?;
@@ -260,7 +254,7 @@ pub fn search_files(
             continue;
         }
         let path = entry.path();
-        let display = path.strip_prefix(&root).unwrap_or(path).to_path_buf();
+        let display = path.strip_prefix(root).unwrap_or(path).to_path_buf();
 
         if scan_lines(&display, path, compiled, &mut budget, &mut out) {
             break 'files;
