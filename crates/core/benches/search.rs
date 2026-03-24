@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
-use sift_core::{build_index, CompiledSearch, Index, SearchMatchFlags, SearchOptions};
+use sift_core::{CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchOptions};
 
 /// Same layout as `indexed_search_matches_naive_for_literal` in `lib.rs` tests.
 fn make_parity_corpus(root: &Path) {
@@ -50,7 +50,7 @@ fn bench_build_index(c: &mut Criterion) {
             let corpus = tmp.path().join("corpus");
             make_many_files_corpus(&corpus, 32);
             let idx = tmp.path().join("idx");
-            build_index(&corpus, &idx).unwrap();
+            IndexBuilder::new(&corpus).with_dir(&idx).build().unwrap();
         });
     });
     g.finish();
@@ -61,7 +61,7 @@ fn open_parity_index() -> (tempfile::TempDir, Index) {
     let corpus = tmp.path().join("corpus");
     make_parity_corpus(&corpus);
     let idx = tmp.path().join("idx");
-    build_index(&corpus, &idx).unwrap();
+    IndexBuilder::new(&corpus).with_dir(&idx).build().unwrap();
     let index = Index::open(&idx).unwrap();
     (tmp, index)
 }

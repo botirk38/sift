@@ -8,7 +8,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 use sift_core::{
-    build_index, walk_file_paths, CompiledSearch, Index, Match, SearchMatchFlags, SearchOptions,
+    walk_file_paths, CompiledSearch, Index, IndexBuilder, Match, SearchMatchFlags, SearchOptions,
 };
 
 #[derive(Parser)]
@@ -375,8 +375,8 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     if let Some(Commands::Build { path }) = cli.command {
-        return match build_index(&path, &cli.paths.index) {
-            Ok(()) => {
+        return match IndexBuilder::new(&path).with_dir(&cli.paths.index).build() {
+            Ok(_) => {
                 eprintln!(
                     "indexed corpus {} → {}",
                     path.display(),

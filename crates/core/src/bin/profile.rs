@@ -20,7 +20,7 @@ use std::io::Write as _;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use sift_core::{build_index, CompiledSearch, Index, SearchMatchFlags, SearchOptions};
+use sift_core::{CompiledSearch, Index, IndexBuilder, SearchMatchFlags, SearchOptions};
 
 #[derive(Clone, Debug)]
 enum CorpusKind {
@@ -170,7 +170,7 @@ fn open_corpus_index(kind: &CorpusKind) -> (tempfile::TempDir, Index) {
 
     let idx = tmp.path().join("idx");
     let t0 = Instant::now();
-    build_index(&corpus, &idx).unwrap();
+    let _ = IndexBuilder::new(&corpus).with_dir(&idx).build().unwrap();
     let build_ms = t0.elapsed().as_secs_f64() * 1e3;
     let t1 = Instant::now();
     let index = Index::open(&idx).unwrap();
@@ -327,7 +327,7 @@ fn run_build(iters: usize, kind: &CorpusKind) {
         let corpus = tmp.path().join("corpus");
         materialize_build_corpus(&corpus, kind);
         let idx = tmp.path().join("idx");
-        build_index(&corpus, &idx).unwrap();
+        let _ = IndexBuilder::new(&corpus).with_dir(&idx).build().unwrap();
     }
     let elapsed = t0.elapsed();
     let ns = ns_per_iter(elapsed, iters);

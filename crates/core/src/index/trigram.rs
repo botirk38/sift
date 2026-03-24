@@ -1,28 +1,18 @@
-//! Overlapping byte trigrams (UTF-8 bytes of `&str`).
+//! Overlapping byte trigrams.
 
-/// Extract overlapping 3-byte windows from `text`.
+/// Extract overlapping 3-byte windows from `text`, handling invalid UTF-8 with lossy replacement.
 ///
-/// Returns an empty vector when `text` has fewer than three UTF-8 bytes.
+/// Valid UTF-8 takes a fast path (no replacement string allocated). Invalid sequences fall back to
+/// [`String::from_utf8_lossy`] semantics, matching what [`extract_trigrams_utf8_lossy`] would do on the
+/// raw bytes — but in a single pass without an intermediate `String`.
 #[must_use]
 pub fn extract_trigrams(text: &str) -> Vec<[u8; 3]> {
-    extract_trigrams_bytes(text.as_bytes())
+    extract_trigrams_from_bytes(text.as_bytes())
 }
 
-/// Trigrams over the same logical text as [`String::from_utf8_lossy`].
-///
-/// Valid UTF-8 is handled without allocating a replacement string (fast path). Invalid sequences use
-/// the lossy replacement rules from the standard library, matching the previous indexer behavior.
+/// Core: sliding 3-byte windows over raw bytes.
 #[must_use]
-pub fn extract_trigrams_utf8_lossy(bytes: &[u8]) -> Vec<[u8; 3]> {
-    std::str::from_utf8(bytes).map_or_else(
-        |_| extract_trigrams(String::from_utf8_lossy(bytes).as_ref()),
-        extract_trigrams,
-    )
-}
-
-/// Byte-oriented trigrams (same sliding window as UTF-8 `&str` indexing).
-#[must_use]
-pub fn extract_trigrams_bytes(b: &[u8]) -> Vec<[u8; 3]> {
+pub fn extract_trigrams_from_bytes(b: &[u8]) -> Vec<[u8; 3]> {
     if b.len() < 3 {
         return Vec::new();
     }
@@ -31,6 +21,15 @@ pub fn extract_trigrams_bytes(b: &[u8]) -> Vec<[u8; 3]> {
         out.push([b[i], b[i + 1], b[i + 2]]);
     }
     out
+}
+
+/// Extract trigrams from raw bytes, falling back to lossy UTF-8 for invalid sequences.
+#[must_use]
+pub fn extract_trigrams_utf8_lossy(bytes: &[u8]) -> Vec<[u8; 3]> {
+    std::str::from_utf8(bytes).map_or_else(
+        |_| extract_trigrams(String::from_utf8_lossy(bytes).as_ref()),
+        extract_trigrams,
+    )
 }
 
 #[cfg(test)]

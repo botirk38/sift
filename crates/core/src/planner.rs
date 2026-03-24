@@ -2,7 +2,7 @@
 
 use regex_syntax::hir::{Hir, HirKind};
 
-use crate::index::trigram::extract_trigrams_bytes;
+use crate::index::trigram::extract_trigrams_from_bytes;
 use crate::search::SearchOptions;
 
 /// One OR branch: every trigram here must appear in a candidate file (intersection).
@@ -39,7 +39,7 @@ impl TrigramPlan {
                 if lit.len() < 3 {
                     return Self::FullScan;
                 }
-                trigram_arms.push(extract_trigrams_bytes(&lit));
+                trigram_arms.push(extract_trigrams_from_bytes(&lit));
             }
         }
         if trigram_arms.is_empty() {

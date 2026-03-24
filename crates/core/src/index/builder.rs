@@ -1,4 +1,4 @@
-//! Walk corpus, extract trigrams, write `files.bin`, `lexicon.bin`, `postings.bin`.
+//! Walk corpus, extract trigrams, build in-memory index tables.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -7,22 +7,17 @@ use std::path::{Path, PathBuf};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 
-use crate::index::files;
 use crate::index::trigram::extract_trigrams_utf8_lossy;
 use crate::search::parallel_candidate_min_files;
-use crate::storage::lexicon::{self, LexiconEntry};
-use crate::storage::postings;
-use crate::{FILES_BIN, LEXICON_BIN, POSTINGS_BIN};
+use crate::storage::lexicon::LexiconEntry;
 
-/// Build trigram tables under `out_dir` for corpus `root` (canonicalized by caller).
-///
-/// # Errors
-///
-/// Propagates IO errors from walking, reading files, or writing tables.
-pub fn build_trigram_index(root: &Path, out_dir: &Path) -> crate::Result<()> {
-    // Walk once to collect corpus-relative paths, then sort for stable file ids (same `files.bin`
-    // order as before: lexicographic relative paths). Trigram extraction runs in parallel when
-    // there are enough files to amortize Rayon (same threshold as parallel candidate search).
+pub struct IndexTables {
+    pub files: Vec<PathBuf>,
+    pub lexicon: Vec<LexiconEntry>,
+    pub postings: Vec<u8>,
+}
+
+pub fn build_index_tables(root: &Path) -> crate::Result<IndexTables> {
     let mut paths: Vec<PathBuf> = Vec::new();
     let walker = WalkBuilder::new(root).follow_links(false).build();
     for entry in walker {
@@ -60,7 +55,6 @@ pub fn build_trigram_index(root: &Path, out_dir: &Path) -> crate::Result<()> {
     };
     let rel_paths: Vec<PathBuf> = per_file.iter().map(|(p, _)| p.clone()).collect();
 
-    // trigram -> sorted unique file ids
     let mut map: BTreeMap<[u8; 3], Vec<u32>> = BTreeMap::new();
 
     for (id, (_rel, tris)) in per_file.iter().enumerate() {
@@ -80,7 +74,6 @@ pub fn build_trigram_index(root: &Path, out_dir: &Path) -> crate::Result<()> {
         ids.dedup();
     }
 
-    // Serialize postings: concatenated u32 LE; lexicon records offset + len (in u32 count).
     let mut posting_bytes: Vec<u8> = Vec::new();
     let mut lex_entries: Vec<LexiconEntry> = Vec::with_capacity(map.len());
     for (tri, ids) in map {
@@ -106,8 +99,9 @@ pub fn build_trigram_index(root: &Path, out_dir: &Path) -> crate::Result<()> {
         });
     }
 
-    files::write_files_table(&out_dir.join(FILES_BIN), &rel_paths)?;
-    postings::write_postings(&out_dir.join(POSTINGS_BIN), &posting_bytes)?;
-    lexicon::write_lexicon(&out_dir.join(LEXICON_BIN), &lex_entries)?;
-    Ok(())
+    Ok(IndexTables {
+        files: rel_paths,
+        lexicon: lex_entries,
+        postings: posting_bytes,
+    })
 }
