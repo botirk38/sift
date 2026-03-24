@@ -85,6 +85,7 @@ pub enum SearchMode {
     Standard,
     OnlyMatching,
     Count,
+    CountMatches,
     FilesWithMatches,
     FilesWithoutMatch,
 }

@@ -176,6 +176,7 @@ fn resolve_output_mode(args: &[String], invert_match: bool) -> (SearchMode, bool
     let mut last_idx = 0usize;
     let mut mode = SearchMode::Standard;
     let mut quiet = false;
+    let mut saw_only_matching = false;
 
     for (i, arg) in args.iter().enumerate() {
         let bytes = arg.as_bytes();
@@ -195,6 +196,7 @@ fn resolve_output_mode(args: &[String], invert_match: bool) -> (SearchMode, bool
             let suffix = &arg[2..];
             match suffix {
                 "count" => Some((i, "count")),
+                "count-matches" => Some((i, "count_matches")),
                 "files-with-matches" => Some((i, "files_with_matches")),
                 "files-without-match" => Some((i, "files_without_match")),
                 "only-matching" => Some((i, "only_matching")),
@@ -210,9 +212,10 @@ fn resolve_output_mode(args: &[String], invert_match: bool) -> (SearchMode, bool
                 last_idx = idx;
                 match name {
                     "count" => mode = SearchMode::Count,
+                    "count_matches" => mode = SearchMode::CountMatches,
                     "files_with_matches" => mode = SearchMode::FilesWithMatches,
                     "files_without_match" => mode = SearchMode::FilesWithoutMatch,
-                    "only_matching" => mode = SearchMode::OnlyMatching,
+                    "only_matching" => saw_only_matching = true,
                     "quiet" => quiet = true,
                     _ => {}
                 }
@@ -220,8 +223,16 @@ fn resolve_output_mode(args: &[String], invert_match: bool) -> (SearchMode, bool
         }
     }
 
+    if mode == SearchMode::Standard && saw_only_matching {
+        mode = SearchMode::OnlyMatching;
+    }
+
     if mode == SearchMode::OnlyMatching && invert_match {
         mode = SearchMode::Count;
+    }
+
+    if mode == SearchMode::Count && saw_only_matching {
+        mode = SearchMode::CountMatches;
     }
 
     let only_matching = mode == SearchMode::OnlyMatching;
@@ -271,6 +282,11 @@ impl Args for SearchFlags {
             Arg::new("count")
                 .short('c')
                 .long("count")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("count_matches")
+                .long("count-matches")
                 .action(ArgAction::SetTrue),
         )
         .arg(

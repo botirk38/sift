@@ -104,13 +104,7 @@ fn count_prints_match_totals_per_file() {
         .lines()
         .map(str::to_string)
         .collect();
-    assert_eq!(
-        lines,
-        [
-            abs_match(&root, "a.txt", "2"),
-            abs_match(&root, "b.txt", "0")
-        ]
-    );
+    assert_eq!(lines, [abs_match(&root, "a.txt", "2")]);
 }
 
 #[test]
@@ -189,4 +183,207 @@ fn max_count_limits_per_file() {
         .collect();
     assert_eq!(lines.len(), 2, "expected 1 line per file: {lines:?}");
     assert_eq!(lines, &["match one", "match three"]);
+}
+
+#[test]
+fn count_matches_counts_individual_spans() {
+    let root = fresh_dir("output-count-matches");
+    fs::write(root.join("a.txt"), "beta beta beta\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("--count-matches")
+        .arg("beta")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let lines: Vec<_> = normalized_stdout(&out)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines, &[abs_match(&root, "a.txt", "3")]);
+}
+
+#[test]
+fn count_lines_not_matches() {
+    let root = fresh_dir("output-count-lines");
+    fs::write(root.join("a.txt"), "beta beta beta\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-c")
+        .arg("beta")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let lines: Vec<_> = normalized_stdout(&out)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines, &[abs_match(&root, "a.txt", "1")]);
+}
+
+#[test]
+fn c_o_normalizes_to_count_matches() {
+    let root = fresh_dir("output-c-o");
+    fs::write(root.join("a.txt"), "beta beta\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    for args in &[&["-c", "-o"][..], &["-o", "-c"][..]] {
+        let out = command(None)
+            .arg("--sift-dir")
+            .arg(&idx)
+            .args(*args)
+            .arg("--no-filename")
+            .arg("beta")
+            .output()
+            .unwrap();
+        assert_success(&out);
+        assert_eq!(
+            normalized_stdout(&out).trim(),
+            "2",
+            "-c -o should count individual matches"
+        );
+    }
+}
+
+#[test]
+fn count_matches_quiet_match() {
+    let root = fresh_dir("output-count-matches-quiet");
+    fs::write(root.join("a.txt"), "beta beta\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("--count-matches")
+        .arg("-q")
+        .arg("beta")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(normalized_stdout(&out).is_empty());
+}
+
+#[test]
+fn count_matches_quiet_no_match() {
+    let root = fresh_dir("output-count-matches-quiet-nomatch");
+    fs::write(root.join("a.txt"), "beta beta\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("--count-matches")
+        .arg("-q")
+        .arg("notfound")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(normalized_stdout(&out).is_empty());
+}
+
+#[test]
+fn count_matches_no_filename() {
+    let root = fresh_dir("output-count-matches-no-filename");
+    fs::write(root.join("a.txt"), "beta beta\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("--count-matches")
+        .arg("--no-filename")
+        .arg("beta")
+        .output()
+        .unwrap();
+    assert_success(&out);
+    assert_eq!(normalized_stdout(&out).trim(), "2");
+}
+
+#[test]
+fn count_omits_zero_count_files() {
+    let root = fresh_dir("output-count-omit-zero");
+    fs::write(root.join("a.txt"), "hit\n").unwrap();
+    fs::write(root.join("b.txt"), "miss\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-c")
+        .arg("hit")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let lines: Vec<_> = normalized_stdout(&out)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines, &[abs_match(&root, "a.txt", "1")]);
+}
+
+#[test]
+fn count_matches_multi_line() {
+    let root = fresh_dir("output-count-matches-multi");
+    fs::write(root.join("a.txt"), "a a a\nx\na\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("--count-matches")
+        .arg("a")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let lines: Vec<_> = normalized_stdout(&out)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines, &[abs_match(&root, "a.txt", "4")]);
+
+    let out_c = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-c")
+        .arg("a")
+        .output()
+        .unwrap();
+    assert_success(&out_c);
+
+    let lines_c: Vec<_> = normalized_stdout(&out_c)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(lines_c.len(), 1);
+    assert_eq!(lines_c, &[abs_match(&root, "a.txt", "2")]);
 }

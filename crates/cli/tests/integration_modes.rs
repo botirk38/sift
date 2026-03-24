@@ -125,7 +125,10 @@ fn count_shows_zero_for_non_matching_files() {
 
     let stdout = normalized_stdout(&out);
     assert!(stdout.contains(&abs_match(&root, "a.txt", "2")));
-    assert!(stdout.contains(&abs_match(&root, "b.txt", "0")));
+    assert!(
+        !stdout.contains("b.txt"),
+        "zero-count files should be omitted"
+    );
 }
 
 #[test]

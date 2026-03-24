@@ -91,7 +91,10 @@ impl CompiledSearch {
             SearchMode::Standard | SearchMode::OnlyMatching => {
                 self.run_standard(index, &candidate_ids, &matcher, output, parallel)
             }
-            SearchMode::Count | SearchMode::FilesWithMatches | SearchMode::FilesWithoutMatch => {
+            SearchMode::Count
+            | SearchMode::CountMatches
+            | SearchMode::FilesWithMatches
+            | SearchMode::FilesWithoutMatch => {
                 self.run_summary(index, &candidate_ids, &matcher, output, parallel)
             }
         }
@@ -138,7 +141,14 @@ impl CompiledSearch {
                 .par_iter()
                 .enumerate()
                 .map_init(
-                    || SummaryWorker::new(self, matcher.clone(), self.opts.max_results),
+                    || {
+                        SummaryWorker::new(
+                            self,
+                            matcher.clone(),
+                            self.opts.max_results,
+                            output.mode,
+                        )
+                    },
                     |worker, (result_index, &id)| {
                         worker.search_candidate(index, result_index, id, output, &stop)
                     },
@@ -194,7 +204,8 @@ impl CompiledSearch {
     ) -> crate::Result<bool> {
         let mut any_match = false;
         let mut out = Vec::new();
-        let mut worker = SummaryWorker::new(self, matcher.clone(), self.opts.max_results);
+        let mut worker =
+            SummaryWorker::new(self, matcher.clone(), self.opts.max_results, output.mode);
         let mut actual = index.root.clone();
         for &id in candidate_ids {
             let Some(candidate) = index.file_path(id) else {
@@ -202,7 +213,7 @@ impl CompiledSearch {
             };
             actual.push(candidate);
             let depth = candidate.components().count();
-            let result = worker.search_file(&actual, output.mode);
+            let result = worker.search_file(&actual);
             any_match |= mode_is_success(output.mode, result);
             write_summary_record(&mut out, output, &actual, result)?;
             for _ in 0..depth {
@@ -414,18 +425,30 @@ impl Sink for StandardSink<'_> {
 struct SummaryWorker {
     matcher: RegexMatcher,
     searcher: Searcher,
+    mode: SearchMode,
 }
 
 impl SummaryWorker {
-    fn new(search: &CompiledSearch, matcher: RegexMatcher, max_results: Option<usize>) -> Self {
+    fn new(
+        search: &CompiledSearch,
+        matcher: RegexMatcher,
+        max_results: Option<usize>,
+        mode: SearchMode,
+    ) -> Self {
         Self {
             searcher: search.build_searcher(false, max_results),
             matcher,
+            mode,
         }
     }
 
-    fn search_file(&mut self, path: &Path, mode: SearchMode) -> FileSummary {
-        let mut sink = SummarySink::new(mode);
+    fn search_file(&mut self, path: &Path) -> FileSummary {
+        let sink_matcher = if self.mode == SearchMode::CountMatches {
+            Some(self.matcher.clone())
+        } else {
+            None
+        };
+        let mut sink = SummarySink::new(self.mode, sink_matcher);
         let _ = self.searcher.search_path(&self.matcher, path, &mut sink);
         sink.finish()
     }
@@ -459,7 +482,7 @@ impl SummaryWorker {
         };
 
         let actual = index.root.join(candidate);
-        let result = self.search_file(&actual, output.mode);
+        let result = self.search_file(&actual);
         let matched = mode_is_success(output.mode, result);
         let mut bytes = Vec::new();
         let _ = write_summary_record(&mut bytes, output, &actual, result);
@@ -505,20 +528,22 @@ struct FileSummary {
 
 struct SummarySink {
     mode: SearchMode,
+    matcher: Option<RegexMatcher>,
     matched: bool,
     count: usize,
 }
 
 impl SummarySink {
-    const fn new(mode: SearchMode) -> Self {
+    const fn new(mode: SearchMode, matcher: Option<RegexMatcher>) -> Self {
         Self {
             mode,
+            matcher,
             matched: false,
             count: 0,
         }
     }
 
-    const fn finish(self) -> FileSummary {
+    fn finish(self) -> FileSummary {
         FileSummary {
             matched: self.matched,
             count: self.count,
@@ -529,10 +554,25 @@ impl SummarySink {
 impl Sink for SummarySink {
     type Error = io::Error;
 
-    fn matched(&mut self, _: &Searcher, _: &SinkMatch<'_>) -> Result<bool, Self::Error> {
+    fn matched(&mut self, _: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, Self::Error> {
         self.matched = true;
-        self.count += 1;
-        Ok(matches!(self.mode, SearchMode::Count))
+        if self.mode == SearchMode::CountMatches {
+            if let Some(ref matcher) = self.matcher {
+                let line = mat.bytes();
+                let mut n = 0;
+                let _ = matcher.find_iter(line, |_| {
+                    n += 1;
+                    true
+                });
+                self.count += n;
+            }
+        } else {
+            self.count += 1;
+        }
+        Ok(matches!(
+            self.mode,
+            SearchMode::Count | SearchMode::CountMatches
+        ))
     }
 }
 
@@ -546,7 +586,10 @@ fn write_summary_record(
         return Ok(());
     }
     match output.mode {
-        SearchMode::Count => {
+        SearchMode::Count | SearchMode::CountMatches => {
+            if result.count == 0 {
+                return Ok(());
+            }
             if output.with_filename {
                 writeln!(out, "{}:{}", path.display(), result.count)
             } else {
@@ -588,7 +631,9 @@ fn write_standard_prefix(
 
 const fn mode_is_success(mode: SearchMode, result: FileSummary) -> bool {
     match mode {
-        SearchMode::Count | SearchMode::FilesWithMatches => result.matched,
+        SearchMode::Count | SearchMode::CountMatches | SearchMode::FilesWithMatches => {
+            result.matched
+        }
         SearchMode::FilesWithoutMatch => !result.matched,
         SearchMode::Standard | SearchMode::OnlyMatching => unreachable!(),
     }
