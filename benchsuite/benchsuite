@@ -984,6 +984,7 @@ def main():
     if args.raw is not None:
         fields = [
             'benchmark', 'warmup_iter', 'iter',
+            'category', 'pattern', 'correctness',
             'name', 'command', 'duration', 'lines', 'env',
         ]
         raw_handle = open(args.raw, 'w+')
@@ -1063,6 +1064,8 @@ def main():
                                 for k, v in cmd.kwargs.get('env', {}).items()])
                 raw_csv_wtr.writerow({
                     'benchmark': b.name,
+                    'category': b.category,
+                    'pattern': b.pattern,
                     'warmup_iter': b.warmup_count,
                     'iter': b.count,
                     'name': sample['cmd'].name,

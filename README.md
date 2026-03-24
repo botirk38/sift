@@ -30,7 +30,7 @@ Patterns use Rust’s **`regex`** syntax unless **`-F`** (fixed string). Literal
 
 ## Performance snapshot
 
-Current Linux benchsuite snapshot against the Linux corpus:
+Current Linux benchsuite snapshot against the Linux corpus, generated from benchsuite raw CSV and aggregated by category median speedup:
 
 - correctness parity: **11/11**
 - `sift` faster: **8/11**
@@ -40,10 +40,10 @@ Current Linux benchsuite snapshot against the Linux corpus:
 
 | Search class | Snapshot | Takeaway |
 |---|---:|---|
-| Indexed literals | `~5.6x` faster | Trigram narrowing is doing the heavy lifting |
-| Indexed word matches | `~5.5x` faster | Whole-word literal shaping stays cheap |
-| Indexed alternation | `~2.4x` faster | Candidate narrowing plus `build_many` helps a lot |
-| Full-scan Unicode | `~0.9x` | Near parity overall, but Greek classes still trail |
+| Indexed literals | `~5.8x` faster | Trigram narrowing is doing the heavy lifting |
+| Indexed word matches | `~5.6x` faster | Whole-word literal shaping stays cheap |
+| Indexed alternation | `~2.6x` faster | Candidate narrowing plus `build_many` helps a lot |
+| Full-scan Unicode | `~1.0x` | Near parity overall, but Greek classes still trail |
 | Full-scan no-literal regex | `~0.6x` | Regex-engine full scans remain the hardest cases |
 
 Fast path takeaways:
@@ -51,6 +51,13 @@ Fast path takeaways:
 - indexed literal, word, suffix-literal, and alternation searches are decisively faster with `sift`
 - full-scan Unicode class searches are the main remaining gap versus `rg`
 - see [`crates/core/benches/README.md`](crates/core/benches/README.md) for the benchmark and profiling workflow
+
+Regenerate the snapshot and chart:
+
+```bash
+SIFT_BINARY=target/release/sift python3 benchsuite/benchsuite --dir benchsuite --summary-only --raw docs/perf/linux-summary.csv --force linux
+uv run --with matplotlib python scripts/bench_chart.py docs/perf/linux-summary.csv docs/perf/linux-summary.svg
+```
 
 ## Develop
 

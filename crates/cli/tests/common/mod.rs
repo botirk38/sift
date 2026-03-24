@@ -51,16 +51,40 @@ pub fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
+fn normalize_path_str(path: &str) -> String {
+    let mut normalized = path.replace("\r\n", "\n").replace('\\', "/");
+    if let Some(stripped) = normalized.strip_prefix("//?/") {
+        normalized = stripped.to_string();
+    }
+    normalized
+}
+
 pub fn normalized_stdout(output: &Output) -> String {
-    stdout(output).replace("\r\n", "\n").replace('\\', "/")
+    normalize_path_str(&stdout(output))
 }
 
 #[allow(dead_code)]
 pub fn abs(root: &Path, rel: &str) -> String {
-    root.join(rel).display().to_string().replace('\\', "/")
+    let joined = root.join(rel);
+    let canonical = joined.canonicalize().unwrap_or(joined);
+    normalize_path_str(&canonical.display().to_string())
 }
 
 #[allow(dead_code)]
 pub fn abs_match(root: &Path, rel: &str, text: &str) -> String {
     format!("{}:{text}", abs(root, rel))
+}
+
+#[allow(dead_code)]
+pub fn line_path<'a>(line: &'a str, candidates: &[String]) -> &'a str {
+    candidates
+        .iter()
+        .find_map(|candidate| {
+            if line == candidate || line.starts_with(&format!("{candidate}:")) {
+                Some(&line[..candidate.len()])
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| panic!("could not match output line to any candidate path: {line}"))
 }

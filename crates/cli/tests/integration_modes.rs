@@ -2,7 +2,9 @@ mod common;
 
 use std::fs;
 
-use common::{abs, abs_match, assert_success, build_index, command, fresh_dir, normalized_stdout};
+use common::{
+    abs, abs_match, assert_success, build_index, command, fresh_dir, line_path, normalized_stdout,
+};
 
 #[test]
 fn files_without_match_only_non_matching_paths() {
@@ -640,19 +642,16 @@ fn output_order_deterministic() {
         .map(str::to_string)
         .collect();
     assert_eq!(lines.len(), 3);
+    let expected = [
+        abs(&root, "a/z.txt"),
+        abs(&root, "b/m.txt"),
+        abs(&root, "c/a.txt"),
+    ];
     let paths: Vec<_> = lines
         .iter()
-        .map(|l| l.split(':').next().unwrap().to_string())
+        .map(|l| line_path(l, &expected).to_string())
         .collect();
-    assert_eq!(
-        paths,
-        [
-            abs(&root, "a/z.txt"),
-            abs(&root, "b/m.txt"),
-            abs(&root, "c/a.txt")
-        ],
-        "output should be sorted: {paths:?}"
-    );
+    assert_eq!(paths, expected, "output should be sorted: {paths:?}");
 }
 
 #[test]
