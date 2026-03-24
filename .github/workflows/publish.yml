@@ -1,0 +1,72 @@
+name: Publish sift-core
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: validate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --all-features
+
+  publish:
+    name: publish sift-core ${{ github.ref_name }}
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TAG_VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: verify tag version matches Cargo.toml
+        run: |
+          TAG_VERSION="${TAG_VERSION#v}"
+          CARGO_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "//;s/"//')
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "Tag version '$TAG_VERSION' does not match Cargo.toml version '$CARGO_VERSION'"
+            exit 1
+          fi
+          echo "Version validated: $CARGO_VERSION"
+
+      - name: cargo package (dry run)
+        run: cargo package -p sift-core --allow-dirty
+        env:
+          CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+
+      - name: publish to crates.io
+        run: cargo publish -p sift-core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
