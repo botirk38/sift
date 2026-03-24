@@ -78,10 +78,88 @@ struct OutputFlagsC {
     no_filename: bool,
 }
 
-#[derive(Args)]
+fn resolve_glob_case_insensitive_from_args(args: &[String]) -> bool {
+    let mut last_idx = 0usize;
+    let mut result = false;
+    for (i, arg) in args.iter().enumerate() {
+        let bytes = arg.as_bytes();
+        let is_long = bytes.len() > 2 && bytes[0] == b'-' && bytes[1] == b'-';
+        if is_long {
+            let suffix = &bytes[2..];
+            let flag = if suffix == b"glob-case-insensitive" {
+                Some((i, true))
+            } else if suffix == b"no-glob-case-insensitive" {
+                Some((i, false))
+            } else {
+                None
+            };
+            if let Some((idx, val)) = flag {
+                if idx > last_idx {
+                    last_idx = idx;
+                    result = val;
+                }
+            }
+        }
+    }
+    result
+}
+
+#[derive(Clone)]
 struct GlobFlags {
-    #[arg(short = 'g', long = "glob", value_name = "GLOB")]
     glob: Vec<String>,
+}
+
+impl GlobFlags {
+    const fn new() -> Self {
+        Self { glob: Vec::new() }
+    }
+}
+
+impl Args for GlobFlags {
+    fn augment_args(cmd: Command) -> Command {
+        cmd.arg(
+            Arg::new("glob")
+                .short('g')
+                .long("glob")
+                .action(ArgAction::Append)
+                .num_args(1),
+        )
+        .arg(
+            Arg::new("glob_case_insensitive")
+                .long("glob-case-insensitive")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("no_glob_case_insensitive")
+                .long("no-glob-case-insensitive")
+                .action(ArgAction::SetTrue),
+        )
+    }
+
+    fn augment_args_for_update(cmd: Command) -> Command {
+        Self::augment_args(cmd)
+    }
+}
+
+impl FromArgMatches for GlobFlags {
+    fn from_arg_matches(matches: &clap::ArgMatches) -> Result<Self, clap::Error> {
+        let glob = matches
+            .get_many::<String>("glob")
+            .map(|v| v.cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        Ok(Self { glob })
+    }
+
+    fn update_from_arg_matches(&mut self, matches: &clap::ArgMatches) -> Result<(), clap::Error> {
+        *self = Self::from_arg_matches(matches)?;
+        Ok(())
+    }
+}
+
+impl Default for GlobFlags {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Args)]
@@ -423,6 +501,7 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
 
     let args: Vec<String> = std::env::args().collect();
     let invert_match = resolve_invert_match_from_args(&args);
+    let glob_case_insensitive = resolve_glob_case_insensitive_from_args(&args);
 
     let (mode, only_matching, quiet) = resolve_output_mode(&args, invert_match);
 
@@ -482,6 +561,9 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
         None
     } else {
         let mut builder = OverrideBuilder::new(&index.root);
+        if glob_case_insensitive {
+            builder.case_insensitive(true).unwrap();
+        }
         for g in &cli.glob_flags.glob {
             builder
                 .add(g)

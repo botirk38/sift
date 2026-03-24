@@ -296,3 +296,175 @@ fn glob_combined_with_path_scope() {
         "path scope should limit search: {stdout}"
     );
 }
+
+#[test]
+fn glob_case_sensitive_by_default() {
+    let root = fresh_dir("glob-case-sensitive-default");
+    fs::write(root.join("a.txt"), "hello\n").unwrap();
+    fs::write(root.join("A.TXT"), "hello\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("-g")
+        .arg("*.txt")
+        .arg("hello")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let stdout = normalized_stdout(&out);
+    let lines: Vec<_> = stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.split(':').next().unwrap_or(l))
+        .collect();
+    assert!(
+        lines.iter().any(|l| l.ends_with("a.txt")),
+        "should match a.txt: {lines:?}"
+    );
+    assert!(
+        !lines.iter().any(|l| l.ends_with("A.TXT")),
+        "A.TXT should not match *.txt when case-sensitive: {lines:?}"
+    );
+}
+
+#[test]
+fn glob_case_insensitive_flag() {
+    let root = fresh_dir("glob-case-insensitive");
+    fs::write(root.join("a.txt"), "hello\n").unwrap();
+    fs::write(root.join("A.TXT"), "hello\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("--glob-case-insensitive")
+        .arg("-g")
+        .arg("*.txt")
+        .arg("hello")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let stdout = normalized_stdout(&out);
+    let lines: Vec<_> = stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.split(':').next().unwrap_or(l))
+        .collect();
+    assert!(
+        lines.iter().any(|l| l.ends_with("a.txt")),
+        "should match a.txt: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.ends_with("A.TXT")),
+        "should match A.TXT when case-insensitive: {lines:?}"
+    );
+}
+
+#[test]
+fn glob_case_insensitive_with_negation() {
+    let root = fresh_dir("glob-case-insensitive-neg");
+    fs::write(root.join("a.log"), "hello\n").unwrap();
+    fs::write(root.join("A.LOG"), "hello\n").unwrap();
+    fs::write(root.join("b.txt"), "hello\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("--glob-case-insensitive")
+        .arg("-g")
+        .arg("!*.log")
+        .arg("hello")
+        .output()
+        .unwrap();
+    assert_success(&out);
+
+    let stdout = normalized_stdout(&out);
+    let lines: Vec<_> = stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.split(':').next().unwrap_or(l))
+        .collect();
+    assert!(
+        !lines.iter().any(|l| std::path::Path::new(l)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("log"))),
+        "should not contain any .log files: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.ends_with("b.txt")),
+        "should contain b.txt: {lines:?}"
+    );
+}
+
+#[test]
+fn glob_case_insensitive_precedence_last_wins() {
+    let root = fresh_dir("glob-case-insensitive-precedence");
+    fs::write(root.join("a.txt"), "hello\n").unwrap();
+    fs::write(root.join("A.TXT"), "hello\n").unwrap();
+    let idx = root.join(".sift");
+
+    build_index(None, &idx, &root);
+
+    let out_on = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("--glob-case-insensitive")
+        .arg("--no-glob-case-insensitive")
+        .arg("-g")
+        .arg("*.txt")
+        .arg("hello")
+        .output()
+        .unwrap();
+    assert_success(&out_on);
+    let stdout_on = normalized_stdout(&out_on);
+    let lines_on: Vec<_> = stdout_on
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.split(':').next().unwrap_or(l))
+        .collect();
+    assert!(
+        lines_on.iter().any(|l| l.ends_with("a.txt")),
+        "should match a.txt: {lines_on:?}"
+    );
+    assert!(
+        !lines_on.iter().any(|l| l.ends_with("A.TXT")),
+        "A.TXT should not match when off: {lines_on:?}"
+    );
+
+    let out_off = command(None)
+        .arg("--sift-dir")
+        .arg(&idx)
+        .arg("--no-glob-case-insensitive")
+        .arg("--glob-case-insensitive")
+        .arg("-g")
+        .arg("*.txt")
+        .arg("hello")
+        .output()
+        .unwrap();
+    assert_success(&out_off);
+    let stdout_off = normalized_stdout(&out_off);
+    let lines_off: Vec<_> = stdout_off
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.split(':').next().unwrap_or(l))
+        .collect();
+    assert!(
+        lines_off.iter().any(|l| l.ends_with("a.txt")),
+        "should match a.txt: {lines_off:?}"
+    );
+    assert!(
+        lines_off.iter().any(|l| l.ends_with("A.TXT")),
+        "A.TXT should match when on: {lines_off:?}"
+    );
+}
