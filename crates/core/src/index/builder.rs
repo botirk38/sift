@@ -36,7 +36,16 @@ fn collect_paths(root: &Path) -> crate::Result<(CorpusKind, Vec<PathBuf>)> {
     }
 
     let mut paths: Vec<PathBuf> = Vec::new();
-    let walker = WalkBuilder::new(root).follow_links(false).build();
+    let walker = WalkBuilder::new(root)
+        .follow_links(false)
+        .hidden(false)
+        .parents(false)
+        .ignore(false)
+        .git_global(false)
+        .git_ignore(false)
+        .git_exclude(false)
+        .require_git(false)
+        .build();
     for entry in walker {
         let entry = entry.map_err(crate::Error::Ignore)?;
         if !entry.file_type().is_some_and(|ft| ft.is_file()) {

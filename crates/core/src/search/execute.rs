@@ -3,8 +3,6 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use ignore::overrides::Override;
-
 use grep_matcher::Matcher;
 use grep_regex::RegexMatcher;
 use grep_searcher::{Searcher, Sink, SinkMatch};
@@ -13,18 +11,17 @@ use rayon::prelude::*;
 use crate::planner::TrigramPlan;
 use crate::Index;
 
-use super::{CompiledSearch, FilenameMode, OutputEmission, SearchMode, SearchOutput};
+use super::{CompiledSearch, FilenameMode, OutputEmission, SearchFilter, SearchMode, SearchOutput};
 
 #[cfg(test)]
-use super::Match;
+use super::{GlobConfig, HiddenMode, IgnoreConfig, Match, SearchFilterConfig, VisibilityConfig};
 
 impl CompiledSearch {
     #[must_use]
     pub fn candidate_file_ids(
         &self,
         index: &Index,
-        prefixes: &[PathBuf],
-        glob: Option<&Override>,
+        filter: &SearchFilter,
         exhaustive: bool,
     ) -> Vec<usize> {
         let ids: Vec<usize> = if exhaustive {
@@ -45,17 +42,7 @@ impl CompiledSearch {
                 let Some(rel) = index.file_path(id) else {
                     return false;
                 };
-                if !path_in_scope(rel, prefixes) {
-                    return false;
-                }
-                if let Some(glob) = glob {
-                    let rel_str = rel.to_string_lossy().replace('\\', "/");
-                    let matched = glob.matched(std::path::Path::new(&rel_str), false);
-                    if matched.is_ignore() {
-                        return false;
-                    }
-                }
-                true
+                filter.is_candidate(rel)
             })
             .collect()
     }
@@ -68,19 +55,14 @@ impl CompiledSearch {
     pub fn run_index(
         &self,
         index: &Index,
-        prefixes: &[PathBuf],
-        glob: Option<&Override>,
+        filter: &SearchFilter,
         output: SearchOutput,
     ) -> crate::Result<bool> {
         if self.opts.max_results == Some(0) {
             return Err(crate::Error::InvalidMaxCount);
         }
-        let candidate_ids = self.candidate_file_ids(
-            index,
-            prefixes,
-            glob,
-            Self::uses_exhaustive_candidates(output.mode),
-        );
+        let candidate_ids =
+            self.candidate_file_ids(index, filter, Self::uses_exhaustive_candidates(output.mode));
         if candidate_ids.is_empty() {
             return Ok(false);
         }
@@ -232,7 +214,16 @@ impl CompiledSearch {
 
     #[cfg(test)]
     pub(crate) fn collect_index_matches(&self, index: &Index) -> crate::Result<Vec<Match>> {
-        let candidate_ids = self.candidate_file_ids(index, &[], None, false);
+        let config = SearchFilterConfig {
+            scopes: vec![],
+            glob: GlobConfig::default(),
+            visibility: VisibilityConfig {
+                hidden: HiddenMode::Include,
+                ignore: IgnoreConfig::default(),
+            },
+        };
+        let filter = SearchFilter::new(&config, &index.root)?;
+        let candidate_ids = self.candidate_file_ids(index, &filter, false);
         self.collect_index_candidates(index, &candidate_ids)
     }
 
@@ -240,11 +231,24 @@ impl CompiledSearch {
     pub(crate) fn collect_walk_matches(&self, root: &Path) -> crate::Result<Vec<Match>> {
         let root = root.canonicalize()?;
         let mut candidates = Vec::new();
-        let walker = ignore::WalkBuilder::new(&root).follow_links(false).build();
+        let walker = ignore::WalkBuilder::new(&root)
+            .follow_links(false)
+            .hidden(false)
+            .parents(false)
+            .ignore(false)
+            .git_global(false)
+            .git_ignore(false)
+            .git_exclude(false)
+            .require_git(false)
+            .build();
         for entry in walker {
             let entry = entry.map_err(crate::Error::Ignore)?;
             if entry.file_type().is_some_and(|ft| ft.is_file()) {
-                candidates.push(entry.path().to_path_buf());
+                let path = entry.path();
+                if path.components().any(|c| c.as_os_str() == ".sift") {
+                    continue;
+                }
+                candidates.push(path.to_path_buf());
             }
         }
         self.collect_walk_candidates(&candidates)
@@ -639,15 +643,6 @@ const fn mode_is_success(mode: SearchMode, result: FileSummary) -> bool {
         SearchMode::FilesWithoutMatch => !result.matched,
         SearchMode::Standard | SearchMode::OnlyMatching => unreachable!(),
     }
-}
-
-fn path_in_scope(rel: &Path, prefixes: &[PathBuf]) -> bool {
-    if prefixes.is_empty() {
-        return true;
-    }
-    prefixes
-        .iter()
-        .any(|pre| rel.starts_with(pre) || rel.as_os_str() == pre.as_os_str())
 }
 
 /// Walk a directory tree and return all indexed file paths relative to `root`.

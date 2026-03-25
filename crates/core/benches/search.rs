@@ -12,8 +12,8 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use std::hint::black_box;
 
 use sift_core::{
-    CaseMode, CompiledSearch, FilenameMode, Index, IndexBuilder, OutputEmission, SearchMatchFlags,
-    SearchMode, SearchOptions, SearchOutput,
+    CaseMode, CompiledSearch, FilenameMode, Index, IndexBuilder, OutputEmission, SearchFilter,
+    SearchFilterConfig, SearchMatchFlags, SearchMode, SearchOptions, SearchOutput,
 };
 
 fn make_parity_corpus(root: &Path) {
@@ -138,7 +138,11 @@ fn bench_search_literal_narrow(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 query
-                    .run_index(black_box(&index), &[], None, make_output())
+                    .run_index(
+                        black_box(&index),
+                        &SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap(),
+                        make_output(),
+                    )
                     .unwrap(),
             );
         });
@@ -156,7 +160,11 @@ fn bench_search_literal_narrow_large(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 query
-                    .run_index(black_box(&index), &[], None, make_output())
+                    .run_index(
+                        black_box(&index),
+                        &SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap(),
+                        make_output(),
+                    )
                     .unwrap(),
             );
         });
@@ -178,7 +186,11 @@ fn bench_search_word_literal(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 query
-                    .run_index(black_box(&index), &[], None, make_output())
+                    .run_index(
+                        black_box(&index),
+                        &SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap(),
+                        make_output(),
+                    )
                     .unwrap(),
             );
         });
@@ -200,7 +212,11 @@ fn bench_search_casei_literal(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 query
-                    .run_index(black_box(&index), &[], None, make_output())
+                    .run_index(
+                        black_box(&index),
+                        &SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap(),
+                        make_output(),
+                    )
                     .unwrap(),
             );
         });
@@ -218,7 +234,11 @@ fn bench_search_required_literal(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 query
-                    .run_index(black_box(&index), &[], None, make_output())
+                    .run_index(
+                        black_box(&index),
+                        &SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap(),
+                        make_output(),
+                    )
                     .unwrap(),
             );
         });
@@ -236,7 +256,11 @@ fn bench_search_unicode_class(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 query
-                    .run_index(black_box(&index), &[], None, make_output())
+                    .run_index(
+                        black_box(&index),
+                        &SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap(),
+                        make_output(),
+                    )
                     .unwrap(),
             );
         });
@@ -254,7 +278,11 @@ fn bench_search_no_literal(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 query
-                    .run_index(black_box(&index), &[], None, make_output())
+                    .run_index(
+                        black_box(&index),
+                        &SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap(),
+                        make_output(),
+                    )
                     .unwrap(),
             );
         });
@@ -272,7 +300,11 @@ fn bench_search_alternation(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 query
-                    .run_index(black_box(&index), &[], None, make_output())
+                    .run_index(
+                        black_box(&index),
+                        &SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap(),
+                        make_output(),
+                    )
                     .unwrap(),
             );
         });
@@ -294,7 +326,11 @@ fn bench_search_alternation_casei(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 query
-                    .run_index(black_box(&index), &[], None, make_output())
+                    .run_index(
+                        black_box(&index),
+                        &SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap(),
+                        make_output(),
+                    )
                     .unwrap(),
             );
         });
@@ -316,7 +352,11 @@ fn bench_search_line_regexp(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 query
-                    .run_index(black_box(&index), &[], None, make_output())
+                    .run_index(
+                        black_box(&index),
+                        &SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap(),
+                        make_output(),
+                    )
                     .unwrap(),
             );
         });
@@ -338,7 +378,11 @@ fn bench_search_fixed_string(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 query
-                    .run_index(black_box(&index), &[], None, make_output())
+                    .run_index(
+                        black_box(&index),
+                        &SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap(),
+                        make_output(),
+                    )
                     .unwrap(),
             );
         });
@@ -356,7 +400,11 @@ fn bench_search_full_scan(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 query_dot
-                    .run_index(black_box(&index), &[], None, make_output())
+                    .run_index(
+                        black_box(&index),
+                        &SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap(),
+                        make_output(),
+                    )
                     .unwrap(),
             );
         });
@@ -378,7 +426,11 @@ fn bench_search_smart_case_lowercase(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 query
-                    .run_index(black_box(&index), &[], None, make_output())
+                    .run_index(
+                        black_box(&index),
+                        &SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap(),
+                        make_output(),
+                    )
                     .unwrap(),
             );
         });
@@ -400,7 +452,11 @@ fn bench_search_smart_case_uppercase(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 query
-                    .run_index(black_box(&index), &[], None, make_output())
+                    .run_index(
+                        black_box(&index),
+                        &SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap(),
+                        make_output(),
+                    )
                     .unwrap(),
             );
         });

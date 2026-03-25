@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{value_parser, Arg, ArgAction, Args, Command, FromArgMatches, Parser, Subcommand};
-use ignore::overrides::OverrideBuilder;
 use sift_core::{
-    CaseMode, CompiledSearch, FilenameMode, Index, IndexBuilder, OutputEmission, SearchMatchFlags,
-    SearchMode, SearchOptions, SearchOutput,
+    CaseMode, CompiledSearch, FilenameMode, GlobConfig, HiddenMode, IgnoreConfig, IgnoreSources,
+    Index, IndexBuilder, OutputEmission, SearchFilter, SearchFilterConfig, SearchMatchFlags,
+    SearchMode, SearchOptions, SearchOutput, VisibilityConfig,
 };
 
 #[derive(Parser)]
@@ -104,6 +104,41 @@ fn resolve_glob_case_insensitive_from_args(args: &[String]) -> bool {
     result
 }
 
+fn resolve_hidden_from_args(args: &[String]) -> bool {
+    let mut last_idx = 0usize;
+    let mut result = false;
+    for (i, arg) in args.iter().enumerate() {
+        let bytes = arg.as_bytes();
+        let is_short = bytes.len() == 2 && bytes[0] == b'-';
+        let is_long = bytes.len() > 2 && bytes[0] == b'-' && bytes[1] == b'-';
+        let flag = if is_short {
+            if bytes[1] == b'.' {
+                Some((i, true))
+            } else {
+                None
+            }
+        } else if is_long {
+            let suffix = &bytes[2..];
+            if suffix == b"hidden" {
+                Some((i, true))
+            } else if suffix == b"no-hidden" {
+                Some((i, false))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some((idx, val)) = flag {
+            if idx > last_idx {
+                last_idx = idx;
+                result = val;
+            }
+        }
+    }
+    result
+}
+
 #[derive(Clone)]
 struct GlobFlags {
     glob: Vec<String>,
@@ -132,6 +167,17 @@ impl Args for GlobFlags {
         .arg(
             Arg::new("no_glob_case_insensitive")
                 .long("no-glob-case-insensitive")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("hidden")
+                .short('.')
+                .long("hidden")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("no_hidden")
+                .long("no-hidden")
                 .action(ArgAction::SetTrue),
         )
     }
@@ -502,6 +548,7 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
     let args: Vec<String> = std::env::args().collect();
     let invert_match = resolve_invert_match_from_args(&args);
     let glob_case_insensitive = resolve_glob_case_insensitive_from_args(&args);
+    let hidden = resolve_hidden_from_args(&args);
 
     let (mode, only_matching, quiet) = resolve_output_mode(&args, invert_match);
 
@@ -557,27 +604,30 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
         line_number: cli.out1.line_number,
     };
 
-    let glob_override = if cli.glob_flags.glob.is_empty() {
-        None
-    } else {
-        let mut builder = OverrideBuilder::new(&index.root);
-        if glob_case_insensitive {
-            builder.case_insensitive(true).unwrap();
-        }
-        for g in &cli.glob_flags.glob {
-            builder
-                .add(g)
-                .map_err(|e| anyhow::anyhow!("invalid glob pattern '{g}': {e}"))?;
-        }
-        Some(
-            builder
-                .build()
-                .map_err(|e| anyhow::anyhow!("invalid glob pattern: {e}"))?,
-        )
+    let filter_config = SearchFilterConfig {
+        scopes: prefixes,
+        glob: GlobConfig {
+            patterns: cli.glob_flags.glob.clone(),
+            case_insensitive: glob_case_insensitive,
+        },
+        visibility: VisibilityConfig {
+            hidden: if hidden {
+                HiddenMode::Include
+            } else {
+                HiddenMode::Respect
+            },
+            ignore: IgnoreConfig {
+                sources: IgnoreSources::empty(),
+                custom_files: Vec::new(),
+                require_git: true,
+            },
+        },
     };
 
+    let search_filter = SearchFilter::new(&filter_config, &index.root)?;
+
     query
-        .run_index(&index, &prefixes, glob_override.as_ref(), output)
+        .run_index(&index, &search_filter, output)
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
 

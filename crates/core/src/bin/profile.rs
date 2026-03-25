@@ -57,8 +57,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use sift_core::{
-    CaseMode, CompiledSearch, FilenameMode, Index, IndexBuilder, OutputEmission, SearchMatchFlags,
-    SearchMode, SearchOptions, SearchOutput, TrigramPlan,
+    CaseMode, CompiledSearch, FilenameMode, Index, IndexBuilder, OutputEmission, SearchFilter,
+    SearchFilterConfig, SearchMatchFlags, SearchMode, SearchOptions, SearchOutput, TrigramPlan,
 };
 
 #[derive(Clone, Debug)]
@@ -442,7 +442,8 @@ fn run_scenario(index: &Index, scenario: &Scenario, loop_cfg: &Loop) {
     let total_files = index.file_count();
 
     let t_candidates = Instant::now();
-    let candidate_ids = query.candidate_file_ids(index, &[], None, false);
+    let filter = SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap();
+    let candidate_ids = query.candidate_file_ids(index, &filter, false);
     let candidates_us = t_candidates.elapsed().as_micros();
     let candidate_count = candidate_ids.len();
 
@@ -455,13 +456,13 @@ fn run_scenario(index: &Index, scenario: &Scenario, loop_cfg: &Loop) {
         Loop::Timed(d) => {
             let deadline = Instant::now() + *d;
             let mut n = 0usize;
+            let filter = SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap();
             while Instant::now() < deadline {
                 black_box(
                     query
                         .run_index(
                             index,
-                            &[],
-                            None,
+                            &filter,
                             SearchOutput {
                                 mode: SearchMode::Standard,
                                 emission: OutputEmission::Quiet,
@@ -476,13 +477,13 @@ fn run_scenario(index: &Index, scenario: &Scenario, loop_cfg: &Loop) {
             n
         }
         Loop::Iters(n) => {
+            let filter = SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap();
             for _ in 0..*n {
                 black_box(
                     query
                         .run_index(
                             index,
-                            &[],
-                            None,
+                            &filter,
                             SearchOutput {
                                 mode: SearchMode::Standard,
                                 emission: OutputEmission::Quiet,
