@@ -617,7 +617,7 @@ fn run_search(cli: &Cli) -> anyhow::Result<bool> {
                 HiddenMode::Respect
             },
             ignore: IgnoreConfig {
-                sources: IgnoreSources::empty(),
+                sources: IgnoreSources::DOT | IgnoreSources::VCS | IgnoreSources::EXCLUDE,
                 custom_files: Vec::new(),
                 require_git: true,
             },

@@ -75,16 +75,7 @@ impl SearchFilter {
             config.scopes.clone()
         };
 
-        let gitignore = if config.visibility.ignore.custom_files.is_empty() {
-            None
-        } else {
-            let mut builder = ignore::gitignore::GitignoreBuilder::new(index_root);
-            for custom in &config.visibility.ignore.custom_files {
-                let path = index_root.join(custom);
-                builder.add(path);
-            }
-            builder.build().ok()
-        };
+        let gitignore = Self::build_gitignore_matcher(index_root, &config.visibility.ignore)?;
 
         let glob = if config.glob.patterns.is_empty() {
             None
@@ -111,6 +102,46 @@ impl SearchFilter {
             gitignore,
             glob,
         })
+    }
+
+    fn build_gitignore_matcher(
+        root: &Path,
+        ignore_config: &IgnoreConfig,
+    ) -> crate::Result<Option<Gitignore>> {
+        if ignore_config.sources.is_empty() && ignore_config.custom_files.is_empty() {
+            return Ok(None);
+        }
+
+        let mut builder = ignore::gitignore::GitignoreBuilder::new(root);
+
+        if ignore_config.sources.contains(IgnoreSources::DOT) {
+            let _ = builder.add(root.join(".ignore"));
+            let _ = builder.add(root.join(".rgignore"));
+        }
+
+        if ignore_config.sources.contains(IgnoreSources::VCS) {
+            let gitignore_path = root.join(".gitignore");
+            if gitignore_path.is_file()
+                && (!ignore_config.require_git || root.join(".git").is_dir())
+            {
+                let _ = builder.add(&gitignore_path);
+            }
+        }
+
+        if ignore_config.sources.contains(IgnoreSources::EXCLUDE) {
+            let exclude_path = root.join(".git/info/exclude");
+            if exclude_path.is_file() {
+                let _ = builder.add(&exclude_path);
+            }
+        }
+
+        for custom in &ignore_config.custom_files {
+            let path = root.join(custom);
+            let _ = builder.add(&path);
+        }
+
+        let matcher = builder.build().map_err(crate::Error::Ignore)?;
+        Ok(Some(matcher))
     }
 
     #[must_use]
