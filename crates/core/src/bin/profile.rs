@@ -2,53 +2,43 @@
 //!
 //! Built only with `--features profile`. Prefer **`./scripts/profile.sh`** from the repo root.
 //!
-//! Scenarios (each mirrors a real benchsuite case):
+//! ## Scenario categories
 //!
-//! **Literal (narrowable)**:
-//!   `literal`               beta
+//! **Query-planning** — exercises different trigram/verify paths; filter/output are minimal:
+//!   `literal_narrow` · `word_literal` · `line_literal` · `fixed_string`
+//!   `casei_literal` · `smart_case_lower` · `smart_case_upper`
+//!   `required_literal` · `no_literal` · `alternation` · `alternation_casei`
+//!   `unicode_class`
 //!
-//! **Word-boundary wrapped (sift currently disables index)**:
-//!   `word_literal`          -w beta
+//! **Filter + query** — exercises `SearchFilter` paths on top of query planning:
+//!   `glob_include` · `glob_exclude` · `glob_casei`
+//!   `hidden_default` · `hidden_include`
+//!   `ignore_default` · `ignore_custom`
+//!   `scoped_search`
 //!
-//! **Case-insensitive (sift currently disables index)**:
-//!   `casei_literal`         -i beta
+//! **Output-mode** — exercises `run_index` mode branches:
+//!   `only_matching` · `count` · `count_matches`
+//!   `files_with_matches` · `files_without_match`
+//!   `max_count_1`
 //!
-//! **Mixed regex with required literal (sift falls back, ripgrep narrows)**:
-//!   `required_literal`       [A-Z]+_RESUME
+//! ## Corpus fixtures
 //!
-//! **Unicode class (no required literal)**:
-//!   `unicode_class`          \p{Greek}
+//! **parity**: 2 files (`a/x.txt`, `b/y.txt`) — narrow + full-scan alike.
+//! **large**: ~8k files × 100 lines across 256 crate dirs (set `SIFT_LARGE=1`).
+//! **`filter_corpus`**: mixed extensions + hidden files + scoped subdirs + ignore files.
 //!
-//! **No-literal regex (full scan)**:
-//!   `no_literal`             \w{5}\s+\w{5}\s+\w{5}\s+\w{5}\s+\w{5}
+//! ## Environment
 //!
-//! **Literal alternation**:
-//!   `alternation`            `ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT`
-//!
-//! **Case-insensitive alternation**:
-//!   `alternation_casei`      -i `ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT`
-//!
-//! **Whole-line regex**:
-//!   `line_regexp`           -x beta
-//!
-//! **Fixed string**:
-//!   `fixed_string`          -F beta.gamma
-//!
-//! **Smart-case (lowercase, all-literal)**:
-//!   `smart_case_lowercase`   -S beta  (all lowercase → case-insensitive)
-//!
-//! **Smart-case (uppercase, all-literal)**:
-//!   `smart_case_uppercase`   -S Beta  (has uppercase → case-sensitive)
-//!
-//! **Corpus size**:
-//!   Default: tiny **parity** fixture (2 files, ~2k iters).
-//!   `SIFT_LARGE=1`: ~8k files × 100 lines across 256 crate dirs.
-//!   `SIFT_CORPUS_FILES=N`: custom file count.
-//!   `SIFT_CORPUS_LINES`, `SIFT_CORPUS_DIRS`: tune lines and fan-out.
-//!
-//! **Timing control**:
-//!   `SIFT_ITERS`: fixed iteration count.
-//!   `SIFT_LOOP_SECS`: run until N seconds elapsed (search modes only).
+//! | Variable | Effect |
+//! |---|---|
+//! | `SIFT_LARGE=1` | Use large corpus instead of parity |
+//! | `SIFT_CORPUS_FILES=N` | Custom file count |
+//! | `SIFT_CORPUS_LINES=N` | Lines per file (large corpus) |
+//! | `SIFT_CORPUS_DIRS=N` | Directory fan-out (large corpus) |
+//! | `SIFT_ITERS=N` | Fixed iteration count |
+//! | `SIFT_LOOP_SECS=N` | Run each scenario for N seconds |
+//! | `SIFT_PROFILE_CORPUS` | Use external corpus path (skips materialisation) |
+//! | `SIFT_PROFILE_INDEX` | Index directory for external corpus (default: `<corpus>.sift`) |
 
 use std::fs;
 use std::hint::black_box;
@@ -57,13 +47,15 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use sift_core::{
-    CaseMode, CompiledSearch, FilenameMode, Index, IndexBuilder, OutputEmission, SearchFilter,
-    SearchFilterConfig, SearchMatchFlags, SearchMode, SearchOptions, SearchOutput, TrigramPlan,
+    CaseMode, CompiledSearch, FilenameMode, GlobConfig, HiddenMode, IgnoreConfig, IgnoreSources,
+    Index, IndexBuilder, OutputEmission, SearchFilter, SearchFilterConfig, SearchMatchFlags,
+    SearchMode, SearchOptions, SearchOutput, TrigramPlan, VisibilityConfig,
 };
 
 #[derive(Clone, Debug)]
 enum CorpusKind {
     Parity,
+    Filter,
     Large {
         files: usize,
         lines_per_file: usize,
@@ -94,7 +86,13 @@ fn corpus_kind() -> CorpusKind {
     }
 
     match files {
-        None | Some(0) => CorpusKind::Parity,
+        None | Some(0) => {
+            if std::env::var("SIFT_FILTER_CORPUS").is_ok() {
+                CorpusKind::Filter
+            } else {
+                CorpusKind::Parity
+            }
+        }
         Some(n) => CorpusKind::Large {
             files: n,
             lines_per_file: std::env::var("SIFT_CORPUS_LINES")
@@ -109,11 +107,48 @@ fn corpus_kind() -> CorpusKind {
     }
 }
 
+/// Parity corpus: a/x.txt ("alpha beta"), b/y.txt ("gamma delta").
 fn make_parity_corpus(root: &Path) {
     fs::create_dir_all(root.join("a")).unwrap();
     fs::create_dir_all(root.join("b")).unwrap();
     fs::write(root.join("a/x.txt"), "alpha beta\n").unwrap();
     fs::write(root.join("b/y.txt"), "gamma delta\n").unwrap();
+}
+
+/// Filter-testing corpus with mixed file types, hidden files, scoped subdirs,
+/// and ignore markers.
+///
+/// Structure:
+///   a/x.txt          — visible, contains "beta"
+///   a/.hidden.txt    — hidden, contains "beta"
+///   a/data.rs        — visible, no match (for glob exclude)
+///   a/.secret/log    — hidden file in hidden dir (respect hidden → skip)
+///   subdir/a.txt     — in subdir, contains "beta" (for scoped search)
+///   subdir/b.log     — in subdir, no match
+///   root.txt         — at corpus root, contains "beta" (outside scope)
+///   skip/ignored.txt — gitignored, contains "beta"
+///   `also_skip/omit.txt` — .ignored, contains "beta"
+///   keep.txt         — outside any ignore rule, contains "beta"
+fn make_filter_corpus(root: &Path) {
+    fs::create_dir_all(root.join("a")).unwrap();
+    fs::create_dir_all(root.join("a/.secret")).unwrap();
+    fs::create_dir_all(root.join("subdir")).unwrap();
+    fs::create_dir_all(root.join("skip")).unwrap();
+    fs::create_dir_all(root.join("also_skip")).unwrap();
+
+    fs::write(root.join("a/x.txt"), "alpha beta gamma\n").unwrap();
+    fs::write(root.join("a/.hidden.txt"), "beta in hidden file\n").unwrap();
+    fs::write(root.join("a/data.rs"), "fn main() {}\n").unwrap();
+    fs::write(root.join("a/.secret/log"), "beta in hidden dir\n").unwrap();
+    fs::write(root.join("subdir/a.txt"), "beta in subdir\n").unwrap();
+    fs::write(root.join("subdir/b.log"), "no match here\n").unwrap();
+    fs::write(root.join("root.txt"), "beta at root level\n").unwrap();
+    fs::write(root.join("skip/ignored.txt"), "beta gitignored\n").unwrap();
+    fs::write(root.join("also_skip/omit.txt"), "beta in .ignore\n").unwrap();
+    fs::write(root.join("keep.txt"), "beta outside ignore rules\n").unwrap();
+
+    fs::write(root.join(".gitignore"), "skip/\n").unwrap();
+    fs::write(root.join(".ignore"), "also_skip/\n").unwrap();
 }
 
 /// Monorepo-shaped tree: `crates/cNNNN/src/module_M.rs` with many lines of pseudo-Rust.
@@ -162,6 +197,7 @@ fn make_many_files_corpus(root: &Path, n: usize) {
 fn materialize_search_corpus(root: &Path, kind: &CorpusKind) {
     match kind {
         CorpusKind::Parity => make_parity_corpus(root),
+        CorpusKind::Filter => make_filter_corpus(root),
         CorpusKind::Large {
             files,
             lines_per_file,
@@ -172,7 +208,7 @@ fn materialize_search_corpus(root: &Path, kind: &CorpusKind) {
 
 fn materialize_build_corpus(root: &Path, kind: &CorpusKind) {
     match kind {
-        CorpusKind::Parity => make_many_files_corpus(root, 32),
+        CorpusKind::Parity | CorpusKind::Filter => make_many_files_corpus(root, 32),
         CorpusKind::Large {
             files,
             lines_per_file,
@@ -215,6 +251,10 @@ fn open_corpus_index(kind: &CorpusKind) -> (tempfile::TempDir, Index) {
             println!("metric\tcorpus_kind\tparity");
             println!("metric\tcorpus_files\t2");
         }
+        CorpusKind::Filter => {
+            println!("metric\tcorpus_kind\tfilter");
+            println!("metric\tcorpus_files\t12");
+        }
         CorpusKind::Large {
             files,
             lines_per_file,
@@ -254,7 +294,7 @@ fn ns_per_iter(elapsed: Duration, iters: usize) -> u128 {
 
 const fn default_search_iters(kind: &CorpusKind) -> usize {
     match kind {
-        CorpusKind::Parity => 2_000_000,
+        CorpusKind::Parity | CorpusKind::Filter => 2_000_000,
         CorpusKind::Large { .. } => 5_000,
     }
 }
@@ -276,148 +316,473 @@ struct Scenario {
     name: &'static str,
     patterns: Vec<String>,
     opts: SearchOptions,
+    filter_config: SearchFilterConfig,
+    output: SearchOutput,
 }
 
 impl Scenario {
-    fn literal() -> Self {
+    const fn new(
+        name: &'static str,
+        patterns: Vec<String>,
+        opts: SearchOptions,
+        filter_config: SearchFilterConfig,
+        output: SearchOutput,
+    ) -> Self {
         Self {
-            name: "literal",
-            patterns: vec!["beta".to_string()],
-            opts: SearchOptions::default(),
+            name,
+            patterns,
+            opts,
+            filter_config,
+            output,
         }
     }
 
-    fn word_literal() -> Self {
-        Self {
-            name: "word_literal",
-            patterns: vec!["beta".to_string()],
-            opts: SearchOptions {
-                flags: SearchMatchFlags::WORD_REGEXP,
-                case_mode: CaseMode::Sensitive,
-                max_results: None,
+    fn default_filter() -> SearchFilterConfig {
+        SearchFilterConfig {
+            scopes: vec![],
+            glob: GlobConfig::default(),
+            visibility: VisibilityConfig {
+                hidden: HiddenMode::Respect,
+                ignore: IgnoreConfig {
+                    sources: IgnoreSources::DOT | IgnoreSources::VCS | IgnoreSources::EXCLUDE,
+                    custom_files: Vec::new(),
+                    require_git: true,
+                },
             },
         }
     }
+}
 
-    fn casei_literal() -> Self {
-        Self {
-            name: "casei_literal",
-            patterns: vec!["beta".to_string()],
-            opts: SearchOptions {
-                flags: SearchMatchFlags::default(),
-                case_mode: CaseMode::Insensitive,
-                max_results: None,
+const fn make_output(mode: SearchMode, emission: OutputEmission) -> SearchOutput {
+    SearchOutput {
+        mode,
+        emission,
+        filename_mode: FilenameMode::Auto,
+        line_number: false,
+    }
+}
+
+const fn default_output() -> SearchOutput {
+    make_output(SearchMode::Standard, OutputEmission::Quiet)
+}
+
+fn literal_narrow() -> Scenario {
+    Scenario::new(
+        "literal_narrow",
+        vec!["beta".to_string()],
+        SearchOptions::default(),
+        Scenario::default_filter(),
+        default_output(),
+    )
+}
+
+fn word_literal() -> Scenario {
+    Scenario::new(
+        "word_literal",
+        vec!["beta".to_string()],
+        SearchOptions {
+            flags: SearchMatchFlags::WORD_REGEXP,
+            case_mode: CaseMode::Sensitive,
+            max_results: None,
+        },
+        Scenario::default_filter(),
+        default_output(),
+    )
+}
+
+fn line_literal() -> Scenario {
+    Scenario::new(
+        "line_literal",
+        vec!["beta".to_string()],
+        SearchOptions {
+            flags: SearchMatchFlags::LINE_REGEXP,
+            case_mode: CaseMode::Sensitive,
+            max_results: None,
+        },
+        Scenario::default_filter(),
+        default_output(),
+    )
+}
+
+fn fixed_string() -> Scenario {
+    Scenario::new(
+        "fixed_string",
+        vec!["beta.gamma".to_string()],
+        SearchOptions {
+            flags: SearchMatchFlags::FIXED_STRINGS,
+            case_mode: CaseMode::Sensitive,
+            max_results: None,
+        },
+        Scenario::default_filter(),
+        default_output(),
+    )
+}
+
+fn casei_literal() -> Scenario {
+    Scenario::new(
+        "casei_literal",
+        vec!["beta".to_string()],
+        SearchOptions {
+            flags: SearchMatchFlags::default(),
+            case_mode: CaseMode::Insensitive,
+            max_results: None,
+        },
+        Scenario::default_filter(),
+        default_output(),
+    )
+}
+
+fn smart_case_lower() -> Scenario {
+    Scenario::new(
+        "smart_case_lower",
+        vec!["beta".to_string()],
+        SearchOptions {
+            flags: SearchMatchFlags::default(),
+            case_mode: CaseMode::Smart,
+            max_results: None,
+        },
+        Scenario::default_filter(),
+        default_output(),
+    )
+}
+
+fn smart_case_upper() -> Scenario {
+    Scenario::new(
+        "smart_case_upper",
+        vec!["Beta".to_string()],
+        SearchOptions {
+            flags: SearchMatchFlags::default(),
+            case_mode: CaseMode::Smart,
+            max_results: None,
+        },
+        Scenario::default_filter(),
+        default_output(),
+    )
+}
+
+fn required_literal() -> Scenario {
+    Scenario::new(
+        "required_literal",
+        vec!["[A-Z]+_RESUME".to_string()],
+        SearchOptions::default(),
+        Scenario::default_filter(),
+        default_output(),
+    )
+}
+
+fn no_literal() -> Scenario {
+    Scenario::new(
+        "no_literal",
+        vec![r"\w{5}\s+\w{5}\s+\w{5}\s+\w{5}\s+\w{5}".to_string()],
+        SearchOptions::default(),
+        Scenario::default_filter(),
+        default_output(),
+    )
+}
+
+fn alternation() -> Scenario {
+    Scenario::new(
+        "alternation",
+        vec!["ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT".to_string()],
+        SearchOptions::default(),
+        Scenario::default_filter(),
+        default_output(),
+    )
+}
+
+fn alternation_casei() -> Scenario {
+    Scenario::new(
+        "alternation_casei",
+        vec!["ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT".to_string()],
+        SearchOptions {
+            flags: SearchMatchFlags::default(),
+            case_mode: CaseMode::Insensitive,
+            max_results: None,
+        },
+        Scenario::default_filter(),
+        default_output(),
+    )
+}
+
+fn unicode_class() -> Scenario {
+    Scenario::new(
+        "unicode_class",
+        vec![r"\p{Greek}".to_string()],
+        SearchOptions::default(),
+        Scenario::default_filter(),
+        default_output(),
+    )
+}
+
+fn glob_include() -> Scenario {
+    Scenario::new(
+        "glob_include",
+        vec!["beta".to_string()],
+        SearchOptions::default(),
+        SearchFilterConfig {
+            scopes: vec![],
+            glob: GlobConfig {
+                patterns: vec!["**/*.txt".to_string()],
+                case_insensitive: false,
             },
-        }
-    }
-
-    fn required_literal() -> Self {
-        Self {
-            name: "required_literal",
-            patterns: vec!["[A-Z]+_RESUME".to_string()],
-            opts: SearchOptions::default(),
-        }
-    }
-
-    fn unicode_class() -> Self {
-        Self {
-            name: "unicode_class",
-            patterns: vec![r"\p{Greek}".to_string()],
-            opts: SearchOptions::default(),
-        }
-    }
-
-    fn no_literal() -> Self {
-        Self {
-            name: "no_literal",
-            patterns: vec![r"\w{5}\s+\w{5}\s+\w{5}\s+\w{5}\s+\w{5}".to_string()],
-            opts: SearchOptions::default(),
-        }
-    }
-
-    fn alternation() -> Self {
-        Self {
-            name: "alternation",
-            patterns: vec!["ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT".to_string()],
-            opts: SearchOptions::default(),
-        }
-    }
-
-    fn alternation_casei() -> Self {
-        Self {
-            name: "alternation_casei",
-            patterns: vec!["ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT".to_string()],
-            opts: SearchOptions {
-                flags: SearchMatchFlags::default(),
-                case_mode: CaseMode::Insensitive,
-                max_results: None,
+            visibility: VisibilityConfig {
+                hidden: HiddenMode::Respect,
+                ignore: IgnoreConfig {
+                    sources: IgnoreSources::DOT | IgnoreSources::VCS | IgnoreSources::EXCLUDE,
+                    custom_files: Vec::new(),
+                    require_git: true,
+                },
             },
-        }
-    }
+        },
+        default_output(),
+    )
+}
 
-    fn line_regexp() -> Self {
-        Self {
-            name: "line_regexp",
-            patterns: vec!["beta".to_string()],
-            opts: SearchOptions {
-                flags: SearchMatchFlags::LINE_REGEXP,
-                case_mode: CaseMode::Sensitive,
-                max_results: None,
+fn glob_exclude() -> Scenario {
+    Scenario::new(
+        "glob_exclude",
+        vec!["beta".to_string()],
+        SearchOptions::default(),
+        SearchFilterConfig {
+            scopes: vec![],
+            glob: GlobConfig {
+                patterns: vec!["!**/*.txt".to_string()],
+                case_insensitive: false,
             },
-        }
-    }
+            visibility: VisibilityConfig {
+                hidden: HiddenMode::Respect,
+                ignore: IgnoreConfig {
+                    sources: IgnoreSources::DOT | IgnoreSources::VCS | IgnoreSources::EXCLUDE,
+                    custom_files: Vec::new(),
+                    require_git: true,
+                },
+            },
+        },
+        default_output(),
+    )
+}
 
-    fn fixed_string() -> Self {
-        Self {
-            name: "fixed_string",
-            patterns: vec!["beta.gamma".to_string()],
-            opts: SearchOptions {
-                flags: SearchMatchFlags::FIXED_STRINGS,
-                case_mode: CaseMode::Sensitive,
-                max_results: None,
+fn glob_casei() -> Scenario {
+    Scenario::new(
+        "glob_casei",
+        vec!["beta".to_string()],
+        SearchOptions::default(),
+        SearchFilterConfig {
+            scopes: vec![],
+            glob: GlobConfig {
+                patterns: vec!["**/*.TXT".to_string()],
+                case_insensitive: true,
             },
-        }
-    }
+            visibility: VisibilityConfig {
+                hidden: HiddenMode::Respect,
+                ignore: IgnoreConfig {
+                    sources: IgnoreSources::DOT | IgnoreSources::VCS | IgnoreSources::EXCLUDE,
+                    custom_files: Vec::new(),
+                    require_git: true,
+                },
+            },
+        },
+        default_output(),
+    )
+}
 
-    fn smart_case_lowercase() -> Self {
-        Self {
-            name: "smart_case_lowercase",
-            patterns: vec!["beta".to_string()],
-            opts: SearchOptions {
-                flags: SearchMatchFlags::default(),
-                case_mode: CaseMode::Smart,
-                max_results: None,
+fn hidden_default() -> Scenario {
+    Scenario::new(
+        "hidden_default",
+        vec!["beta".to_string()],
+        SearchOptions::default(),
+        SearchFilterConfig {
+            scopes: vec![],
+            glob: GlobConfig::default(),
+            visibility: VisibilityConfig {
+                hidden: HiddenMode::Respect,
+                ignore: IgnoreConfig {
+                    sources: IgnoreSources::DOT | IgnoreSources::VCS | IgnoreSources::EXCLUDE,
+                    custom_files: Vec::new(),
+                    require_git: true,
+                },
             },
-        }
-    }
+        },
+        default_output(),
+    )
+}
 
-    fn smart_case_uppercase() -> Self {
-        Self {
-            name: "smart_case_uppercase",
-            patterns: vec!["Beta".to_string()],
-            opts: SearchOptions {
-                flags: SearchMatchFlags::default(),
-                case_mode: CaseMode::Smart,
-                max_results: None,
+fn hidden_include() -> Scenario {
+    Scenario::new(
+        "hidden_include",
+        vec!["beta".to_string()],
+        SearchOptions::default(),
+        SearchFilterConfig {
+            scopes: vec![],
+            glob: GlobConfig::default(),
+            visibility: VisibilityConfig {
+                hidden: HiddenMode::Include,
+                ignore: IgnoreConfig {
+                    sources: IgnoreSources::DOT | IgnoreSources::VCS | IgnoreSources::EXCLUDE,
+                    custom_files: Vec::new(),
+                    require_git: true,
+                },
             },
-        }
-    }
+        },
+        default_output(),
+    )
+}
+
+fn ignore_default() -> Scenario {
+    Scenario::new(
+        "ignore_default",
+        vec!["beta".to_string()],
+        SearchOptions::default(),
+        SearchFilterConfig {
+            scopes: vec![],
+            glob: GlobConfig::default(),
+            visibility: VisibilityConfig {
+                hidden: HiddenMode::Respect,
+                ignore: IgnoreConfig {
+                    sources: IgnoreSources::DOT | IgnoreSources::VCS | IgnoreSources::EXCLUDE,
+                    custom_files: Vec::new(),
+                    require_git: true,
+                },
+            },
+        },
+        default_output(),
+    )
+}
+
+fn ignore_custom() -> Scenario {
+    Scenario::new(
+        "ignore_custom",
+        vec!["beta".to_string()],
+        SearchOptions::default(),
+        SearchFilterConfig {
+            scopes: vec![],
+            glob: GlobConfig::default(),
+            visibility: VisibilityConfig {
+                hidden: HiddenMode::Respect,
+                ignore: IgnoreConfig {
+                    sources: IgnoreSources::empty(),
+                    custom_files: vec![PathBuf::from(".ignore")],
+                    require_git: false,
+                },
+            },
+        },
+        default_output(),
+    )
+}
+
+fn scoped_search() -> Scenario {
+    Scenario::new(
+        "scoped_search",
+        vec!["beta".to_string()],
+        SearchOptions::default(),
+        SearchFilterConfig {
+            scopes: vec![PathBuf::from("subdir")],
+            glob: GlobConfig::default(),
+            visibility: VisibilityConfig {
+                hidden: HiddenMode::Respect,
+                ignore: IgnoreConfig {
+                    sources: IgnoreSources::DOT | IgnoreSources::VCS | IgnoreSources::EXCLUDE,
+                    custom_files: Vec::new(),
+                    require_git: true,
+                },
+            },
+        },
+        make_output(SearchMode::FilesWithMatches, OutputEmission::Normal),
+    )
+}
+
+fn only_matching() -> Scenario {
+    Scenario::new(
+        "only_matching",
+        vec!["beta".to_string()],
+        SearchOptions::default(),
+        Scenario::default_filter(),
+        make_output(SearchMode::OnlyMatching, OutputEmission::Normal),
+    )
+}
+
+fn count() -> Scenario {
+    Scenario::new(
+        "count",
+        vec!["beta".to_string()],
+        SearchOptions::default(),
+        Scenario::default_filter(),
+        make_output(SearchMode::Count, OutputEmission::Normal),
+    )
+}
+
+fn count_matches() -> Scenario {
+    Scenario::new(
+        "count_matches",
+        vec!["beta".to_string()],
+        SearchOptions::default(),
+        Scenario::default_filter(),
+        make_output(SearchMode::CountMatches, OutputEmission::Normal),
+    )
+}
+
+fn files_with_matches() -> Scenario {
+    Scenario::new(
+        "files_with_matches",
+        vec!["beta".to_string()],
+        SearchOptions::default(),
+        Scenario::default_filter(),
+        make_output(SearchMode::FilesWithMatches, OutputEmission::Normal),
+    )
+}
+
+fn files_without_match() -> Scenario {
+    Scenario::new(
+        "files_without_match",
+        vec!["beta".to_string()],
+        SearchOptions::default(),
+        Scenario::default_filter(),
+        make_output(SearchMode::FilesWithoutMatch, OutputEmission::Normal),
+    )
+}
+
+fn max_count_1() -> Scenario {
+    Scenario::new(
+        "max_count_1",
+        vec!["beta".to_string()],
+        SearchOptions {
+            flags: SearchMatchFlags::default(),
+            case_mode: CaseMode::Sensitive,
+            max_results: Some(1),
+        },
+        Scenario::default_filter(),
+        make_output(SearchMode::Standard, OutputEmission::Normal),
+    )
 }
 
 #[allow(clippy::type_complexity)]
 const ALL_SCENARIOS: &[(&str, fn() -> Scenario)] = &[
-    ("literal", Scenario::literal),
-    ("word_literal", Scenario::word_literal),
-    ("casei_literal", Scenario::casei_literal),
-    ("required_literal", Scenario::required_literal),
-    ("unicode_class", Scenario::unicode_class),
-    ("no_literal", Scenario::no_literal),
-    ("alternation", Scenario::alternation),
-    ("alternation_casei", Scenario::alternation_casei),
-    ("line_regexp", Scenario::line_regexp),
-    ("fixed_string", Scenario::fixed_string),
-    ("smart_case_lowercase", Scenario::smart_case_lowercase),
-    ("smart_case_uppercase", Scenario::smart_case_uppercase),
+    ("literal_narrow", literal_narrow),
+    ("word_literal", word_literal),
+    ("line_literal", line_literal),
+    ("fixed_string", fixed_string),
+    ("casei_literal", casei_literal),
+    ("smart_case_lower", smart_case_lower),
+    ("smart_case_upper", smart_case_upper),
+    ("required_literal", required_literal),
+    ("no_literal", no_literal),
+    ("alternation", alternation),
+    ("alternation_casei", alternation_casei),
+    ("unicode_class", unicode_class),
+    ("glob_include", glob_include),
+    ("glob_exclude", glob_exclude),
+    ("glob_casei", glob_casei),
+    ("hidden_default", hidden_default),
+    ("hidden_include", hidden_include),
+    ("ignore_default", ignore_default),
+    ("ignore_custom", ignore_custom),
+    ("scoped_search", scoped_search),
+    ("only_matching", only_matching),
+    ("count", count),
+    ("count_matches", count_matches),
+    ("files_with_matches", files_with_matches),
+    ("files_without_match", files_without_match),
+    ("max_count_1", max_count_1),
 ];
 
 fn find_scenario(name: &str) -> Option<Scenario> {
@@ -442,7 +807,7 @@ fn run_scenario(index: &Index, scenario: &Scenario, loop_cfg: &Loop) {
     let total_files = index.file_count();
 
     let t_candidates = Instant::now();
-    let filter = SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap();
+    let filter = SearchFilter::new(&scenario.filter_config, &index.root).unwrap();
     let candidate_ids = query.candidate_file_ids(index, &filter, false);
     let candidates_us = t_candidates.elapsed().as_micros();
     let candidate_count = candidate_ids.len();
@@ -456,43 +821,17 @@ fn run_scenario(index: &Index, scenario: &Scenario, loop_cfg: &Loop) {
         Loop::Timed(d) => {
             let deadline = Instant::now() + *d;
             let mut n = 0usize;
-            let filter = SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap();
+            let filter = SearchFilter::new(&scenario.filter_config, &index.root).unwrap();
             while Instant::now() < deadline {
-                black_box(
-                    query
-                        .run_index(
-                            index,
-                            &filter,
-                            SearchOutput {
-                                mode: SearchMode::Standard,
-                                emission: OutputEmission::Quiet,
-                                filename_mode: FilenameMode::Never,
-                                line_number: false,
-                            },
-                        )
-                        .unwrap(),
-                );
+                black_box(query.run_index(index, &filter, scenario.output).unwrap());
                 n += 1;
             }
             n
         }
         Loop::Iters(n) => {
-            let filter = SearchFilter::new(&SearchFilterConfig::default(), &index.root).unwrap();
+            let filter = SearchFilter::new(&scenario.filter_config, &index.root).unwrap();
             for _ in 0..*n {
-                black_box(
-                    query
-                        .run_index(
-                            index,
-                            &filter,
-                            SearchOutput {
-                                mode: SearchMode::Standard,
-                                emission: OutputEmission::Quiet,
-                                filename_mode: FilenameMode::Never,
-                                line_number: false,
-                            },
-                        )
-                        .unwrap(),
-                );
+                black_box(query.run_index(index, &filter, scenario.output).unwrap());
             }
             *n
         }
@@ -504,6 +843,7 @@ fn run_scenario(index: &Index, scenario: &Scenario, loop_cfg: &Loop) {
     println!("metric\tscenario\t{}", scenario.name);
     println!("metric\titers\t{iters}");
     println!("metric\tplan_kind\t{plan_kind}");
+    println!("metric\tsearch_mode\t{:?}", scenario.output.mode);
     println!("metric\ttotal_files\t{total_files}");
     println!("metric\tcandidate_files\t{candidate_count}");
     println!("metric\tphase_plan_us\t{plan_us}");
@@ -519,14 +859,14 @@ fn run_scenario(index: &Index, scenario: &Scenario, loop_cfg: &Loop) {
 
 const fn default_build_iters(kind: &CorpusKind) -> usize {
     match kind {
-        CorpusKind::Parity => 500,
+        CorpusKind::Parity | CorpusKind::Filter => 500,
         CorpusKind::Large { .. } => 2,
     }
 }
 
 fn run_build(iters: usize, kind: &CorpusKind) {
     let max_cap = match kind {
-        CorpusKind::Parity => 500,
+        CorpusKind::Parity | CorpusKind::Filter => 500,
         CorpusKind::Large { .. } => 20,
     };
     let iters = iters.clamp(1, max_cap);
@@ -543,6 +883,11 @@ fn run_build(iters: usize, kind: &CorpusKind) {
     match kind {
         CorpusKind::Parity => {
             println!("metric\tcorpus_kind\tparity");
+            println!("metric\tcorpus_files\t32");
+            println!("metric\tmode\tbuild_small_32files");
+        }
+        CorpusKind::Filter => {
+            println!("metric\tcorpus_kind\tfilter");
             println!("metric\tcorpus_files\t32");
             println!("metric\tmode\tbuild_small_32files");
         }
@@ -571,7 +916,7 @@ fn list_scenarios() {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let mode = args.get(1).map_or("literal", |s| s.as_str());
+    let mode = args.get(1).map_or("literal_narrow", |s| s.as_str());
     let kind = corpus_kind();
 
     if mode == "list" {
