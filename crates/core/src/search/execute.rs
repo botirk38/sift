@@ -11,7 +11,10 @@ use rayon::prelude::*;
 use crate::planner::TrigramPlan;
 use crate::Index;
 
-use super::{CompiledSearch, FilenameMode, OutputEmission, SearchFilter, SearchMode, SearchOutput};
+use super::{
+    CandidateInfo, CompiledSearch, FilenameMode, OutputEmission, SearchFilter, SearchMode,
+    SearchOutput,
+};
 
 #[cfg(test)]
 use super::{GlobConfig, HiddenMode, IgnoreConfig, Match, SearchFilterConfig, VisibilityConfig};
@@ -37,14 +40,28 @@ impl CompiledSearch {
             }
         };
 
-        ids.into_iter()
-            .filter(|&id| {
-                let Some(rel) = index.file_path(id) else {
-                    return false;
-                };
-                filter.is_candidate(rel)
-            })
-            .collect()
+        // Sequential filter for small sets, parallel for large
+        let threshold = parallel_candidate_min_files();
+        if ids.len() >= threshold {
+            ids.par_iter()
+                .filter(|&&id| {
+                    let Some(rel) = index.file_path(id) else {
+                        return false;
+                    };
+                    filter.is_candidate(rel)
+                })
+                .copied()
+                .collect()
+        } else {
+            ids.into_iter()
+                .filter(|&id| {
+                    let Some(rel) = index.file_path(id) else {
+                        return false;
+                    };
+                    filter.is_candidate(rel)
+                })
+                .collect()
+        }
     }
 
     /// Execute a search over an opened index and print results to stdout.
@@ -61,44 +78,95 @@ impl CompiledSearch {
         if self.opts.max_results == Some(0) {
             return Err(crate::Error::InvalidMaxCount);
         }
-        let candidate_ids =
+
+        // Stage 1: Get candidate IDs from index (trigram or full scan)
+        let raw_ids =
             self.candidate_file_ids(index, filter, Self::uses_exhaustive_candidates(output.mode));
-        if candidate_ids.is_empty() {
+        if raw_ids.is_empty() {
             return Ok(false);
         }
 
+        // Stage 2+3: Parallel filter + prepare CandidateInfo
+        let threshold = parallel_candidate_min_files();
+        let candidates = Self::prepare_candidates(index, &raw_ids, filter, threshold);
+        if candidates.is_empty() {
+            return Ok(false);
+        }
+
+        // Stage 4: Build matcher and search
         let matcher = self.build_matcher()?;
-        let parallel = candidate_ids.len() >= parallel_candidate_min_files();
+        let parallel = candidates.len() >= threshold;
+
         match output.mode {
             SearchMode::Standard | SearchMode::OnlyMatching => {
-                self.run_standard(index, &candidate_ids, &matcher, output, parallel)
+                self.run_standard_with_info(&candidates, &matcher, output, parallel)
             }
             SearchMode::Count
             | SearchMode::CountMatches
             | SearchMode::FilesWithMatches
             | SearchMode::FilesWithoutMatch => {
-                self.run_summary(index, &candidate_ids, &matcher, output, parallel)
+                self.run_summary_with_info(&candidates, &matcher, output, parallel)
             }
         }
     }
 
-    fn run_standard(
-        &self,
+    /// Prepare `CandidateInfo` with parallel filter + path prep.
+    fn prepare_candidates(
         index: &Index,
-        candidate_ids: &[usize],
+        ids: &[usize],
+        filter: &SearchFilter,
+        threshold: usize,
+    ) -> Vec<CandidateInfo> {
+        if ids.len() >= threshold {
+            ids.par_iter()
+                .filter_map(|&id| {
+                    let rel_path = index.file_path(id)?.to_path_buf();
+                    let rel_str = rel_path.to_string_lossy().replace('\\', "/");
+                    let abs_path = index.root.join(&rel_path);
+                    let info = CandidateInfo {
+                        id,
+                        rel_path,
+                        rel_str,
+                        abs_path,
+                    };
+                    filter.is_candidate_info(&info).then_some(info)
+                })
+                .collect()
+        } else {
+            ids.iter()
+                .filter_map(|&id| {
+                    let rel_path = index.file_path(id)?.to_path_buf();
+                    let rel_str = rel_path.to_string_lossy().replace('\\', "/");
+                    let abs_path = index.root.join(&rel_path);
+                    let info = CandidateInfo {
+                        id,
+                        rel_path,
+                        rel_str,
+                        abs_path,
+                    };
+                    filter.is_candidate_info(&info).then_some(info)
+                })
+                .collect()
+        }
+    }
+
+    fn run_standard_with_info(
+        &self,
+        candidates: &[CandidateInfo],
         matcher: &RegexMatcher,
         output: SearchOutput,
         parallel: bool,
     ) -> crate::Result<bool> {
         if parallel {
             let stop = AtomicBool::new(false);
-            let mut files = candidate_ids
+            let mut files = candidates
                 .par_iter()
                 .enumerate()
                 .map_init(
                     || StandardWorker::new(self, matcher.clone(), output),
-                    |worker, (result_index, &id)| {
-                        worker.search_candidate(index, result_index, id, &stop)
+                    |worker: &mut StandardWorker<'_>,
+                     (result_index, candidate): (usize, &CandidateInfo)| {
+                        worker.search_candidate(candidate, result_index, &stop)
                     },
                 )
                 .collect::<Vec<_>>();
@@ -106,20 +174,19 @@ impl CompiledSearch {
             return flush_chunk_output(files.into_iter().map(|file| file.output));
         }
 
-        self.run_standard_capped(index, candidate_ids, matcher, output)
+        self.run_standard_capped_with_info(candidates, matcher, output)
     }
 
-    fn run_summary(
+    fn run_summary_with_info(
         &self,
-        index: &Index,
-        candidate_ids: &[usize],
+        candidates: &[CandidateInfo],
         matcher: &RegexMatcher,
         output: SearchOutput,
         parallel: bool,
     ) -> crate::Result<bool> {
         if parallel {
             let stop = AtomicBool::new(false);
-            let mut files = candidate_ids
+            let mut files = candidates
                 .par_iter()
                 .enumerate()
                 .map_init(
@@ -131,8 +198,9 @@ impl CompiledSearch {
                             output.mode,
                         )
                     },
-                    |worker, (result_index, &id)| {
-                        worker.search_candidate(index, result_index, id, output, &stop)
+                    |worker: &mut SummaryWorker,
+                     (result_index, candidate): (usize, &CandidateInfo)| {
+                        worker.search_candidate(&candidate.abs_path, result_index, output, &stop)
                     },
                 )
                 .collect::<Vec<_>>();
@@ -140,32 +208,22 @@ impl CompiledSearch {
             return flush_chunk_output(files.into_iter().map(|file| file.output));
         }
 
-        self.run_summary_capped(index, candidate_ids, matcher, output)
+        self.run_summary_capped_with_info(candidates, matcher, output)
     }
 
-    fn run_standard_capped(
+    fn run_standard_capped_with_info(
         &self,
-        index: &Index,
-        candidate_ids: &[usize],
+        candidates: &[CandidateInfo],
         matcher: &RegexMatcher,
         output: SearchOutput,
     ) -> crate::Result<bool> {
         let mut any_match = false;
         let mut out = Vec::new();
-        let mut actual = index.root.clone();
-        for &id in candidate_ids {
-            let mut searcher = self.build_searcher(output.line_number, self.opts.max_results);
-            let Some(candidate) = index.file_path(id) else {
-                continue;
-            };
-            actual.push(candidate);
-            let depth = candidate.components().count();
-            let mut sink = StandardSink::new(matcher, output, &actual, &mut out);
-            let _ = searcher.search_path(matcher, &actual, &mut sink);
+        let mut searcher = self.build_searcher(output.line_number, self.opts.max_results);
+        for candidate in candidates {
+            let mut sink = StandardSink::new(matcher, output, &candidate.abs_path, &mut out);
+            let _ = searcher.search_path(matcher, &candidate.abs_path, &mut sink);
             any_match |= sink.matched;
-            for _ in 0..depth {
-                actual.pop();
-            }
             if output.emission == OutputEmission::Quiet && any_match {
                 break;
             }
@@ -177,10 +235,9 @@ impl CompiledSearch {
         }))
     }
 
-    fn run_summary_capped(
+    fn run_summary_capped_with_info(
         &self,
-        index: &Index,
-        candidate_ids: &[usize],
+        candidates: &[CandidateInfo],
         matcher: &RegexMatcher,
         output: SearchOutput,
     ) -> crate::Result<bool> {
@@ -188,19 +245,10 @@ impl CompiledSearch {
         let mut out = Vec::new();
         let mut worker =
             SummaryWorker::new(self, matcher.clone(), self.opts.max_results, output.mode);
-        let mut actual = index.root.clone();
-        for &id in candidate_ids {
-            let Some(candidate) = index.file_path(id) else {
-                continue;
-            };
-            actual.push(candidate);
-            let depth = candidate.components().count();
-            let result = worker.search_file(&actual);
+        for candidate in candidates {
+            let result = worker.search_file(&candidate.abs_path);
             any_match |= mode_is_success(output.mode, result);
-            write_summary_record(&mut out, output, &actual, result)?;
-            for _ in 0..depth {
-                actual.pop();
-            }
+            write_summary_record(&mut out, output, &candidate.abs_path, result)?;
             if output.emission == OutputEmission::Quiet && mode_is_success(output.mode, result) {
                 break;
             }
@@ -211,6 +259,8 @@ impl CompiledSearch {
             matched: any_match,
         }))
     }
+
+    // Legacy methods kept for backward compat in tests
 
     #[cfg(test)]
     pub(crate) fn collect_index_matches(&self, index: &Index) -> crate::Result<Vec<Match>> {
@@ -263,19 +313,16 @@ impl CompiledSearch {
         let matcher = self.build_matcher()?;
         let mut searcher = self.build_searcher(true, None);
         let mut out = Vec::new();
-        let mut actual = index.root.clone();
         for &id in candidate_ids {
             let Some(candidate) = index.file_path(id) else {
                 continue;
             };
-            actual.push(candidate);
-            let depth = candidate.components().count();
-            let mut sink =
-                CollectSink::new(actual.clone(), self.opts.only_matching(), matcher.clone());
-            let _ = searcher.search_path(&matcher, &actual, &mut sink);
-            for _ in 0..depth {
-                actual.pop();
-            }
+            let mut sink = CollectSink::new(
+                index.root.join(candidate),
+                self.opts.only_matching(),
+                matcher.clone(),
+            );
+            let _ = searcher.search_path(&matcher, index.root.join(candidate), &mut sink);
             out.extend(sink.into_matches());
         }
         Ok(out)
@@ -318,38 +365,29 @@ impl<'a> StandardWorker<'a> {
 
     fn search_candidate(
         &mut self,
-        index: &Index,
+        candidate: &CandidateInfo,
         result_index: usize,
-        id: usize,
         stop: &AtomicBool,
     ) -> FileResult {
         self.bytes.clear();
         if stop.load(Ordering::SeqCst) {
             return FileResult {
                 index: result_index,
-                output: ChunkOutput {
-                    bytes: Vec::new(),
-                    matched: false,
-                },
+                output: ChunkOutput::empty(),
             };
         }
 
-        let Some(candidate) = index.file_path(id) else {
-            return FileResult {
-                index: result_index,
-                output: ChunkOutput {
-                    bytes: Vec::new(),
-                    matched: false,
-                },
-            };
-        };
-        let actual = index.root.join(candidate);
         let matched = {
             let mut searcher = self
                 .search
                 .build_searcher(self.output.line_number, self.search.opts.max_results);
-            let mut sink = StandardSink::new(&self.matcher, self.output, &actual, &mut self.bytes);
-            let _ = searcher.search_path(&self.matcher, &actual, &mut sink);
+            let mut sink = StandardSink::new(
+                &self.matcher,
+                self.output,
+                &candidate.abs_path,
+                &mut self.bytes,
+            );
+            let _ = searcher.search_path(&self.matcher, &candidate.abs_path, &mut sink);
             sink.matched
         };
 
@@ -357,10 +395,11 @@ impl<'a> StandardWorker<'a> {
             stop.store(true, Ordering::SeqCst);
         }
 
+        // P0 fix: use mem::take instead of clone - avoids allocation when bytes is empty (quiet mode)
         FileResult {
             index: result_index,
             output: ChunkOutput {
-                bytes: self.bytes.clone(),
+                bytes: std::mem::take(&mut self.bytes),
                 matched,
             },
         }
@@ -459,37 +498,22 @@ impl SummaryWorker {
 
     fn search_candidate(
         &mut self,
-        index: &Index,
+        path: &Path,
         result_index: usize,
-        id: usize,
         output: SearchOutput,
         stop: &AtomicBool,
     ) -> FileResult {
         if stop.load(Ordering::SeqCst) {
             return FileResult {
                 index: result_index,
-                output: ChunkOutput {
-                    bytes: Vec::new(),
-                    matched: false,
-                },
+                output: ChunkOutput::empty(),
             };
         }
 
-        let Some(candidate) = index.file_path(id) else {
-            return FileResult {
-                index: result_index,
-                output: ChunkOutput {
-                    bytes: Vec::new(),
-                    matched: false,
-                },
-            };
-        };
-
-        let actual = index.root.join(candidate);
-        let result = self.search_file(&actual);
+        let result = self.search_file(path);
         let matched = mode_is_success(output.mode, result);
         let mut bytes = Vec::new();
-        let _ = write_summary_record(&mut bytes, output, &actual, result);
+        let _ = write_summary_record(&mut bytes, output, path, result);
         if output.emission == OutputEmission::Quiet && mode_is_success(output.mode, result) {
             stop.store(true, Ordering::SeqCst);
         }
@@ -509,6 +533,15 @@ struct FileResult {
 struct ChunkOutput {
     bytes: Vec<u8>,
     matched: bool,
+}
+
+impl ChunkOutput {
+    const fn empty() -> Self {
+        Self {
+            bytes: Vec::new(),
+            matched: false,
+        }
+    }
 }
 
 fn flush_chunk_output(outputs: impl IntoIterator<Item = ChunkOutput>) -> crate::Result<bool> {
@@ -635,18 +668,16 @@ fn write_standard_prefix(
     Ok(())
 }
 
+#[allow(clippy::match_same_arms)]
 const fn mode_is_success(mode: SearchMode, result: FileSummary) -> bool {
     match mode {
-        SearchMode::Count | SearchMode::CountMatches | SearchMode::FilesWithMatches => {
-            result.matched
-        }
+        SearchMode::Count | SearchMode::CountMatches => result.count > 0,
+        SearchMode::FilesWithMatches => result.matched,
         SearchMode::FilesWithoutMatch => !result.matched,
-        SearchMode::Standard | SearchMode::OnlyMatching => unreachable!(),
+        SearchMode::Standard | SearchMode::OnlyMatching => result.matched,
     }
 }
 
-/// Walk a directory tree and return all indexed file paths relative to `root`.
-///
 /// # Errors
 ///
 /// Returns an error when canonicalizing `root` or while walking the tree.

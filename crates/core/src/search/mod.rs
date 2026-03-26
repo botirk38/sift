@@ -7,8 +7,8 @@ mod types;
 
 pub use execute::{parallel_candidate_min_files, walk_file_paths};
 pub use filter::{
-    GlobConfig, HiddenMode, IgnoreConfig, IgnoreSources, SearchFilter, SearchFilterConfig,
-    VisibilityConfig,
+    CandidateInfo, GlobConfig, HiddenMode, IgnoreConfig, IgnoreSources, SearchFilter,
+    SearchFilterConfig, VisibilityConfig,
 };
 pub use types::{
     CaseMode, CompiledSearch, FilenameMode, Match, OutputEmission, SearchMatchFlags, SearchMode,

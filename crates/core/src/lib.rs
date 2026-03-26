@@ -14,9 +14,9 @@ pub use verify::{compile_pattern, compile_search_pattern};
 
 pub use planner::TrigramPlan;
 pub use search::{
-    walk_file_paths, CaseMode, CompiledSearch, FilenameMode, GlobConfig, HiddenMode, IgnoreConfig,
-    IgnoreSources, Match, OutputEmission, SearchFilter, SearchFilterConfig, SearchMatchFlags,
-    SearchMode, SearchOptions, SearchOutput, VisibilityConfig,
+    walk_file_paths, CandidateInfo, CaseMode, CompiledSearch, FilenameMode, GlobConfig, HiddenMode,
+    IgnoreConfig, IgnoreSources, Match, OutputEmission, SearchFilter, SearchFilterConfig,
+    SearchMatchFlags, SearchMode, SearchOptions, SearchOutput, VisibilityConfig,
 };
 
 pub use ignore::{Walk, WalkBuilder};

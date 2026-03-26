@@ -53,12 +53,26 @@ pub struct SearchFilterConfig {
     pub visibility: VisibilityConfig,
 }
 
+/// Pre-computed candidate for efficient batch filtering and search.
+#[derive(Debug, Clone)]
+pub struct CandidateInfo {
+    /// File ID from the index.
+    pub id: usize,
+    /// Relative path as stored in the index.
+    pub rel_path: PathBuf,
+    /// Normalized relative path string (forward slashes, for gitignore/glob).
+    pub rel_str: String,
+    /// Absolute path on disk (`index.root.join(&rel_path)`).
+    pub abs_path: PathBuf,
+}
+
 #[derive(Debug)]
 pub struct SearchFilter {
     scopes: Vec<PathBuf>,
     hidden: HiddenMode,
     gitignore: Option<Gitignore>,
     glob: Option<Override>,
+    glob_case_insensitive: bool,
 }
 
 impl SearchFilter {
@@ -77,6 +91,7 @@ impl SearchFilter {
 
         let gitignore = Self::build_gitignore_matcher(index_root, &config.visibility.ignore)?;
 
+        let glob_case_insensitive = config.glob.case_insensitive;
         let glob = if config.glob.patterns.is_empty() {
             None
         } else {
@@ -101,6 +116,7 @@ impl SearchFilter {
             hidden: config.visibility.hidden,
             gitignore,
             glob,
+            glob_case_insensitive,
         })
     }
 
@@ -144,12 +160,23 @@ impl SearchFilter {
         Ok(Some(matcher))
     }
 
+    /// Check if a relative path passes all filters.
     #[must_use]
     pub fn is_candidate(&self, rel_path: &Path) -> bool {
         if !self.in_scope(rel_path) {
             return false;
         }
         self.matches_file(rel_path)
+    }
+
+    /// Check if a pre-computed `CandidateInfo` passes all filters.
+    /// More efficient than `is_candidate` when the candidate has already been prepared.
+    #[must_use]
+    pub fn is_candidate_info(&self, info: &CandidateInfo) -> bool {
+        if !self.in_scope_info(info) {
+            return false;
+        }
+        self.matches_file_info(info)
     }
 
     fn in_scope(&self, rel_path: &Path) -> bool {
@@ -164,26 +191,74 @@ impl SearchFilter {
         false
     }
 
+    fn in_scope_info(&self, info: &CandidateInfo) -> bool {
+        for scope in &self.scopes {
+            if scope.as_os_str().is_empty() {
+                return true;
+            }
+            if info.rel_path.starts_with(scope) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn matches_file(&self, rel_path: &Path) -> bool {
+        // Fast hidden check - no allocation using as_encoded_bytes()
         if self.hidden == HiddenMode::Respect {
             if let Some(name) = rel_path.file_name() {
-                let name_str = name.to_string_lossy();
-                if name_str.starts_with('.') && name_str.len() > 1 {
+                let bytes = name.as_encoded_bytes();
+                if bytes.starts_with(b".") && bytes.len() > 1 {
                     return false;
                 }
             }
         }
 
-        if let Some(ref matcher) = self.gitignore {
+        // Both gitignore and glob require path stringification - do once
+        let needs_str = self.gitignore.is_some() || self.glob.is_some();
+        if needs_str {
             let rel_str = rel_path.to_string_lossy().replace('\\', "/");
-            if matcher.matched(Path::new(&rel_str), false).is_ignore() {
+            return self.matches_file_str(Path::new(&rel_str));
+        }
+
+        true
+    }
+
+    fn matches_file_info(&self, info: &CandidateInfo) -> bool {
+        // Fast hidden check - no allocation
+        if self.hidden == HiddenMode::Respect {
+            if let Some(name) = info.rel_path.file_name() {
+                let bytes = name.as_encoded_bytes();
+                if bytes.starts_with(b".") && bytes.len() > 1 {
+                    return false;
+                }
+            }
+        }
+
+        // rel_str already computed
+        self.matches_file_str(Path::new(&info.rel_str))
+    }
+
+    fn matches_file_str(&self, rel_path: &Path) -> bool {
+        if let Some(ref matcher) = self.gitignore {
+            if matcher.matched(rel_path, false).is_ignore() {
                 return false;
             }
         }
 
         if let Some(ref glob) = self.glob {
-            let rel_str = rel_path.to_string_lossy().replace('\\', "/");
-            if glob.matched(Path::new(&rel_str), false).is_ignore() {
+            // ASCII fast-path for case-insensitive glob
+            if self.glob_case_insensitive {
+                let rel_str = rel_path.to_string_lossy();
+                if rel_str.is_ascii() {
+                    let rel_lower = rel_str.to_ascii_lowercase();
+                    if glob.matched(Path::new(&rel_lower), false).is_ignore() {
+                        return false;
+                    }
+                    return true;
+                }
+            }
+            if glob.matched(rel_path, false).is_ignore() {
                 return false;
             }
         }
