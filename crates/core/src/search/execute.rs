@@ -20,47 +20,20 @@ use super::{
 use super::{GlobConfig, HiddenMode, IgnoreConfig, Match, SearchFilterConfig, VisibilityConfig};
 
 impl CompiledSearch {
+    /// Returns raw candidate file IDs from index (trigram or full scan).
+    /// Does NOT apply `SearchFilter` - filtering happens in `prepare_candidates`.
     #[must_use]
-    pub fn candidate_file_ids(
-        &self,
-        index: &Index,
-        filter: &SearchFilter,
-        exhaustive: bool,
-    ) -> Vec<usize> {
-        let ids: Vec<usize> = if exhaustive {
-            (0..index.file_count()).collect()
-        } else {
-            match &self.plan {
-                TrigramPlan::FullScan => (0..index.file_count()).collect(),
-                TrigramPlan::Narrow { arms } => index
-                    .candidate_file_ids(arms.as_slice())
-                    .into_iter()
-                    .map(|id| id as usize)
-                    .collect(),
-            }
-        };
-
-        // Sequential filter for small sets, parallel for large
-        let threshold = parallel_candidate_min_files();
-        if ids.len() >= threshold {
-            ids.par_iter()
-                .filter(|&&id| {
-                    let Some(rel) = index.file_path(id) else {
-                        return false;
-                    };
-                    filter.is_candidate(rel)
-                })
-                .copied()
-                .collect()
-        } else {
-            ids.into_iter()
-                .filter(|&id| {
-                    let Some(rel) = index.file_path(id) else {
-                        return false;
-                    };
-                    filter.is_candidate(rel)
-                })
-                .collect()
+    pub fn candidate_file_ids(&self, index: &Index, exhaustive: bool) -> Vec<usize> {
+        if exhaustive {
+            return (0..index.file_count()).collect();
+        }
+        match &self.plan {
+            TrigramPlan::FullScan => (0..index.file_count()).collect(),
+            TrigramPlan::Narrow { arms } => index
+                .candidate_file_ids(arms.as_slice())
+                .into_iter()
+                .map(|id| id as usize)
+                .collect(),
         }
     }
 
@@ -79,14 +52,13 @@ impl CompiledSearch {
             return Err(crate::Error::InvalidMaxCount);
         }
 
-        // Stage 1: Get candidate IDs from index (trigram or full scan)
-        let raw_ids =
-            self.candidate_file_ids(index, filter, Self::uses_exhaustive_candidates(output.mode));
+        // Stage 1: Get raw candidate IDs from index (trigram or full scan)
+        let raw_ids = self.candidate_file_ids(index, Self::uses_exhaustive_candidates(output.mode));
         if raw_ids.is_empty() {
             return Ok(false);
         }
 
-        // Stage 2+3: Parallel filter + prepare CandidateInfo
+        // Stage 2+3: Parallel filter + prepare CandidateInfo (single filter pass)
         let threshold = parallel_candidate_min_files();
         let candidates = Self::prepare_candidates(index, &raw_ids, filter, threshold);
         if candidates.is_empty() {
@@ -111,7 +83,8 @@ impl CompiledSearch {
     }
 
     /// Prepare `CandidateInfo` with parallel filter + path prep.
-    fn prepare_candidates(
+    #[must_use]
+    pub fn prepare_candidates(
         index: &Index,
         ids: &[usize],
         filter: &SearchFilter,
@@ -273,8 +246,8 @@ impl CompiledSearch {
             },
         };
         let filter = SearchFilter::new(&config, &index.root)?;
-        let candidate_ids = self.candidate_file_ids(index, &filter, false);
-        self.collect_index_candidates(index, &candidate_ids)
+        let candidate_ids = self.candidate_file_ids(index, false);
+        self.collect_index_candidates(index, &filter, &candidate_ids)
     }
 
     #[cfg(test)]
@@ -308,6 +281,7 @@ impl CompiledSearch {
     fn collect_index_candidates(
         &self,
         index: &Index,
+        filter: &SearchFilter,
         candidate_ids: &[usize],
     ) -> crate::Result<Vec<Match>> {
         let matcher = self.build_matcher()?;
@@ -317,6 +291,9 @@ impl CompiledSearch {
             let Some(candidate) = index.file_path(id) else {
                 continue;
             };
+            if !filter.is_candidate(candidate) {
+                continue;
+            }
             let mut sink = CollectSink::new(
                 index.root.join(candidate),
                 self.opts.only_matching(),

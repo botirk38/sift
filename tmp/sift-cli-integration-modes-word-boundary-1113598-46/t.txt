@@ -1,4 +1,0 @@
-cat
-category
- bobcat  
-categorically

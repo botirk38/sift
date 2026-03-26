@@ -808,9 +808,16 @@ fn run_scenario(index: &Index, scenario: &Scenario, loop_cfg: &Loop) {
 
     let t_candidates = Instant::now();
     let filter = SearchFilter::new(&scenario.filter_config, &index.root).unwrap();
-    let candidate_ids = query.candidate_file_ids(index, &filter, false);
+    let raw_ids = query.candidate_file_ids(index, false);
+    // Use threshold based on file count - parallel if > 8 * CPU count
+    let threshold = raw_ids.len().min(
+        8 * std::thread::available_parallelism()
+            .map(std::num::NonZeroUsize::get)
+            .unwrap_or(1),
+    );
+    let candidates = CompiledSearch::prepare_candidates(index, &raw_ids, &filter, threshold);
     let candidates_us = t_candidates.elapsed().as_micros();
-    let candidate_count = candidate_ids.len();
+    let candidate_count = candidates.len();
 
     let t_matcher = Instant::now();
     let _matcher = query.build_matcher().unwrap();
