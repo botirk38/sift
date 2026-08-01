@@ -21,8 +21,10 @@ mod candidate_tests {
 
     use super::*;
 
-    fn default_config() -> Index {
-        Index::new().width(GramWidth::TRIGRAM)
+    use super::gram::GramNorm;
+
+    fn trigram() -> GramWidth {
+        GramWidth::TRIGRAM
     }
 
     fn regex_search_options(
@@ -66,7 +68,7 @@ mod candidate_tests {
             patterns,
             regex_search_options(case_insensitive, word_regexp, line_regexp),
         );
-        default_config().extract_literal_arms(&query).is_some()
+        Index::extract_literal_arms(trigram(), &query).is_some()
     }
 
     fn full_scan(
@@ -79,7 +81,7 @@ mod candidate_tests {
             patterns,
             regex_search_options(case_insensitive, word_regexp, line_regexp),
         );
-        default_config().extract_literal_arms(&query).is_none()
+        Index::extract_literal_arms(trigram(), &query).is_none()
     }
 
     #[test]
@@ -188,8 +190,7 @@ mod candidate_tests {
     fn case_insensitive_alternation_keeps_long_arms() {
         let patterns = ["ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT".to_string()];
         let built = built_query(&patterns, regex_search_options(true, false, false));
-        let arms = default_config()
-            .extract_literal_arms(&built)
+        let arms = Index::extract_literal_arms(trigram(), &built)
             .expect("casei alternation should extract");
         assert_eq!(arms.len(), 4);
         assert!(arms.iter().all(|arm| arm.len() >= 7));
@@ -206,9 +207,8 @@ mod candidate_tests {
             ..SearchOptions::default()
         };
         let built = built_query(&patterns, options);
-        let arms = default_config()
-            .extract_literal_arms(&built)
-            .expect("fixed casei should extract");
+        let arms =
+            Index::extract_literal_arms(trigram(), &built).expect("fixed casei should extract");
         assert_eq!(arms, vec![b"ERR_SYS".to_vec()]);
     }
 
@@ -222,7 +222,7 @@ mod candidate_tests {
             ..SearchOptions::default()
         };
         let built = built_query(&patterns, options);
-        assert!(default_config().extract_literal_arms(&built).is_none());
+        assert!(Index::extract_literal_arms(trigram(), &built).is_none());
     }
 
     #[test]
@@ -265,12 +265,7 @@ mod candidate_tests {
                 ..SearchOptions::default()
             },
         );
-        assert!(
-            Index::new()
-                .width(GramWidth::new(2))
-                .extract_literal_arms(&built)
-                .is_some()
-        );
+        assert!(Index::extract_literal_arms(GramWidth::new(2), &built).is_some());
     }
 
     #[test]
@@ -282,7 +277,7 @@ mod candidate_tests {
             ..SearchOptions::default()
         };
         let built = built_query(&patterns, options);
-        assert!(default_config().extract_literal_arms(&built).is_some());
+        assert!(Index::extract_literal_arms(trigram(), &built).is_some());
     }
 
     #[test]
@@ -323,7 +318,9 @@ mod candidate_tests {
 
         // Posting count mismatches are caught at build time.
         // The open path skips content-level validation for speed.
-        let result = Index::new().width(GramWidth::TRIGRAM).open_from(
+        let result = Index::open(
+            GramWidth::TRIGRAM,
+            GramNorm::Identity,
             &dir,
             Path::new("/root"),
             crate::index::CorpusKind::Directory,

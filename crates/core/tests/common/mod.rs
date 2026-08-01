@@ -186,10 +186,13 @@ pub fn build_trigram_in_dir(corpus: &Path, trigram_dir: &Path) -> NGramIndex {
         walk: IndexWalkConfig::new(false),
         visibility: VisibilityConfig::default(),
     };
-    let knobs = NGramIndex::new().width(GramWidth::TRIGRAM);
-    knobs
-        .build(IndexDestination::Directory(trigram_dir), &config)
-        .expect("build trigram index");
+    NGramIndex::build(
+        GramWidth::TRIGRAM,
+        GramNorm::Identity,
+        IndexDestination::Directory(trigram_dir),
+        &config,
+    )
+    .expect("build trigram index");
     let abs_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     NGramIndex::open(
         GramWidth::TRIGRAM,

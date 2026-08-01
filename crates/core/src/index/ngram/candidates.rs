@@ -67,7 +67,7 @@ impl Index {
     }
 
     fn posting_ids(&self, lit: &[u8], gram_match: GramMatch) -> Option<Vec<u32>> {
-        let storage = self.storage()?;
+        let storage = &self.storage;
         let width = self.width.get();
         match self.width.literal_narrowing(lit.len()) {
             LiteralNarrowing::TooShort => None,
@@ -155,9 +155,7 @@ impl Index {
     }
 
     fn posting_bytes_slice(&self, gram: Gram) -> &[u8] {
-        let Some(storage) = self.storage() else {
-            return &[];
-        };
+        let storage = &self.storage;
         let Some(entry) = storage.lexicon.get(gram) else {
             return &[];
         };

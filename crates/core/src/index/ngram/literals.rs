@@ -16,11 +16,13 @@ impl Index {
     /// decline narrowing so candidates stay conservative.
     ///
     /// [`GramMatch`]: super::gram::GramMatch
-    pub(crate) fn extract_literal_arms(&self, query: &SearchQuery) -> Option<Vec<Vec<u8>>> {
+    pub(crate) fn extract_literal_arms(
+        width: GramWidth,
+        query: &SearchQuery,
+    ) -> Option<Vec<Vec<u8>>> {
         if query.invert_match() {
             return None;
         }
-        let width = self.gram_width();
         let case = query.case();
         let mut literal_arms: Vec<Vec<u8>> = Vec::new();
         for p in query.patterns() {

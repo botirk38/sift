@@ -10,7 +10,7 @@ An N-gram index is an inverted index mapping each fixed-width byte sequence foun
 
 | File | Description |
 |------|-------------|
-| [`index.rs`](index.rs) | `Index` knobs + opened storage; build/open/update; `Index` trait |
+| [`index.rs`](index.rs) | Opened `Index` (required storage); build/open/update |
 | [`gram.rs`](gram.rs) | `GramWidth`, `Gram`, runtime-width gram window iteration |
 | [`build.rs`](build.rs) | `IndexTables`: shared `FileWalk` usage, gram extraction, incremental table construction |
 | [`files.rs`](files.rs) | File ID to relative path + fingerprint mapping |
@@ -40,9 +40,12 @@ use sift_core::{
 indexes.build(&[IndexRecord::ngram(GramWidth::TRIGRAM)], &config)?;
 
 // Lower-level directory write (tests/benches).
-NGramIndex::new()
-    .width(GramWidth::TRIGRAM)
-    .build(IndexDestination::Directory(&index_dir), &config)?;
+NGramIndex::build(
+    GramWidth::TRIGRAM,
+    GramNorm::Identity,
+    IndexDestination::Directory(&index_dir),
+    &config,
+)?;
 let reopened = NGramIndex::open(
     GramWidth::TRIGRAM,
     GramNorm::Identity,

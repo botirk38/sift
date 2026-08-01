@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 
 use sift_core::grep::VisibilityConfig;
 use sift_core::{
-    CorpusKind, CorpusSpec, GramWidth, IndexBuildConfig, IndexWalkConfig, NGramConfig, NGramIndex,
+    CorpusKind, CorpusSpec, GramNorm, GramWidth, IndexConfig, IndexWalkConfig, NGramIndex,
 };
 
 /// Dimensions of a synthetic on-disk corpus.
@@ -151,7 +151,7 @@ pub fn build_index(corpus: &Path, idx_dir: &Path) -> NGramIndex {
     } else {
         (corpus, CorpusKind::Directory, vec![])
     };
-    let config = IndexBuildConfig {
+    let config = IndexConfig {
         corpus: CorpusSpec {
             root,
             kind,
@@ -162,13 +162,18 @@ pub fn build_index(corpus: &Path, idx_dir: &Path) -> NGramIndex {
         walk: IndexWalkConfig::new(false),
         visibility: VisibilityConfig::default(),
     };
-    let config_index = NGramConfig::new(GramWidth::TRIGRAM);
-    config_index.build(sift_core::IndexDestination::Directory(idx_dir), &config).unwrap();
-    NGramConfig::open(GramWidth::TRIGRAM, idx_dir, root, kind).unwrap()
+    NGramIndex::build(
+        GramWidth::TRIGRAM,
+        GramNorm::Identity,
+        sift_core::IndexDestination::Directory(idx_dir),
+        &config,
+    )
+    .unwrap();
+    NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, root, kind).unwrap()
 }
 
 pub fn open_index(idx_dir: &Path, root: &Path, kind: CorpusKind) -> NGramIndex {
-    NGramConfig::open(GramWidth::TRIGRAM, idx_dir, root, kind).unwrap()
+    NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, root, kind).unwrap()
 }
 
 fn workspace_target_dir() -> PathBuf {

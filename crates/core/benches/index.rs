@@ -40,10 +40,13 @@ fn build_index(corpus: &Path, idx_dir: &Path) -> NGramIndex {
         walk: IndexWalkConfig::new(false),
         visibility: VisibilityConfig::default(),
     };
-    let config_index = NGramIndex::new().width(GramWidth::TRIGRAM);
-    config_index
-        .build(IndexDestination::Directory(idx_dir), &config)
-        .unwrap();
+    NGramIndex::build(
+        GramWidth::TRIGRAM,
+        GramNorm::Identity,
+        IndexDestination::Directory(idx_dir),
+        &config,
+    )
+    .unwrap();
     NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, root, kind).unwrap()
 }
 

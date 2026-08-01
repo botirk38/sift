@@ -28,10 +28,13 @@ fn persisted_index_reopens_with_same_files() {
         walk: IndexWalkConfig::new(false),
         visibility: VisibilityConfig::default(),
     };
-    let index_config = NGramIndex::new().width(GramWidth::TRIGRAM);
-    index_config
-        .build(IndexDestination::Directory(&trigram_dir), &config)
-        .expect("build");
+    NGramIndex::build(
+        GramWidth::TRIGRAM,
+        GramNorm::Identity,
+        IndexDestination::Directory(&trigram_dir),
+        &config,
+    )
+    .expect("build");
 
     let reopened = NGramIndex::open(
         GramWidth::TRIGRAM,

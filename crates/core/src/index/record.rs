@@ -92,10 +92,7 @@ impl IndexRecord {
     /// Returns an error if walking, extraction, or encoding fails.
     pub fn build(self, dest: IndexDestination<'_>, config: &IndexConfig<'_>) -> crate::Result<()> {
         match self {
-            Self::Ngram { width, norm } => super::ngram::Index::new()
-                .width(width)
-                .norm(norm)
-                .build(dest, config),
+            Self::Ngram { width, norm } => super::ngram::Index::build(width, norm, dest, config),
         }
     }
 
