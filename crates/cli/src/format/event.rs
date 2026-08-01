@@ -39,7 +39,6 @@ impl<'a> EventRenderer<'a> {
     pub(super) fn new(
         output: PrintSpec,
         separators: &'a PrintSeparators,
-        _extras: crate::format::collection::PrintExtras,
         started: Instant,
         binary_mode: BinaryMode,
         context_requested: bool,
@@ -137,7 +136,7 @@ impl<'a> EventRenderer<'a> {
         }
         let line = event.replacement.as_deref().unwrap_or(&event.bytes);
         let line = if self.output.lines.trim() {
-            trim_ascii(line)
+            Self::trim_ascii(line)
         } else {
             line
         };
@@ -169,7 +168,7 @@ impl<'a> EventRenderer<'a> {
             self.bytes.extend(&self.separators.field_context_separator);
         }
         let bytes = if self.output.lines.trim() {
-            trim_ascii(&event.bytes)
+            Self::trim_ascii(&event.bytes)
         } else {
             &event.bytes
         };
@@ -213,8 +212,8 @@ impl<'a> EventRenderer<'a> {
     }
 
     fn write_display_path(&mut self, path: &Path) {
-        let display = apply_path_separator(
-            path.to_string_lossy().to_string(),
+        let display = Self::with_path_separator(
+            path.to_string_lossy().into_owned(),
             self.output.records.path_separator,
         );
         self.write_hyperlink_start(display.as_str());
@@ -279,7 +278,7 @@ impl<'a> EventRenderer<'a> {
         if spec.bold() {
             codes.push("1".to_string());
         }
-        if let Some(color) = spec.fg().copied().and_then(ansi_fg) {
+        if let Some(color) = spec.fg().copied().and_then(Self::ansi_fg) {
             codes.push(color.to_string());
         }
         if codes.is_empty() {
@@ -530,35 +529,35 @@ impl EventRenderer<'_> {
     fn display_text(path: &Path) -> String {
         path.to_string_lossy().into_owned()
     }
-}
 
-fn trim_ascii(bytes: &[u8]) -> &[u8] {
-    let start = bytes
-        .iter()
-        .position(|byte| !byte.is_ascii_whitespace() || *byte == b'\n')
-        .unwrap_or(bytes.len());
-    &bytes[start..]
-}
+    fn trim_ascii(bytes: &[u8]) -> &[u8] {
+        let start = bytes
+            .iter()
+            .position(|byte| !byte.is_ascii_whitespace() || *byte == b'\n')
+            .unwrap_or(bytes.len());
+        &bytes[start..]
+    }
 
-fn apply_path_separator(path: String, separator: Option<u8>) -> String {
-    let Some(separator) = separator else {
-        return path;
-    };
-    let mut buf = [0u8; 4];
-    let separator = (separator as char).encode_utf8(&mut buf);
-    path.replace(std::path::MAIN_SEPARATOR, separator)
-}
+    fn with_path_separator(path: String, separator: Option<u8>) -> String {
+        let Some(separator) = separator else {
+            return path;
+        };
+        let mut buf = [0u8; 4];
+        let separator = (separator as char).encode_utf8(&mut buf);
+        path.replace(std::path::MAIN_SEPARATOR, separator)
+    }
 
-const fn ansi_fg(color: termcolor::Color) -> Option<u8> {
-    match color {
-        termcolor::Color::Black => Some(30),
-        termcolor::Color::Blue => Some(34),
-        termcolor::Color::Green => Some(32),
-        termcolor::Color::Red => Some(31),
-        termcolor::Color::Cyan => Some(36),
-        termcolor::Color::Magenta => Some(35),
-        termcolor::Color::Yellow => Some(33),
-        termcolor::Color::White => Some(37),
-        _ => None,
+    const fn ansi_fg(color: termcolor::Color) -> Option<u8> {
+        match color {
+            termcolor::Color::Black => Some(30),
+            termcolor::Color::Blue => Some(34),
+            termcolor::Color::Green => Some(32),
+            termcolor::Color::Red => Some(31),
+            termcolor::Color::Cyan => Some(36),
+            termcolor::Color::Magenta => Some(35),
+            termcolor::Color::Yellow => Some(33),
+            termcolor::Color::White => Some(37),
+            _ => None,
+        }
     }
 }

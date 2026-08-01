@@ -16,7 +16,7 @@ pub use event::{
     BinaryEvent, ContextEvent, ContextKind, Events, FileEvent, MatchEvent, SearchEvent, SearchSink,
 };
 pub use hit::{LineCount, ListedFile, Listing, Match, MatchedFile, SpanCount};
-pub use input::{ByteInput, FileIdentity, Input, InputIdentity, Inputs, SearchInputs};
+pub use input::{ByteInput, FileIdentity, Input, Inputs, SearchInputs};
 pub use mode::{SearchMode, ZeroCounts};
 pub use options::{
     BinaryMode, Case, CaseMode, InputEncoding, Narrowing, RegexEngine, SearchBound, SearchFlags,

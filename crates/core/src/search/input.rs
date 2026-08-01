@@ -4,56 +4,26 @@ use std::sync::Arc;
 
 use crate::corpus::Candidate;
 
-/// How a searchable input identifies its file for listing and events.
-#[derive(Debug, Clone)]
-pub enum InputIdentity {
-    /// Corpus file from candidate resolution.
-    Candidate(Candidate),
-    /// Stdin or anonymous byte stream.
-    Stream {
-        name: PathBuf,
-        byte_len: Option<u64>,
-    },
-}
-
-/// Shared path identity for listing rows and search events.
+/// Shared path identity for inputs, listing rows, and search events.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileIdentity {
     Candidate(Arc<Candidate>),
     Stream { name: Arc<Path> },
 }
 
-impl InputIdentity {
-    #[must_use]
-    pub fn stream(name: &str) -> Self {
-        Self::Stream {
-            name: PathBuf::from(name),
-            byte_len: None,
-        }
-    }
-
-    #[must_use]
-    pub fn file_identity(&self) -> Arc<FileIdentity> {
-        match self {
-            Self::Candidate(candidate) => {
-                Arc::new(FileIdentity::Candidate(Arc::new(candidate.clone())))
-            }
-            Self::Stream { name, .. } => Arc::new(FileIdentity::Stream {
-                name: Arc::from(name.as_path()),
-            }),
-        }
-    }
-
-    #[must_use]
-    pub const fn byte_len(&self) -> Option<u64> {
-        match self {
-            Self::Candidate(candidate) => candidate.cached_size(),
-            Self::Stream { byte_len, .. } => *byte_len,
-        }
-    }
-}
-
 impl FileIdentity {
+    #[must_use]
+    pub fn candidate(candidate: Candidate) -> Arc<Self> {
+        Arc::new(Self::Candidate(Arc::new(candidate)))
+    }
+
+    #[must_use]
+    pub fn stream(name: &str) -> Arc<Self> {
+        Arc::new(Self::Stream {
+            name: Arc::from(Path::new(name)),
+        })
+    }
+
     /// Corpus-relative path for daemon / lazy index enqueue, if any.
     #[must_use]
     pub fn corpus_path(&self) -> Option<&Path> {
@@ -91,35 +61,43 @@ impl FileIdentity {
             (Self::Stream { name }, _) => name.as_ref(),
         }
     }
+
+    #[must_use]
+    pub fn cached_size(&self) -> Option<u64> {
+        match self {
+            Self::Candidate(candidate) => candidate.cached_size(),
+            Self::Stream { .. } => None,
+        }
+    }
 }
 
 pub enum Input<'a> {
     Path {
         path: Cow<'a, Path>,
-        identity: InputIdentity,
+        file: Arc<FileIdentity>,
         explicit: bool,
     },
     Bytes {
         path: Cow<'a, str>,
         bytes: Cow<'a, [u8]>,
-        identity: InputIdentity,
+        file: Arc<FileIdentity>,
         explicit: bool,
     },
 }
 
 impl Input<'_> {
     #[must_use]
-    pub const fn identity(&self) -> &InputIdentity {
+    pub const fn file(&self) -> &Arc<FileIdentity> {
         match self {
-            Self::Path { identity, .. } | Self::Bytes { identity, .. } => identity,
+            Self::Path { file, .. } | Self::Bytes { file, .. } => file,
         }
     }
 
     #[must_use]
     pub fn byte_len(&self) -> u64 {
         match self {
-            Self::Path { path, identity, .. } => identity
-                .byte_len()
+            Self::Path { path, file, .. } => file
+                .cached_size()
                 .unwrap_or_else(|| std::fs::metadata(path).map_or(0, |m| m.len())),
             Self::Bytes { bytes, .. } => u64::try_from(bytes.len()).unwrap_or(u64::MAX),
         }
@@ -130,13 +108,10 @@ impl<'c> Input<'c> {
     /// Open a corpus candidate as a path input for search.
     #[must_use]
     pub fn from_candidate(candidate: &'c Candidate, explicit: &[PathBuf]) -> Self {
-        let is_explicit = explicit
-            .iter()
-            .any(|path| path == candidate.rel_path() || path == candidate.abs_path());
         Self::Path {
             path: Cow::Borrowed(candidate.abs_path()),
-            identity: InputIdentity::Candidate(candidate.clone()),
-            explicit: is_explicit,
+            file: FileIdentity::candidate(candidate.clone()),
+            explicit: candidate.is_explicit(explicit),
         }
     }
 }
@@ -166,20 +141,19 @@ impl<'a> Inputs<'a> {
 
     #[must_use]
     pub fn with_stream(mut self, stream: ByteInput<'a>) -> Self {
-        let name = stream.path.as_ref().to_string();
-        let identity = InputIdentity::stream(&name);
+        let file = FileIdentity::stream(stream.path.as_ref());
         if stream.explicit {
-            self.push_explicit_bytes(stream.path, stream.bytes, identity);
+            self.push_explicit_bytes(stream.path, stream.bytes, file);
         } else {
-            self.push_bytes(stream.path, stream.bytes, identity);
+            self.push_bytes(stream.path, stream.bytes, file);
         }
         self
     }
 
-    pub fn push_path(&mut self, path: Cow<'a, Path>, identity: InputIdentity, explicit: bool) {
+    pub fn push_path(&mut self, path: Cow<'a, Path>, file: Arc<FileIdentity>, explicit: bool) {
         self.items.push(Input::Path {
             path,
-            identity,
+            file,
             explicit,
         });
     }
@@ -188,37 +162,37 @@ impl<'a> Inputs<'a> {
         &mut self,
         path: Cow<'a, str>,
         bytes: Cow<'a, [u8]>,
-        identity: InputIdentity,
+        file: Arc<FileIdentity>,
     ) {
-        self.push_bytes_input(path, bytes, identity, false);
+        self.push_bytes_input(path, bytes, file, false);
     }
 
     pub fn push_explicit_bytes(
         &mut self,
         path: Cow<'a, str>,
         bytes: Cow<'a, [u8]>,
-        identity: InputIdentity,
+        file: Arc<FileIdentity>,
     ) {
-        self.push_bytes_input(path, bytes, identity, true);
+        self.push_bytes_input(path, bytes, file, true);
     }
 
     pub fn push_candidate_bytes(&mut self, candidate: Candidate, bytes: Vec<u8>, explicit: bool) {
         let path = Cow::Owned(candidate.abs_path().display().to_string());
-        let identity = InputIdentity::Candidate(candidate);
-        self.push_bytes_input(path, Cow::Owned(bytes), identity, explicit);
+        let file = FileIdentity::candidate(candidate);
+        self.push_bytes_input(path, Cow::Owned(bytes), file, explicit);
     }
 
     fn push_bytes_input(
         &mut self,
         path: Cow<'a, str>,
         bytes: Cow<'a, [u8]>,
-        identity: InputIdentity,
+        file: Arc<FileIdentity>,
         explicit: bool,
     ) {
         self.items.push(Input::Bytes {
             path,
             bytes,
-            identity,
+            file,
             explicit,
         });
     }

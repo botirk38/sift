@@ -2,7 +2,6 @@ use std::time::Instant;
 
 use sift_core::search::{Events, Report, SearchInputs, SearchMode, Searcher, StatsMode};
 
-use crate::format::collection::PrintExtras;
 use crate::format::event::EventRenderer;
 use crate::format::output::PrintSpec;
 use crate::format::output::mode::OutputEmission;
@@ -26,7 +25,6 @@ impl SearchPrinter {
         stats: StatsMode,
         print_spec: PrintSpec,
         separators: &PrintSeparators,
-        extras: PrintExtras,
     ) -> sift_core::Result<Report> {
         match print_spec.emission {
             OutputEmission::Quiet => searcher.execute(inputs, stats, mode, Events::Discard),
@@ -35,20 +33,20 @@ impl SearchPrinter {
                 let context_requested =
                     searcher.options().before_context > 0 || searcher.options().after_context > 0;
                 let binary_mode = searcher.options().binary_mode;
-                let stream_events = matches!(print_spec.emission, OutputEmission::Normal);
+                let emission = print_spec.emission;
                 let mut renderer = EventRenderer::new(
                     print_spec,
                     separators,
-                    extras,
                     started,
                     binary_mode,
                     context_requested,
                 );
-                let mut report = if stream_events {
-                    searcher.execute(inputs, stats, mode, Events::Emit(&mut renderer))?
-                } else {
-                    searcher.execute(inputs, stats, mode, Events::Discard)?
+                let events = match emission {
+                    OutputEmission::Normal => Events::Emit(&mut renderer),
+                    OutputEmission::Summary => Events::Discard,
+                    OutputEmission::Quiet => unreachable!("quiet handled above"),
                 };
+                let mut report = searcher.execute(inputs, stats, mode, events)?;
                 renderer.finish(&mut report)?;
                 Ok(report)
             }

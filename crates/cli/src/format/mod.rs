@@ -1,10 +1,8 @@
-pub mod collection;
 mod event;
 pub mod output;
 pub mod printer;
 pub mod sink;
 
-pub use collection::PrintExtras;
 pub use output::format::{ColumnLimit, ColumnOverflow};
 pub use output::mode::{MatchEmissionMode, OutputEmission, PrintMode, ZeroCountMode};
 pub use output::passthru::PassthruMode;

@@ -136,7 +136,7 @@ impl<'searcher, 'input> SearchTask<'searcher, 'input> {
         origin: InputOrigin,
     ) -> FileSearch {
         let match_emission = MatchEmission::from(self.mode, self.options);
-        let file = self.input.identity().file_identity();
+        let file = Arc::clone(self.input.file());
         let mut sink = MatchSink {
             file,
             origin,

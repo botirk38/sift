@@ -80,19 +80,12 @@ impl Candidate {
             .get_or_init(|| self.rel_path.to_string_lossy().replace('\\', "/"))
     }
 
+    /// Whether this candidate was named explicitly on argv (rel or abs).
     #[must_use]
-    pub fn display_path(&self, display: PathDisplay, path_separator: Option<u8>) -> String {
-        let raw = match display {
-            PathDisplay::Absolute => self.abs_path().display().to_string(),
-            PathDisplay::Relative => self.rel_path().display().to_string(),
-        };
-        if let Some(sep) = path_separator {
-            let mut buf = [0u8; 4];
-            let sep_str = (sep as char).encode_utf8(&mut buf);
-            raw.replace(std::path::MAIN_SEPARATOR, sep_str)
-        } else {
-            raw
-        }
+    pub fn is_explicit(&self, explicit: &[PathBuf]) -> bool {
+        explicit
+            .iter()
+            .any(|path| path == self.rel_path() || path == self.abs_path())
     }
 
     /// Check depth constraint against a filter's max depth.

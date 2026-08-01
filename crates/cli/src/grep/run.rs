@@ -7,7 +7,7 @@ use sift_core::{
 };
 
 use crate::format::output::mode::ZeroCountMode;
-use crate::format::{PrintExtras, PrintMode, SearchPrinter};
+use crate::format::{PrintMode, SearchPrinter};
 
 use crate::index::daemon::Daemon;
 
@@ -216,24 +216,26 @@ impl Run {
         let scan_scope = self.scan_scope(freshness, sources.resolve_candidates());
         let candidate_source = Self::candidate_source(&session, scan_scope);
 
-        let mut query = self
-            .config
-            .pattern
-            .query(patterns.patterns, &pattern_argv)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        if transform.is_some() {
-            query = query.with_narrowing(Narrowing::Disabled);
-        }
-        let explicit_files = Self::explicit_files(&session);
-        let mut streams = sources.stdin_streams();
         let print_stats = OutputDecl::print_stats(&output_argv, effective_mode);
-        let extras = PrintExtras::hits().with_stats(print_stats);
         let mode = Self::search_mode(effective_mode, print_spec.include_zero);
         let stats = if print_stats {
             sift_core::StatsMode::On
         } else {
             sift_core::StatsMode::Off
         };
+        let query = {
+            let query = self
+                .config
+                .pattern
+                .query(patterns.patterns, &pattern_argv)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            match transform {
+                Some(_) => query.with_narrowing(Narrowing::Disabled),
+                None => query,
+            }
+        };
+        let explicit_files = Self::explicit_files(&session);
+        let mut streams = sources.stdin_streams();
         let searcher = Searcher::new(query).map_err(|e| anyhow::anyhow!("{e}"))?;
         let resolved = Plan::new(&candidate_source, searcher.query(), mode.coverage())
             .resolve(&candidate_source)
@@ -244,9 +246,7 @@ impl Run {
                     let bytes = transform
                         .read_candidate(&candidate)
                         .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    let is_explicit = explicit_files
-                        .iter()
-                        .any(|path| path == candidate.rel_path() || path == candidate.abs_path());
+                    let is_explicit = candidate.is_explicit(&explicit_files);
                     streams.push_candidate_bytes(candidate, bytes, is_explicit);
                 }
                 (Candidates::empty(), streams)
@@ -264,7 +264,6 @@ impl Run {
             stats,
             print_spec,
             &separators,
-            extras,
         )
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 

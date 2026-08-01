@@ -191,13 +191,13 @@ impl Searcher {
             let input = Input::from_candidate(candidate, explicit);
             let Input::Path {
                 path,
-                identity,
+                file,
                 explicit,
             } = input
             else {
                 unreachable!("from_candidate always returns Path");
             };
-            corpus_inputs.push_path(path, identity, explicit);
+            corpus_inputs.push_path(path, file, explicit);
         }
         let results = self.search_inputs(corpus_inputs.as_slice(), mode, buffer);
         let len = corpus_inputs.len();
