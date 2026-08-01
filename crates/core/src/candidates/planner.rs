@@ -1,9 +1,9 @@
 use crate::corpus::filter::FilterAdmission;
 use crate::index::FileId;
 use crate::index::IndexCoverage;
+use crate::search::SearchQuery;
 
-use crate::candidates::query::{CandidateQuery, PrefilterNarrowing};
-use crate::candidates::scope::{CandidateCoverage, IndexNarrowing, ScanScope, SnapshotFreshness};
+use crate::candidates::scope::{CandidateCoverage, ScanScope, SnapshotFreshness};
 use crate::candidates::source::CandidateSource;
 
 use super::plan::{CandidatePlan, PlannedDiscovery};
@@ -29,11 +29,11 @@ impl CandidatePlanner {
     /// Pure decision: no filesystem or index reads beyond cheap metadata.
     pub(crate) fn plan(
         source: &CandidateSource<'_>,
-        query: &CandidateQuery<'_>,
+        query: &SearchQuery,
         coverage: CandidateCoverage,
     ) -> CandidatePlan {
         let scope = source.scope;
-        let narrowing = Self::narrowing_allowed(source, query);
+        let narrowing = query.narrowing_allowed();
         let snapshot_status = Self::snapshot_status(source, scope);
         let index_status = Self::index_status(source);
         let freshness = scope.freshness().unwrap_or(SnapshotFreshness::Current);
@@ -54,14 +54,9 @@ impl CandidatePlanner {
         }
     }
 
-    const fn narrowing_allowed(source: &CandidateSource<'_>, query: &CandidateQuery<'_>) -> bool {
-        matches!(source.index_narrowing, IndexNarrowing::Allowed)
-            && matches!(query.prefilter_narrowing(), PrefilterNarrowing::Allowed)
-    }
-
     fn file_ids_for(
         source: &CandidateSource<'_>,
-        query: &CandidateQuery<'_>,
+        query: &SearchQuery,
         discovery: PlannedDiscovery,
         coverage: CandidateCoverage,
     ) -> Vec<FileId> {

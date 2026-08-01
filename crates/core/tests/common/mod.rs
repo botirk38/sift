@@ -12,9 +12,7 @@ use sift_core::grep::{
 use sift_core::search::{
     InputConversion, SearchMode, SearchOptions, SearchQueryBuilder, StatsMode,
 };
-use sift_core::{
-    Candidate, CandidateOrder, CandidateSource, IndexNarrowing, ScanScope, SnapshotFreshness,
-};
+use sift_core::{Candidate, CandidateOrder, CandidateSource, ScanScope, SnapshotFreshness};
 use sift_core::{
     CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramWidth, Index, IndexConfig, IndexCoverage,
     IndexRecord, IndexWalkConfig, Indexes, Inputs, NGramIndex, StoreMeta, WalkMeta,
@@ -150,7 +148,6 @@ pub fn index_candidates(
             order: CandidateOrder::default(),
             freshness: SnapshotFreshness::Current,
         },
-        IndexNarrowing::Allowed,
     );
     let query = SearchQueryBuilder::new(patterns.to_vec())
         .options(options)

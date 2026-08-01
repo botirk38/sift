@@ -46,13 +46,6 @@ pub enum CaseMode {
     Smart,
 }
 
-impl CaseMode {
-    #[must_use]
-    pub const fn is_case_insensitive(self) -> bool {
-        matches!(self, Self::Insensitive)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BinaryMode {
     #[default]
@@ -139,6 +132,8 @@ pub struct SearchOptions {
     pub regex_size_limit: usize,
     pub dfa_size_limit: usize,
     pub regex_engine: RegexEngine,
+    /// When false, plan must not use index narrowing (e.g. content transforms).
+    pub allow_index_narrowing: bool,
 }
 
 impl Default for SearchOptions {
@@ -157,16 +152,12 @@ impl Default for SearchOptions {
             regex_size_limit: 0,
             dfa_size_limit: 0,
             regex_engine: RegexEngine::default(),
+            allow_index_narrowing: true,
         }
     }
 }
 
 impl SearchOptions {
-    #[must_use]
-    pub const fn case_insensitive(&self) -> bool {
-        self.case_mode.is_case_insensitive()
-    }
-
     #[must_use]
     pub const fn invert_match(&self) -> bool {
         self.flags.contains(SearchFlags::INVERT_MATCH)

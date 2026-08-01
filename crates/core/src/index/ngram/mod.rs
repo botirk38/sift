@@ -15,11 +15,9 @@ pub use index::{Index, NGramIndexError};
 mod candidate_tests {
     use std::path::Path;
 
-    use crate::candidates::query::CandidateQuery;
     use crate::index::ngram::storage::postings::Postings;
     use crate::search::{
-        CaseMode, InputEncoding, PrefilterCompatibility, SearchFlags, SearchOptions, SearchQuery,
-        SearchQueryBuilder,
+        CaseMode, InputEncoding, SearchFlags, SearchOptions, SearchQuery, SearchQueryBuilder,
     };
 
     use super::*;
@@ -52,22 +50,11 @@ mod candidate_tests {
         }
     }
 
-    struct BuiltQuery {
-        search_query: SearchQuery,
-    }
-
-    impl BuiltQuery {
-        fn new(patterns: &[String], options: SearchOptions) -> Self {
-            let search_query = SearchQueryBuilder::new(patterns.to_vec())
-                .options(options)
-                .build()
-                .expect("query");
-            Self { search_query }
-        }
-
-        fn candidate(&self) -> CandidateQuery<'_> {
-            CandidateQuery::new(&self.search_query, PrefilterCompatibility::Compatible)
-        }
+    fn built_query(patterns: &[String], options: SearchOptions) -> SearchQuery {
+        SearchQueryBuilder::new(patterns.to_vec())
+            .options(options)
+            .build()
+            .expect("query")
     }
 
     fn extracts_literals(
@@ -76,13 +63,11 @@ mod candidate_tests {
         word_regexp: bool,
         line_regexp: bool,
     ) -> bool {
-        let built = BuiltQuery::new(
+        let query = built_query(
             patterns,
             regex_search_options(case_insensitive, word_regexp, line_regexp),
         );
-        default_config()
-            .extract_literal_arms(&built.candidate())
-            .is_some()
+        default_config().extract_literal_arms(&query).is_some()
     }
 
     fn full_scan(
@@ -91,13 +76,11 @@ mod candidate_tests {
         word_regexp: bool,
         line_regexp: bool,
     ) -> bool {
-        let built = BuiltQuery::new(
+        let query = built_query(
             patterns,
             regex_search_options(case_insensitive, word_regexp, line_regexp),
         );
-        default_config()
-            .extract_literal_arms(&built.candidate())
-            .is_none()
+        default_config().extract_literal_arms(&query).is_none()
     }
 
     #[test]
@@ -205,9 +188,9 @@ mod candidate_tests {
     #[test]
     fn case_insensitive_alternation_keeps_long_arms() {
         let patterns = ["ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT".to_string()];
-        let built = BuiltQuery::new(&patterns, regex_search_options(true, false, false));
+        let built = built_query(&patterns, regex_search_options(true, false, false));
         let arms = default_config()
-            .extract_literal_arms(&built.candidate())
+            .extract_literal_arms(&built)
             .expect("casei alternation should extract");
         assert_eq!(arms.len(), 4);
         assert!(arms.iter().all(|arm| arm.len() >= 7));
@@ -223,9 +206,9 @@ mod candidate_tests {
             input_encoding: InputEncoding::Raw,
             ..SearchOptions::default()
         };
-        let built = BuiltQuery::new(&patterns, options);
+        let built = built_query(&patterns, options);
         let arms = default_config()
-            .extract_literal_arms(&built.candidate())
+            .extract_literal_arms(&built)
             .expect("fixed casei should extract");
         assert_eq!(arms, vec![b"ERR_SYS".to_vec()]);
     }
@@ -239,12 +222,8 @@ mod candidate_tests {
             input_encoding: InputEncoding::Raw,
             ..SearchOptions::default()
         };
-        let built = BuiltQuery::new(&patterns, options);
-        assert!(
-            default_config()
-                .extract_literal_arms(&built.candidate())
-                .is_none()
-        );
+        let built = built_query(&patterns, options);
+        assert!(default_config().extract_literal_arms(&built).is_none());
     }
 
     #[test]
@@ -280,7 +259,7 @@ mod candidate_tests {
     #[test]
     fn generic_width_uses_spec_width_for_literal_extraction() {
         let patterns = ["ab".to_string()];
-        let built = BuiltQuery::new(
+        let built = built_query(
             &patterns,
             SearchOptions {
                 input_encoding: InputEncoding::Raw,
@@ -290,7 +269,7 @@ mod candidate_tests {
         assert!(
             Index::new()
                 .width(GramWidth::new(2))
-                .extract_literal_arms(&built.candidate())
+                .extract_literal_arms(&built)
                 .is_some()
         );
     }
@@ -303,12 +282,8 @@ mod candidate_tests {
             input_encoding: InputEncoding::Raw,
             ..SearchOptions::default()
         };
-        let built = BuiltQuery::new(&patterns, options);
-        assert!(
-            default_config()
-                .extract_literal_arms(&built.candidate())
-                .is_some()
-        );
+        let built = built_query(&patterns, options);
+        assert!(default_config().extract_literal_arms(&built).is_some());
     }
 
     #[test]

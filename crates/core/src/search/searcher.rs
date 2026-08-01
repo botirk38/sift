@@ -6,7 +6,6 @@ use crate::Error;
 use crate::GrepError;
 use crate::candidates::{Candidates, IndexedCandidates};
 use crate::corpus::Candidate;
-use crate::search::PrefilterCompatibility;
 use crate::search::event::SearchSink;
 use crate::search::input::{Input, InputConversion, Inputs, SearchFile, SearchInputs};
 use crate::search::matcher::{Matcher, MatcherBuilder};
@@ -42,6 +41,7 @@ impl Searcher {
     /// Returns an error if matcher construction fails.
     pub fn new(query: SearchQuery) -> Result<Self, GrepError> {
         let matcher = MatcherBuilder::new(&query).build()?;
+        let query = query.with_engine(matcher.resolved_engine());
         Ok(Self { query, matcher })
     }
 }
@@ -297,10 +297,6 @@ impl Searcher {
 
         Ok((settled, files_searched, bytes))
     }
-
-    pub(crate) const fn prefilter_compatibility(&self) -> PrefilterCompatibility {
-        self.matcher.prefilter_compatibility()
-    }
 }
 
 impl EventEmission<'_> {
@@ -319,5 +315,29 @@ impl EventEmission<'_> {
             sink.event(event)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::search::options::{RegexEngine, SearchOptions};
+    use crate::search::query::SearchQuery;
+
+    #[test]
+    fn auto_engine_fallback_to_pcre2_disables_narrowing() {
+        // Lookaround is unsupported by the Rust regex engine.
+        let query = SearchQuery::new(
+            vec![r"(?<=foo)bar".into()],
+            SearchOptions {
+                regex_engine: RegexEngine::Auto,
+                ..SearchOptions::default()
+            },
+        )
+        .expect("query");
+        assert!(query.narrowing_allowed());
+        let searcher = Searcher::new(query).expect("compile via Auto→PCRE2");
+        assert_eq!(searcher.query.options().regex_engine, RegexEngine::Pcre2);
+        assert!(!searcher.query.narrowing_allowed());
     }
 }

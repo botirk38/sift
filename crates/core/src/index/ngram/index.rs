@@ -2,9 +2,9 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use crate::candidates::query::CandidateQuery;
 use crate::corpus::Candidate;
 use crate::index::{CorpusKind, FileId, IndexedCorpus};
+use crate::search::SearchQuery;
 
 use super::files::{FileFingerprint, FileTable};
 use super::gram::{GramMatch, GramNorm, GramWidth};
@@ -349,7 +349,7 @@ impl Index {
     /// folded grams). Case-sensitive queries cannot be proven from a folded
     /// lexicon, so they return every covered id.
     #[must_use]
-    pub(crate) fn query_file_ids(&self, query: &CandidateQuery<'_>) -> Vec<FileId> {
+    pub(crate) fn query_file_ids(&self, query: &SearchQuery) -> Vec<FileId> {
         let Some(storage) = self.storage() else {
             return Vec::new();
         };
@@ -361,7 +361,7 @@ impl Index {
         let Some(arms) = self.extract_literal_arms(query) else {
             return all_ids();
         };
-        let (arms, gram_match) = match (self.norm, query.case_insensitive()) {
+        let (arms, gram_match) = match (self.norm, query.case_insensitive_for_index()) {
             (GramNorm::Identity, true) => (arms, GramMatch::AsciiCase),
             (GramNorm::Identity, false) => (arms, GramMatch::Exact),
             (GramNorm::AsciiLower, false) => return all_ids(),
@@ -381,15 +381,13 @@ impl Index {
 
     /// Returns an explanation of how a query would be handled.
     #[must_use]
-    pub fn explain(&self, query: &crate::search::SearchQuery) -> crate::index::QueryPlanOutput {
-        use crate::search::PrefilterCompatibility;
-        let candidate_query = CandidateQuery::new(query, PrefilterCompatibility::Compatible);
-        let mode = match self.extract_literal_arms(&candidate_query) {
+    pub fn explain(&self, query: &SearchQuery) -> crate::index::QueryPlanOutput {
+        let mode = match self.extract_literal_arms(query) {
             Some(_) => crate::index::PlanMode::IndexedCandidates,
             None => crate::index::PlanMode::FullScan,
         };
         crate::index::QueryPlanOutput {
-            pattern: query.patterns.join("|"),
+            pattern: query.patterns().join("|"),
             mode,
         }
     }

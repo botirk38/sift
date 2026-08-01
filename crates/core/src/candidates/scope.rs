@@ -33,15 +33,6 @@ pub enum SnapshotFreshness {
     Stale,
 }
 
-/// Whether index narrowing may run for this search.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum IndexNarrowing {
-    #[default]
-    Allowed,
-    /// Bypass index narrowing (preprocessor/transform, incompatible query, etc.).
-    Bypassed,
-}
-
 impl CandidateCoverage {
     pub(crate) const fn from_mode(mode: crate::search::SearchMode) -> Self {
         use crate::search::{SearchMode, ZeroCounts};
