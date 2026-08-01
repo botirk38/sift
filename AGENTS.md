@@ -22,19 +22,17 @@ Run all three before pushing. CI enforces the same checks on Linux, macOS, and W
 
 ## Profiling
 
-Use system profilers via Criterion workloads, not ad-hoc `/tmp` harnesses:
+Use system profilers on Criterion workloads (`[profile.bench]` keeps `debug = 1`), not
+ad-hoc `/tmp` harnesses. Prefer samply; on macOS fall back to xctrace Time Profiler.
 
 ```bash
-./scripts/profile.sh doctor
-./scripts/profile.sh grep case_insensitive_alternation
-./scripts/profile.sh --ab master HEAD index case_insensitive_alternation
-PROFILE_TOOLS=heaptrack,perf ./scripts/profile.sh --suite
+cargo bench -p sift-core --bench grep -- --profile-time 30 grep_search/full_scan
+# wrap the same argv with samply / xctrace / heaptrack / perf as needed
+samply record -- cargo bench -p sift-core --bench grep -- --profile-time 30 grep_search/full_scan
 ```
 
-`scripts/profile.sh` auto-resolves a working `perf` binary (cloud kernels often have a stub
-`/usr/bin/perf`), probes software `task-clock` period sampling when HW cycles are unavailable,
-and runs heaptrack / hyperfine / perf / samply / flamegraph / callgrind / massif / cachegrind
-when installed. Prefer paired before/after heaptrack+hyperfine evidence for performance PRs.
+Log findings in `crates/core/benches/PROFILING.md`. Prefer paired before/after
+evidence for performance PRs.
 
 ## Layout
 
@@ -48,7 +46,7 @@ when installed. Prefer paired before/after heaptrack+hyperfine evidence for perf
 | `crates/cli/` | `sift-cli`: `sift` binary (clap CLI over core) |
 | `fuzz/` | `cargo-fuzz` targets (standalone package, nightly) |
 | `benchsuite/` | Comparative `rg` vs `sift` benchmarks |
-| `scripts/` | `bench.sh`, `fuzz.sh`, `install.sh`, `profile.sh` |
+| `scripts/` | `fuzz.sh`, `install.sh`, `release.sh` |
 | `skills/` | Agent usage skill for searching with `sift` (`npx skills`); CLI development → `crates/cli/AGENTS.md` |
 | `docs/` | Performance snapshots, compatibility matrix |
 

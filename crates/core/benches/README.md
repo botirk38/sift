@@ -60,35 +60,37 @@ builds the same dimensions as grep/candidates.
 ## Running
 
 ```bash
-./scripts/bench.sh              # all sift-core (default search scale)
-./scripts/bench.sh grep
-./scripts/bench.sh candidates
-SIFT_BENCH_SCALE=ci ./scripts/bench.sh grep   # faster smoke
-SIFT_BENCH_SCALE=stress ./scripts/bench.sh grep
+cargo bench -p sift-core                              # all sift-core (default search scale)
+cargo bench -p sift-core --bench grep
+cargo bench -p sift-core --bench candidates
+SIFT_BENCH_SCALE=ci cargo bench -p sift-core --bench grep   # faster smoke
+SIFT_BENCH_SCALE=stress cargo bench -p sift-core --bench grep
 
-./scripts/bench.sh cli          # includes e2e/subprocess/indexed_large/*
+cargo bench -p sift-grep --bench cli                  # includes e2e/subprocess/indexed_large/*
 
-./scripts/bench.sh grep -- --save-baseline pre-opt --noplot
-./scripts/bench.sh grep -- --baseline pre-opt --noplot
+cargo bench -p sift-core --bench grep -- --save-baseline pre-opt --noplot
+cargo bench -p sift-core --bench grep -- --baseline pre-opt --noplot
 ```
 
 ## Profiling
 
 System-profile Criterion binaries (not guesses from docs). `[profile.bench]`
-already keeps line tables (`debug = 1`).
+already keeps line tables (`debug = 1`). Prefer samply; fall back to xctrace
+Time Profiler on macOS.
 
 ```bash
-./scripts/profile.sh --bench grep --profile-time 30 -- grep_search/full_scan
-./scripts/profile.sh --bench candidates --profile-time 30 -- candidate_planner/use_index_literal
+samply record -- cargo bench -p sift-core --bench grep -- --profile-time 30 grep_search/full_scan
+samply record -- cargo bench -p sift-core --bench candidates -- --profile-time 30 candidate_planner/use_index_literal
 
-# Optional clearer stacks:
-./scripts/profile.sh --bench grep --frame-pointers --profile-time 30 -- grep_search/full_scan
+# Clearer stacks:
+RUSTFLAGS="-C force-frame-pointers=yes" samply record -- \
+  cargo bench -p sift-core --bench grep -- --profile-time 30 grep_search/full_scan
 
-# CLI escape hatch (not the default loop):
-./scripts/profile.sh --cli -- target/release/sift --sift-dir /tmp/x.sift -n beta
+# CLI escape hatch:
+CARGO_PROFILE_RELEASE_DEBUG=1 cargo build --release -p sift-grep
+samply record -- target/release/sift --sift-dir /tmp/x.sift -n beta
 ```
 
-`profile.sh` prefers samply and falls back to `xctrace` Time Profiler on macOS.
 Log findings in [`PROFILING.md`](PROFILING.md) before changing product code.
 Criterion HTML reports live under `target/criterion/`.
 
