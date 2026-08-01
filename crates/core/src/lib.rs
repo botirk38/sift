@@ -5,23 +5,22 @@
 
 pub mod candidates;
 pub(crate) mod corpus;
-pub mod grep;
 pub mod index;
 pub mod search;
 
-pub use candidates::{CandidateSource, Candidates, ScanScope, SnapshotFreshness};
-pub use corpus::Candidate;
-pub use grep::{
-    ByteInput, CandidateFilter, CandidateFilterConfig, CandidateOrder, CandidateTransform,
-    Error as GrepError, FilterAdmission, GlobConfig, Grep, GrepRequest, HiddenMode, IgnoreConfig,
-    IgnoreSources, TypeFilterRule, VisibilityConfig,
+pub use candidates::{CandidateSource, Candidates, Coverage, Plan, ScanScope, SnapshotFreshness};
+pub use corpus::{
+    AllFiles, Candidate, CandidateFilter, CandidateFilterConfig, CandidateOrder,
+    CandidateOrderDirection, CandidateOrderKey, FileWalk, FilterAdmission, GlobConfig, HiddenMode,
+    IgnoreConfig, IgnoreSources, PathDisplay, TypeFilterRule, VisibilityConfig, WalkFile,
+    WalkMetadata, WalkSelector,
 };
 pub use search::{
-    BinaryEvent, BinaryMode, Case, CaseMode, ContextEvent, ContextKind, Events, FileEvent, HitPath,
-    Input, InputConversion, InputEncoding, InputIdentity, Inputs, LineCount, ListedFile, Listing,
-    Match, MatchEvent, MatchTotals, MatchedFile, Narrowing, RegexEngine, Report, SearchBound,
-    SearchEvent, SearchFlags, SearchInputs, SearchMode, SearchOptions, SearchQuery,
-    SearchQueryBuilder, SearchSink, Searcher, SpanCount, Stats, StatsMode, ZeroCounts,
+    BinaryEvent, BinaryMode, ByteInput, Case, CaseMode, ContextEvent, ContextKind,
+    Error as SearchError, Events, FileEvent, FileIdentity, Input, InputEncoding, Inputs, LineCount,
+    ListedFile, Listing, Match, MatchEvent, MatchTotals, MatchedFile, Narrowing, Query,
+    RegexEngine, Report, SearchBound, SearchEvent, SearchFlags, SearchInputs, SearchMode,
+    SearchOptions, SearchSink, Searcher, SpanCount, Stats, StatsMode, ZeroCounts,
 };
 
 pub use ignore::{Walk, WalkBuilder};
@@ -52,7 +51,7 @@ pub enum Error {
     Index(#[from] IndexError),
 
     #[error(transparent)]
-    Search(#[from] grep::Error),
+    Search(#[from] search::Error),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

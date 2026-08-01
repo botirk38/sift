@@ -14,6 +14,20 @@ pub enum SearchMode {
 }
 
 impl SearchMode {
+    /// Candidate coverage required for this search mode.
+    #[must_use]
+    pub const fn coverage(self) -> crate::candidates::Coverage {
+        use crate::candidates::Coverage;
+        match self {
+            Self::FilesWithoutMatch => Coverage::Complete,
+            Self::CountLines { zeros } | Self::CountMatches { zeros } => match zeros {
+                ZeroCounts::Include => Coverage::Complete,
+                ZeroCounts::Omit => Coverage::PotentialMatches,
+            },
+            Self::Lines | Self::Matches | Self::FilesWithMatches => Coverage::PotentialMatches,
+        }
+    }
+
     /// Whether this file receives a row in the mode-shaped [`crate::search::Listing`].
     pub(crate) const fn admits(self, matched: bool) -> bool {
         match self {

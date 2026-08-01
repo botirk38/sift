@@ -6,7 +6,7 @@ use crate::corpus::walk::LinkTraversal;
 use crate::corpus::walk::{FileWalk, WalkFile};
 use crate::index::snapshot::ArtifactData;
 use crate::index::{CorpusKind, FileId, IndexConfig, IndexDestination, IndexedCorpus};
-use crate::search::{Case, SearchQuery};
+use crate::search::{Case, Query};
 
 use super::build::{FingerprintCollector, IndexTables, PostingTables};
 use super::files::{FileFingerprint, FileTable};
@@ -190,7 +190,7 @@ impl Index {
     /// folded grams). Case-sensitive queries cannot be proven from a folded
     /// lexicon, so they return every covered id.
     #[must_use]
-    pub(crate) fn query_file_ids(&self, query: &SearchQuery) -> Vec<FileId> {
+    pub(crate) fn query_file_ids(&self, query: &Query) -> Vec<FileId> {
         let all_ids = || {
             (0..self.storage.files.len())
                 .map(FileId::new)
@@ -219,7 +219,7 @@ impl Index {
 
     /// Returns an explanation of how a query would be handled.
     #[must_use]
-    pub fn explain(&self, query: &SearchQuery) -> crate::index::QueryPlanOutput {
+    pub fn explain(&self, query: &Query) -> crate::index::QueryPlanOutput {
         let mode = match Self::extract_literal_arms(self.width, query) {
             Some(_) => crate::index::PlanMode::IndexedCandidates,
             None => crate::index::PlanMode::FullScan,
@@ -607,7 +607,7 @@ impl Index {
 }
 
 impl crate::index::Index for Index {
-    fn query(&self, query: &SearchQuery) -> Vec<FileId> {
+    fn query(&self, query: &Query) -> Vec<FileId> {
         self.query_file_ids(query)
     }
 

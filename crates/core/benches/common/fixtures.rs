@@ -10,9 +10,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use sift_core::grep::VisibilityConfig;
 use sift_core::{
     CorpusKind, CorpusSpec, GramNorm, GramWidth, IndexConfig, IndexWalkConfig, NGramIndex,
+    VisibilityConfig,
 };
 
 /// Dimensions of a synthetic on-disk corpus.

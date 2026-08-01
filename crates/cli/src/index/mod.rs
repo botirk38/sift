@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use sift_core::grep::VisibilityConfig;
+use sift_core::VisibilityConfig;
 use sift_core::{
     CorpusMeta, FilterMeta, IndexCoverage, IndexError, IndexRecord, Indexes, SnapshotId, StoreMeta,
     WalkMeta,
@@ -274,7 +274,7 @@ impl IndexJob {
             FilterMeta {
                 visibility: VisibilityConfig {
                     hidden: ignore_res.hidden_mode(),
-                    ignore: sift_core::grep::IgnoreConfig {
+                    ignore: sift_core::IgnoreConfig {
                         sources: ignore_res.sources,
                         require_git: ignore_res.require_git,
                         custom_files: Vec::new(),

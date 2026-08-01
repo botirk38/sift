@@ -2,16 +2,13 @@
 
 use libfuzzer_sys::fuzz_target;
 use sift_core::candidates::{CandidateSource, ScanScope, SnapshotFreshness};
-use sift_core::grep::{
-    CandidateFilter, CandidateFilterConfig, Grep, GrepRequest, PathDisplay, VisibilityConfig,
-};
 use sift_core::search::{
-    Events, InputConversion, SearchFlags, SearchInputs, SearchMode, SearchOptions,
-    SearchQueryBuilder, Searcher, StatsMode,
+    Events, Query, SearchFlags, SearchInputs, SearchMode, SearchOptions, Searcher, StatsMode,
 };
 use sift_core::{
-    CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramWidth, IndexConfig, IndexCoverage,
-    IndexRecord, IndexWalkConfig, Indexes, Inputs, StoreMeta, WalkMeta,
+    CandidateFilter, CandidateFilterConfig, CorpusKind, CorpusMeta, CorpusSpec, FilterMeta,
+    GramWidth, IndexConfig, IndexCoverage, IndexRecord, IndexWalkConfig, Indexes, Inputs, Plan,
+    StoreMeta, VisibilityConfig, WalkMeta,
 };
 use std::fs;
 use std::sync::OnceLock;
@@ -99,13 +96,10 @@ fn opts_from_bytes(data: &[u8]) -> SearchOptions {
 }
 
 fn run_search(holder: &IndexHolder, patterns: &[String], opts: &SearchOptions) {
-    let Ok(query) = SearchQueryBuilder::new(patterns.to_vec())
-        .options(opts.clone())
-        .build()
-    else {
+    let Ok(query) = Query::new(patterns.to_vec(), opts.clone()) else {
         return;
     };
-    let Ok(searcher) = Searcher::new(query.clone()) else {
+    let Ok(searcher) = Searcher::new(query) else {
         return;
     };
     let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &holder.root).unwrap();
@@ -118,20 +112,15 @@ fn run_search(holder: &IndexHolder, patterns: &[String], opts: &SearchOptions) {
             freshness: SnapshotFreshness::Current,
         },
     );
-    let request = GrepRequest {
-        query: query.clone(),
-        streams: Inputs::empty(),
-        conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-        mode: sift_core::search::SearchMode::Lines,
-        stats: StatsMode::Off,
-    };
-    let Ok(candidates) = Grep::new(source).resolve_candidates(&request) else {
+    let Ok(candidates) =
+        Plan::new(&source, searcher.query(), SearchMode::Lines.coverage()).resolve(&source)
+    else {
         return;
     };
     let inputs = SearchInputs {
         candidates,
         streams: Inputs::empty(),
-        conversion: InputConversion::new(&[], PathDisplay::Relative, None),
+        explicit: &[],
     };
     let _ = searcher.execute(inputs, StatsMode::Off, SearchMode::Lines, Events::Discard);
 }
@@ -165,14 +154,13 @@ fuzz_target!(|data: &[u8]| {
 });
 
 fn compile_with_flags(patterns: &[&str], opts: &SearchOptions) -> Result<(), ()> {
-    let query = SearchQueryBuilder::new(
+    let query = Query::new(
         patterns
             .iter()
             .map(|pattern| (*pattern).to_string())
             .collect(),
+        opts.clone(),
     )
-    .options(opts.clone())
-    .build()
     .map_err(|_| ())?;
     Searcher::new(query).map(|_| ()).map_err(|_| ())
 }

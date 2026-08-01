@@ -1,21 +1,16 @@
-use crate::grep::Error;
+use crate::search::error::Error;
 use crate::search::options::{
     Case, CaseMode, InputEncoding, Narrowing, RegexEngine, SearchOptions,
 };
 
 /// Patterns and options for search and index narrowing.
 #[derive(Debug, Clone)]
-pub struct SearchQuery {
+pub struct Query {
     pub(crate) patterns: Vec<String>,
     pub(crate) options: SearchOptions,
 }
 
-pub struct SearchQueryBuilder {
-    patterns: Vec<String>,
-    options: SearchOptions,
-}
-
-impl SearchQuery {
+impl Query {
     /// Build a query from patterns and options.
     ///
     /// # Errors
@@ -111,31 +106,6 @@ impl SearchQuery {
     }
 }
 
-impl SearchQueryBuilder {
-    #[must_use]
-    pub fn new(patterns: Vec<String>) -> Self {
-        Self {
-            patterns,
-            options: SearchOptions::default(),
-        }
-    }
-
-    #[must_use]
-    pub fn options(mut self, options: SearchOptions) -> Self {
-        self.options = options;
-        self
-    }
-
-    /// Build inert search query data.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Error::EmptyPatterns` if no patterns were provided.
-    pub fn build(self) -> Result<SearchQuery, Error> {
-        SearchQuery::new(self.patterns, self.options)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,7 +113,7 @@ mod tests {
 
     #[test]
     fn smart_case_lowercase_is_insensitive() {
-        let query = SearchQuery::new(
+        let query = Query::new(
             vec!["err_sys".into()],
             SearchOptions {
                 case_mode: CaseMode::Smart,
@@ -157,7 +127,7 @@ mod tests {
 
     #[test]
     fn smart_case_uppercase_is_sensitive() {
-        let query = SearchQuery::new(
+        let query = Query::new(
             vec!["ERR_SYS".into()],
             SearchOptions {
                 case_mode: CaseMode::Smart,
@@ -170,7 +140,7 @@ mod tests {
 
     #[test]
     fn pcre2_engine_disables_narrowing() {
-        let query = SearchQuery::new(
+        let query = Query::new(
             vec!["foo".into()],
             SearchOptions {
                 regex_engine: RegexEngine::Pcre2,

@@ -12,10 +12,9 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-use sift_core::grep::VisibilityConfig;
 use sift_core::{
     CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramWidth, IndexConfig, IndexCoverage,
-    IndexRecord, IndexWalkConfig, Indexes, StoreMeta, WalkMeta,
+    IndexRecord, IndexWalkConfig, Indexes, StoreMeta, VisibilityConfig, WalkMeta,
 };
 
 // ─── Corpus materializers ────────────────────────────────────────────────────

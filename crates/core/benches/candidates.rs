@@ -1,23 +1,16 @@
 //! Candidate planning and resolution benchmarks.
 //!
-//! Exercises candidate resolution through the public `Grep::resolve_candidates` API.
+//! Exercises candidate resolution through the public `Plan::resolve` API.
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use std::path::Path;
 
-use sift_core::Inputs;
-use sift_core::candidates::{CandidateSource, ScanScope, SnapshotFreshness};
-use sift_core::grep::{
-    CandidateFilter, CandidateFilterConfig, CandidateOrder, Grep, GrepRequest, PathDisplay,
-    VisibilityConfig,
-};
-use sift_core::search::{
-    InputConversion, SearchMode, SearchOptions, SearchQueryBuilder, StatsMode, ZeroCounts,
-};
 use sift_core::{
-    CorpusKind, CorpusMeta, FilterMeta, GramWidth, IndexCoverage, IndexRecord, Indexes, StoreMeta,
-    WalkMeta,
+    CandidateFilter, CandidateFilterConfig, CandidateOrder, CandidateSource, CorpusKind,
+    CorpusMeta, FilterMeta, GramWidth, IndexCoverage, IndexRecord, Indexes, Plan, Query, ScanScope,
+    SearchMode, SearchOptions, Searcher, SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta,
+    ZeroCounts,
 };
 
 mod common;
@@ -95,19 +88,10 @@ fn resolve(
     meta: Option<&StoreMeta>,
 ) -> usize {
     let source = CandidateSource::new(Some(&fixture.indexes), &fixture.filter, meta, scope);
-    let query = SearchQueryBuilder::new(patterns.to_vec())
-        .options(options)
-        .build()
-        .unwrap();
-    let request = GrepRequest {
-        query,
-        streams: Inputs::empty(),
-        conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-        mode,
-        stats: StatsMode::Off,
-    };
-    Grep::new(source)
-        .resolve_candidates(&request)
+    let query = Query::new(patterns.to_vec(), options).unwrap();
+    let searcher = Searcher::new(query).unwrap();
+    Plan::new(&source, searcher.query(), mode.coverage())
+        .resolve(&source)
         .unwrap()
         .into_vec()
         .len()
@@ -171,17 +155,9 @@ fn bench_candidate_planner(c: &mut Criterion) {
 fn bench_candidate_planner_walk(c: &mut Criterion) {
     let (_temp, indexes, filter) = empty_index_fixture();
     let patterns = vec!["beta".to_string()];
-    let query = SearchQueryBuilder::new(patterns)
-        .options(SearchOptions::default())
-        .build()
-        .unwrap();
-    let request = GrepRequest {
-        query,
-        streams: Inputs::empty(),
-        conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-        mode: SearchMode::Lines,
-        stats: StatsMode::Off,
-    };
+    let query = Query::new(patterns, SearchOptions::default()).unwrap();
+    let searcher = Searcher::new(query).unwrap();
+    let mode = SearchMode::Lines;
     let scope = ScanScope::Index {
         order: CandidateOrder::default(),
         freshness: SnapshotFreshness::Current,
@@ -192,8 +168,8 @@ fn bench_candidate_planner_walk(c: &mut Criterion) {
         b.iter(|| {
             let source = CandidateSource::new(Some(&indexes), &filter, None, scope);
             black_box(
-                Grep::new(source)
-                    .resolve_candidates(&request)
+                Plan::new(&source, searcher.query(), mode.coverage())
+                    .resolve(&source)
                     .unwrap()
                     .into_vec()
                     .len(),

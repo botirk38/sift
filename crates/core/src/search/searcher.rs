@@ -1,26 +1,27 @@
+use std::path::PathBuf;
 use std::time::Instant;
 
 use rayon::prelude::*;
 
 use crate::Error;
-use crate::GrepError;
 use crate::candidates::{Candidates, CandidatesInner};
 use crate::corpus::Candidate;
 use crate::corpus::filter::{CandidateFilter, FilterAdmission};
 use crate::index::{FileId, Indexes};
+use crate::search::error::Error as SearchError;
 use crate::search::event::Events;
-use crate::search::input::{Input, InputConversion, Inputs, SearchInputs};
+use crate::search::input::{Input, Inputs, SearchInputs};
 use crate::search::matcher::{Matcher, MatcherBuilder};
 use crate::search::mode::SearchMode;
 use crate::search::options::{SearchBound, SearchOptions};
-use crate::search::query::SearchQuery;
+use crate::search::query::Query;
 use crate::search::report::{Report, SearchSummary};
 use crate::search::stats::StatsMode;
 use crate::search::task::{Buffer, FileSearch, SearchTask};
 
 #[derive(Debug, Clone)]
 pub struct Searcher {
-    pub(crate) query: SearchQuery,
+    query: Query,
     matcher: Matcher,
 }
 
@@ -30,14 +31,17 @@ impl Searcher {
     /// # Errors
     ///
     /// Returns an error if matcher construction fails.
-    pub fn new(query: SearchQuery) -> Result<Self, GrepError> {
+    pub fn new(query: Query) -> Result<Self, SearchError> {
         let matcher = MatcherBuilder::new(&query).build()?;
         let query = query.with_engine(matcher.resolved_engine());
         Ok(Self { query, matcher })
     }
-}
 
-impl Searcher {
+    #[must_use]
+    pub const fn query(&self) -> &Query {
+        &self.query
+    }
+
     #[must_use]
     pub fn patterns(&self) -> &[String] {
         &self.query.patterns
@@ -61,7 +65,7 @@ impl Searcher {
         events: Events<'_>,
     ) -> crate::Result<Report> {
         if self.options().max_results == Some(0) {
-            return Err(Error::Search(GrepError::InvalidMaxCount));
+            return Err(Error::Search(SearchError::InvalidMaxCount));
         }
         if inputs.is_empty() {
             return Ok(Report::empty(stats, mode));
@@ -72,7 +76,7 @@ impl Searcher {
         let options = self.options();
         let (mut searches, inputs_searched, bytes_searched) = match options.search_bound {
             SearchBound::Exhaustive => self.search_exhaustive(inputs, mode, buffer)?,
-            SearchBound::FirstMatch => self.search_first_match(inputs, mode, buffer)?,
+            SearchBound::FirstMatch => self.search_first_match(inputs, mode, buffer),
         };
         let summary = SearchSummary {
             mode,
@@ -81,8 +85,18 @@ impl Searcher {
             bytes_searched,
             elapsed: search_start.elapsed(),
         };
-        emit_events(events, &mut searches)?;
+        Self::emit(events, &mut searches)?;
         Ok(Report::from_searches(searches, summary))
+    }
+
+    fn emit(events: Events<'_>, searches: &mut [FileSearch]) -> crate::Result<()> {
+        let Events::Emit(sink) = events else {
+            return Ok(());
+        };
+        for event in searches.iter_mut().flat_map(FileSearch::drain_events) {
+            sink.event(event)?;
+        }
+        Ok(())
     }
 
     fn search_exhaustive(
@@ -94,11 +108,11 @@ impl Searcher {
         let SearchInputs {
             candidates,
             streams,
-            conversion,
+            explicit,
         } = inputs;
 
         let (mut results, mut files_searched, mut bytes) =
-            self.search_candidates(candidates, &conversion, mode, buffer)?;
+            self.search_candidates(candidates, explicit, mode, buffer)?;
 
         let stream_results = self.search_inputs(streams.as_slice(), mode, buffer);
         files_searched += streams.len();
@@ -111,13 +125,13 @@ impl Searcher {
     fn search_candidates(
         &self,
         candidates: Candidates<'_>,
-        conversion: &InputConversion<'_>,
+        explicit: &[PathBuf],
         mode: SearchMode,
         buffer: Buffer,
     ) -> crate::Result<(Vec<FileSearch>, usize, u64)> {
         match candidates.0 {
             CandidatesInner::Resolved(items) => {
-                self.search_resolved(&items, conversion, mode, buffer)
+                Ok(self.search_resolved(&items, explicit, mode, buffer))
             }
             CandidatesInner::Indexed {
                 indexes,
@@ -131,7 +145,7 @@ impl Searcher {
                     filter,
                     admission,
                 },
-                conversion,
+                explicit,
                 mode,
                 buffer,
             ),
@@ -149,12 +163,12 @@ impl Searcher {
                         filter,
                         admission,
                     },
-                    conversion,
+                    explicit,
                     mode,
                     buffer,
                 )?;
                 let (resolved_results, resolved_count, resolved_bytes) =
-                    self.search_resolved(&unindexed, conversion, mode, buffer)?;
+                    self.search_resolved(&unindexed, explicit, mode, buffer);
                 indexed_results.extend(resolved_results);
                 Ok((
                     indexed_results,
@@ -168,42 +182,33 @@ impl Searcher {
     fn search_resolved(
         &self,
         candidates: &[Candidate],
-        conversion: &InputConversion<'_>,
+        explicit: &[PathBuf],
         mode: SearchMode,
         buffer: Buffer,
-    ) -> crate::Result<(Vec<FileSearch>, usize, u64)> {
+    ) -> (Vec<FileSearch>, usize, u64) {
         let mut corpus_inputs = Inputs::with_capacity(candidates.len());
         for candidate in candidates {
-            match conversion.open(candidate)? {
-                Input::Path {
-                    path,
-                    identity,
-                    explicit,
-                } => corpus_inputs.push_path(path, identity, explicit),
-                Input::Bytes {
-                    path,
-                    bytes,
-                    identity,
-                    explicit,
-                } => {
-                    if explicit {
-                        corpus_inputs.push_explicit_bytes(path, bytes, identity);
-                    } else {
-                        corpus_inputs.push_bytes(path, bytes, identity);
-                    }
-                }
-            }
+            let input = Input::from_candidate(candidate, explicit);
+            let Input::Path {
+                path,
+                file,
+                explicit,
+            } = input
+            else {
+                unreachable!("from_candidate always returns Path");
+            };
+            corpus_inputs.push_path(path, file, explicit);
         }
         let results = self.search_inputs(corpus_inputs.as_slice(), mode, buffer);
         let len = corpus_inputs.len();
         let bytes = corpus_inputs.byte_count();
-        Ok((results, len, bytes))
+        (results, len, bytes)
     }
 
     fn search_indexed(
         &self,
         files: IndexedFiles<'_>,
-        conversion: &InputConversion<'_>,
+        explicit: &[PathBuf],
         mode: SearchMode,
         buffer: Buffer,
     ) -> crate::Result<(Vec<FileSearch>, usize, u64)> {
@@ -219,7 +224,7 @@ impl Searcher {
                     else {
                         return Ok(None);
                     };
-                    let input = conversion.open(&candidate)?;
+                    let input = Input::from_candidate(&candidate, explicit);
                     Ok(Some(
                         SearchTask::new(&self.matcher, options, mode, buffer, &input).execute(grep),
                     ))
@@ -257,12 +262,12 @@ impl Searcher {
         inputs: SearchInputs<'_>,
         mode: SearchMode,
         buffer: Buffer,
-    ) -> crate::Result<(Vec<FileSearch>, usize, u64)> {
+    ) -> (Vec<FileSearch>, usize, u64) {
         let options = self.options();
         let SearchInputs {
             candidates,
             streams,
-            conversion,
+            explicit,
         } = inputs;
         let mut settled = Vec::new();
         let mut files_searched = 0usize;
@@ -271,13 +276,13 @@ impl Searcher {
 
         for candidate in candidates {
             files_searched += 1;
-            let input = conversion.open(&candidate)?;
+            let input = Input::from_candidate(&candidate, explicit);
             let search =
                 SearchTask::new(&self.matcher, options, mode, buffer, &input).execute(&mut grep);
             bytes = bytes.saturating_add(search.bytes_searched);
             if mode.settles(search.matched) {
                 settled.push(search);
-                return Ok((settled, files_searched, bytes));
+                return (settled, files_searched, bytes);
             }
         }
         for input in streams.as_slice() {
@@ -291,7 +296,7 @@ impl Searcher {
             }
         }
 
-        Ok((settled, files_searched, bytes))
+        (settled, files_searched, bytes)
     }
 }
 
@@ -303,26 +308,16 @@ struct IndexedFiles<'a> {
     admission: FilterAdmission,
 }
 
-fn emit_events(events: Events<'_>, searches: &mut [FileSearch]) -> crate::Result<()> {
-    let Events::Emit(sink) = events else {
-        return Ok(());
-    };
-    for event in searches.iter_mut().flat_map(FileSearch::drain_events) {
-        sink.event(event)?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::search::options::{RegexEngine, SearchOptions};
-    use crate::search::query::SearchQuery;
+    use crate::search::query::Query;
 
     #[test]
     fn auto_engine_fallback_to_pcre2_disables_narrowing() {
         // Lookaround is unsupported by the Rust regex engine.
-        let query = SearchQuery::new(
+        let query = Query::new(
             vec![r"(?<=foo)bar".into()],
             SearchOptions {
                 regex_engine: RegexEngine::Auto,
@@ -332,9 +327,9 @@ mod tests {
         .expect("query");
         assert_eq!(query.narrowing(), crate::search::Narrowing::Allowed);
         let searcher = Searcher::new(query).expect("compile via Auto→PCRE2");
-        assert_eq!(searcher.query.options().regex_engine, RegexEngine::Pcre2);
+        assert_eq!(searcher.query().options().regex_engine, RegexEngine::Pcre2);
         assert_eq!(
-            searcher.query.narrowing(),
+            searcher.query().narrowing(),
             crate::search::Narrowing::Disabled
         );
     }

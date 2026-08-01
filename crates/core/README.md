@@ -17,7 +17,7 @@ IndexRecord / Box<dyn Index> ──Indexes::build──> snapshot on disk
                                       │
                 Plan::new → Plan::resolve
                                       │
-                                 Grep::search
+                            Searcher::execute
 ```
 
 | Type | Role |
@@ -27,7 +27,8 @@ IndexRecord / Box<dyn Index> ──Indexes::build──> snapshot on disk
 | `Files` | Snapshot-owned `FileId → Candidate` map |
 | `IndexConfig` | Corpus/walk/visibility for a write |
 | `Indexes` | Build/update + query/hydrate |
-| `Grep` | Resolve candidates + run search |
+| `Query` / `Searcher` | Patterns + execute |
+| `Plan` / `Candidates` | Pure plan then resolve |
 
 ## Modules
 
@@ -35,40 +36,39 @@ IndexRecord / Box<dyn Index> ──Indexes::build──> snapshot on disk
 |--------|-------------|
 | [`index/`](src/index/) | Record, Files, Snapshot, Indexes |
 | [`index/ngram/`](src/index/ngram/) | N-gram index implementation |
-| [`grep/`](src/grep/) | Public search API |
+| [`search/`](src/search/) | Query, Searcher, inputs, events |
 | [`candidates/`](src/candidates/) | Planning and resolution |
 
 ## Search API
 
 ```rust
 use sift_core::{
-    CandidateSource, Grep, GrepRequest, Indexes, IndexNarrowing, Inputs, InputConversion,
-    PathDisplay, ScanScope, SnapshotFreshness, SearchMode, SearchOptions, SearchQuery, StatsMode,
-    StoreMeta,
+    CandidateSource, Events, Inputs, Plan, Query, ScanScope, SearchInputs, SearchMode,
+    SearchOptions, Searcher, SnapshotFreshness, StatsMode,
 };
 
-let indexes = Indexes::open(&sift_dir, &meta)?;
+let searcher = Searcher::new(Query::new(vec!["pattern".into()], SearchOptions::default())?)?;
 let source = CandidateSource::new(
-    &indexes,
+    indexes.as_ref(),
     &filter,
-    Some(indexes.meta()),
+    store_meta.as_ref(),
     ScanScope::Index {
         order: Default::default(),
         freshness: SnapshotFreshness::Current,
     },
-    IndexNarrowing::Allowed,
 );
-
-let grep = Grep::new(source);
-let request = GrepRequest {
-    query: SearchQuery::new(vec!["pattern".into()])?.options(SearchOptions::default()),
-    streams: Inputs::empty(),
-    conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-    mode: SearchMode::Lines,
-    stats: StatsMode::Off,
-};
-
-let report = grep.search(request)?;
+let candidates = Plan::new(&source, searcher.query(), SearchMode::Lines.coverage())
+    .resolve(&source)?;
+let report = searcher.execute(
+    SearchInputs {
+        candidates,
+        streams: Inputs::empty(),
+        explicit: &[],
+    },
+    StatsMode::Off,
+    SearchMode::Lines,
+    Events::Discard,
+)?;
 ```
 
 Formatting lives in `sift-grep`.
@@ -78,6 +78,4 @@ Formatting lives in `sift-grep`.
 ```bash
 cargo test -p sift-core
 cargo bench -p sift-core --bench index
-cargo bench -p sift-core --bench grep
-cargo bench -p sift-core --bench candidates
 ```

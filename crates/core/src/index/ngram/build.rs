@@ -259,7 +259,7 @@ mod tests {
     use crate::corpus::filter::IgnoreConfig;
     use crate::corpus::walk::LinkTraversal;
     use crate::corpus::walk::{FileWalk, WalkFile};
-    use crate::grep::{CandidateFilter, CandidateFilterConfig, VisibilityConfig};
+    use crate::corpus::{CandidateFilter, CandidateFilterConfig, VisibilityConfig};
     use crate::index::config::IndexWalkConfig;
     use crate::index::ngram::gram::GramWidth;
     use crate::index::ngram::storage::postings::Postings;

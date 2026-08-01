@@ -1,4 +1,4 @@
-use sift_core::grep::{
+use sift_core::{
     CandidateFilter, CandidateFilterConfig, HiddenMode, IgnoreConfig, IgnoreSources,
     VisibilityConfig,
 };

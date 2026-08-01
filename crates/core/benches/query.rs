@@ -6,15 +6,10 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 
-use sift_core::search::{
-    CaseMode, RegexEngine, SearchFlags, SearchOptions, SearchQueryBuilder, Searcher,
-};
+use sift_core::{CaseMode, Query, RegexEngine, SearchFlags, SearchOptions, Searcher};
 
 fn searcher(patterns: Vec<String>, options: SearchOptions) -> Searcher {
-    let query = SearchQueryBuilder::new(patterns)
-        .options(options)
-        .build()
-        .unwrap();
+    let query = Query::new(patterns, options).unwrap();
     Searcher::new(query).unwrap()
 }
 

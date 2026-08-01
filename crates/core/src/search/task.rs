@@ -1,5 +1,4 @@
 use std::io;
-use std::path::Path;
 use std::sync::Arc;
 
 use grep_matcher::{Captures, LineTerminator, Matcher as GrepMatcherTrait};
@@ -12,7 +11,7 @@ use crate::search::event::{
     BinaryEvent, ContextEvent, ContextKind, FileEvent, MatchEvent, SearchEvent,
 };
 use crate::search::hit::{LineCount, ListedFile, ListedRow, Match, MatchedFile, SpanCount};
-use crate::search::input::{HitPath, Input};
+use crate::search::input::{FileIdentity, Input};
 use crate::search::matcher::Matcher;
 use crate::search::mode::SearchMode;
 use crate::search::options::{BinaryMode, SearchOptions};
@@ -137,11 +136,9 @@ impl<'searcher, 'input> SearchTask<'searcher, 'input> {
         origin: InputOrigin,
     ) -> FileSearch {
         let match_emission = MatchEmission::from(self.mode, self.options);
-        let path: Arc<Path> = Arc::from(self.input.display_path());
-        let corpus = self.input.identity().corpus_hit.clone();
+        let file = Arc::clone(self.input.file());
         let mut sink = MatchSink {
-            path,
-            corpus,
+            file,
             origin,
             matcher: grep_matcher,
             replacement: self
@@ -237,8 +234,7 @@ impl From<&Input<'_>> for InputOrigin {
 }
 
 struct MatchSink<'a, M> {
-    path: Arc<Path>,
-    corpus: HitPath,
+    file: Arc<FileIdentity>,
     origin: InputOrigin,
     matcher: &'a M,
     replacement: Option<Vec<u8>>,
@@ -257,12 +253,7 @@ impl<M: GrepMatcherTrait> MatchSink<'_, M> {
     fn into_row(self) -> FileSearch {
         let matched = self.line_matches > 0;
         let listed_file = ListedFile {
-            path: Arc::clone(&self.path),
-            corpus: if matched {
-                self.corpus
-            } else {
-                HitPath::Absent
-            },
+            identity: Arc::clone(&self.file),
             binary_byte_offset: self.binary_byte_offset,
         };
         let row = if self.mode.admits(matched) {
@@ -334,7 +325,7 @@ impl<M: GrepMatcherTrait> MatchSink<'_, M> {
                 true
             });
         self.events.push(SearchEvent::Match(MatchEvent {
-            path: Arc::clone(&self.path),
+            file: Arc::clone(&self.file),
             line_number: mat.line_number(),
             absolute_byte_offset: Some(mat.absolute_byte_offset()),
             bytes: line_bytes.to_vec(),
@@ -351,7 +342,7 @@ impl<M: GrepMatcherTrait> MatchSink<'_, M> {
             MatchEmission::Presence | MatchEmission::LineCount => {
                 if matches!(self.buffer, Buffer::Collect) {
                     self.events.push(SearchEvent::Match(MatchEvent {
-                        path: Arc::clone(&self.path),
+                        file: Arc::clone(&self.file),
                         line_number: mat.line_number(),
                         absolute_byte_offset: Some(mat.absolute_byte_offset()),
                         bytes: Vec::new(),
@@ -390,7 +381,7 @@ impl<M: GrepMatcherTrait> MatchSink<'_, M> {
                         true
                     });
                 self.events.push(SearchEvent::Match(MatchEvent {
-                    path: Arc::clone(&self.path),
+                    file: Arc::clone(&self.file),
                     line_number: mat.line_number(),
                     absolute_byte_offset: Some(mat.absolute_byte_offset()),
                     bytes: line_bytes.to_vec(),
@@ -421,7 +412,7 @@ impl<M: GrepMatcherTrait> Sink for MatchSink<'_, M> {
         match self.buffer {
             Buffer::Discard => {}
             Buffer::Collect => self.events.push(SearchEvent::Begin(FileEvent {
-                path: Arc::clone(&self.path),
+                file: Arc::clone(&self.file),
             })),
         }
         Ok(true)
@@ -446,7 +437,7 @@ impl<M: GrepMatcherTrait> Sink for MatchSink<'_, M> {
         match self.buffer {
             Buffer::Discard => {}
             Buffer::Collect => self.events.push(SearchEvent::Context(ContextEvent {
-                path: Arc::clone(&self.path),
+                file: Arc::clone(&self.file),
                 kind: ContextKind::from(context.kind()),
                 line_number: context.line_number(),
                 absolute_byte_offset: context.absolute_byte_offset(),
@@ -473,7 +464,7 @@ impl<M: GrepMatcherTrait> Sink for MatchSink<'_, M> {
         match self.buffer {
             Buffer::Discard => {}
             Buffer::Collect => self.events.push(SearchEvent::Binary(BinaryEvent {
-                path: Arc::clone(&self.path),
+                file: Arc::clone(&self.file),
                 absolute_byte_offset: binary_byte_offset,
                 explicit: matches!(self.origin, InputOrigin::Explicit),
             })),
@@ -493,7 +484,7 @@ impl<M: GrepMatcherTrait> Sink for MatchSink<'_, M> {
         match self.buffer {
             Buffer::Discard => {}
             Buffer::Collect => self.events.push(SearchEvent::End(FileEvent {
-                path: Arc::clone(&self.path),
+                file: Arc::clone(&self.file),
             })),
         }
         Ok(())

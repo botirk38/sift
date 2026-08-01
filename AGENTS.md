@@ -6,7 +6,7 @@ Guidelines for AI agents working on the sift codebase.
 
 Sift is an indexed code search engine written in Rust, built around **composable on-disk indexes**. It builds indexes tuned to the search workload, then uses them to narrow candidate files before running the full regex engine.
 
-The core architecture treats code search like database query execution: every kind implements one `Index` trait; `Indexes` orchestrates build/update/search and intersects `query` results. Candidate resolution goes through `Grep::resolve_candidates` / `Plan`. Today the default index is runtime-width N-gram (trigram default).
+The core architecture treats code search like database query execution: every kind implements one `Index` trait; `Indexes` orchestrates build/update/search and intersects `query` results. Candidate resolution goes through `Plan::resolve`. Today the default index is runtime-width N-gram (trigram default).
 
 The candidate pipeline is **plan (pure) → resolve (I/O) → search**: `Plan::new` decides discovery without querying indexes; `Plan::resolve` is the single I/O boundary (query + walk + order); `Searcher` consumes lazy `Candidates` (`into_vec()` materializes all).
 
@@ -76,7 +76,7 @@ Use short, descriptive kebab-case with a type prefix:
 
 ## Core API Entry Points
 
-`Indexes::open(dir, meta)` (lifecycle) / `Indexes::load(dir) -> Result<Option<Indexes>>` (search) → `build` / `update` → `Grep::resolve_candidates` → `Searcher::execute`. CLI: `IndexJob::run` / `SnapshotRefresh::run` for lifecycle; `Run::execute` for search. See `crates/core/README.md`.
+`Indexes::open(dir, meta)` (lifecycle) / `Indexes::load(dir) -> Result<Option<Indexes>>` (search) → `build` / `update` → `Plan::resolve` → `Searcher::execute`. CLI: `IndexJob::run` / `SnapshotRefresh::run` for lifecycle; `Run::execute` for search. See `crates/core/README.md`.
 
 ## Index layer
 
@@ -90,7 +90,7 @@ Use short, descriptive kebab-case with a type prefix:
 | `Files` | Snapshot-owned `FileId → Candidate` map |
 | `StoreMeta` | Store metadata |
 
-**Do not add to core:** `from_single`, `Indexes::candidates(SearchQuery)`, `reconcile`, `unindexed_hit_paths`, or other caller-specific helpers. Callers compose `Indexes::open`, `indexed_corpus().retain_unindexed`, and `Grep::resolve_candidates`.
+**Do not add to core:** `from_single`, `Indexes::candidates(Query)`, `reconcile`, `unindexed_hit_paths`, or other caller-specific helpers. Callers compose `Indexes::open`, `indexed_corpus().retain_unindexed`, and `Plan::resolve`.
 
 ## Architecture & Design
 

@@ -1,10 +1,9 @@
 use std::fs;
 use std::path::Path;
 
-use sift_core::search::{SearchOptions, SearchQueryBuilder};
 use sift_core::{
     CorpusKind, CorpusMeta, FileId, FilterMeta, IndexCoverage, IndexRecord, Indexes, PlanMode,
-    StoreMeta, VisibilityConfig, WalkMeta,
+    Query, SearchOptions, StoreMeta, VisibilityConfig, WalkMeta,
 };
 use tempfile::TempDir;
 
@@ -68,10 +67,7 @@ fn explain_reports_indexed_for_literal() {
     fs::write(corpus.join("a.txt"), "alpha beta\n").expect("write");
 
     let index = build_trigram_in_dir(&corpus, &tmp.path().join("trigram"));
-    let query = SearchQueryBuilder::new(vec!["foo.*".to_string()])
-        .options(SearchOptions::default())
-        .build()
-        .expect("query");
+    let query = Query::new(vec!["foo.*".to_string()], SearchOptions::default()).expect("query");
     let output = index.explain(&query);
     assert_eq!(output.pattern, "foo.*");
     assert_eq!(output.mode, PlanMode::IndexedCandidates);
@@ -85,10 +81,8 @@ fn explain_reports_full_scan_without_literal() {
     fs::write(corpus.join("a.txt"), "alpha beta\n").expect("write");
 
     let index = build_trigram_in_dir(&corpus, &tmp.path().join("trigram"));
-    let query = SearchQueryBuilder::new(vec![r"\w{5}\s+\w{5}".to_string()])
-        .options(SearchOptions::default())
-        .build()
-        .expect("query");
+    let query =
+        Query::new(vec![r"\w{5}\s+\w{5}".to_string()], SearchOptions::default()).expect("query");
     let output = index.explain(&query);
     assert_eq!(output.mode, PlanMode::FullScan);
 }
