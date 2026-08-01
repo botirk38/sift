@@ -217,7 +217,7 @@ impl Searcher {
                     let Some(candidate) =
                         indexed
                             .indexes
-                            .hydrate_row(id, indexed.filter, indexed.admission)
+                            .candidate(id, indexed.filter, indexed.admission)
                     else {
                         return Ok(None);
                     };

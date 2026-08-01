@@ -116,13 +116,13 @@ impl<'a> Candidates<'a> {
             Self::Indexed(indexed) => {
                 indexed
                     .indexes
-                    .hydrate_rows(&indexed.file_ids, indexed.filter, indexed.admission)
+                    .candidates(&indexed.file_ids, indexed.filter, indexed.admission)
             }
             Self::Mixed {
                 indexed,
                 mut unindexed,
             } => {
-                let mut items = indexed.indexes.hydrate_rows(
+                let mut items = indexed.indexes.candidates(
                     &indexed.file_ids,
                     indexed.filter,
                     indexed.admission,
@@ -146,22 +146,6 @@ impl<'a> From<Candidates<'a>> for Vec<Candidate> {
     }
 }
 
-impl IntoIter<'_> {
-    fn next_indexed(
-        ids: &mut std::vec::IntoIter<FileId>,
-        indexes: &Indexes,
-        filter: &CandidateFilter,
-        admission: FilterAdmission,
-    ) -> Option<Candidate> {
-        loop {
-            let id = ids.next()?;
-            if let Some(candidate) = indexes.hydrate_row(id, filter, admission) {
-                return Some(candidate);
-            }
-        }
-    }
-}
-
 impl Iterator for IntoIter<'_> {
     type Item = Candidate;
 
@@ -173,14 +157,28 @@ impl Iterator for IntoIter<'_> {
                 indexes,
                 filter,
                 admission,
-            } => Self::next_indexed(ids, indexes, filter, *admission),
+            } => loop {
+                let id = ids.next()?;
+                if let Some(candidate) = indexes.candidate(id, filter, *admission) {
+                    return Some(candidate);
+                }
+            },
             Self::Mixed {
                 ids,
                 indexes,
                 filter,
                 admission,
                 unindexed,
-            } => Self::next_indexed(ids, indexes, filter, *admission).or_else(|| unindexed.next()),
+            } => loop {
+                match ids.next() {
+                    Some(id) => {
+                        if let Some(candidate) = indexes.candidate(id, filter, *admission) {
+                            return Some(candidate);
+                        }
+                    }
+                    None => return unindexed.next(),
+                }
+            },
         }
     }
 

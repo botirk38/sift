@@ -335,7 +335,7 @@ impl Indexes {
         Candidates::indexed(self, file_ids, filter, admission)
     }
 
-    pub(crate) fn hydrate_row(
+    pub(crate) fn candidate(
         &self,
         id: FileId,
         filter: &CandidateFilter,
@@ -346,7 +346,7 @@ impl Indexes {
         candidate.matches(filter, admission).then_some(candidate)
     }
 
-    pub(crate) fn hydrate_rows(
+    pub(crate) fn candidates(
         &self,
         file_ids: &[FileId],
         filter: &CandidateFilter,
