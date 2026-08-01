@@ -68,7 +68,7 @@ fn index_candidate_vec(
     options: SearchOptions,
 ) -> Vec<sift_core::Candidate> {
     let source = CandidateSource::new(
-        indexes,
+        Some(indexes),
         filter,
         None,
         ScanScope::Index {
@@ -592,7 +592,7 @@ fn bench_trigram_index_methods(c: &mut Criterion) {
 fn bench_candidates(c: &mut Criterion) {
     let fixture = common::open_large_indexes();
     let indexes = fixture.1;
-    let root = indexes.corpus_root().expect("indexed corpus").to_path_buf();
+    let root = indexes.corpus_root().to_path_buf();
     let filter = sift_core::grep::CandidateFilter::new(
         &sift_core::grep::CandidateFilterConfig::default(),
         &root,

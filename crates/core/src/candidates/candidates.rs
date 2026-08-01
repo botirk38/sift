@@ -146,6 +146,22 @@ impl<'a> From<Candidates<'a>> for Vec<Candidate> {
     }
 }
 
+impl IntoIter<'_> {
+    fn next_indexed(
+        ids: &mut std::vec::IntoIter<FileId>,
+        indexes: &Indexes,
+        filter: &CandidateFilter,
+        admission: FilterAdmission,
+    ) -> Option<Candidate> {
+        loop {
+            let id = ids.next()?;
+            if let Some(candidate) = indexes.hydrate_row(id, filter, admission) {
+                return Some(candidate);
+            }
+        }
+    }
+}
+
 impl Iterator for IntoIter<'_> {
     type Item = Candidate;
 
@@ -157,14 +173,14 @@ impl Iterator for IntoIter<'_> {
                 indexes,
                 filter,
                 admission,
-            } => next_hydrated(ids, indexes, filter, *admission),
+            } => Self::next_indexed(ids, indexes, filter, *admission),
             Self::Mixed {
                 ids,
                 indexes,
                 filter,
                 admission,
                 unindexed,
-            } => next_hydrated(ids, indexes, filter, *admission).or_else(|| unindexed.next()),
+            } => Self::next_indexed(ids, indexes, filter, *admission).or_else(|| unindexed.next()),
         }
     }
 
@@ -183,20 +199,6 @@ impl Iterator for IntoIter<'_> {
                     },
                 )
             }
-        }
-    }
-}
-
-fn next_hydrated(
-    ids: &mut std::vec::IntoIter<FileId>,
-    indexes: &Indexes,
-    filter: &CandidateFilter,
-    admission: FilterAdmission,
-) -> Option<Candidate> {
-    loop {
-        let id = ids.next()?;
-        if let Some(candidate) = indexes.hydrate_row(id, filter, admission) {
-            return Some(candidate);
         }
     }
 }

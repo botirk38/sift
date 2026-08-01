@@ -19,9 +19,9 @@ pub use grep::{
     IgnoreSources, TypeFilterRule, VisibilityConfig,
 };
 pub use search::{
-    BinaryEvent, BinaryMode, CaseMode, ContextEvent, ContextKind, FileEvent, HitPath, Input,
+    BinaryEvent, BinaryMode, Case, CaseMode, ContextEvent, ContextKind, FileEvent, HitPath, Input,
     InputConversion, InputEncoding, InputIdentity, Inputs, LineCount, ListedFile, Listing, Match,
-    MatchEvent, MatchTotals, MatchedFile, RegexEngine, Report, SearchBound, SearchEvent,
+    MatchEvent, MatchTotals, MatchedFile, Narrowing, RegexEngine, Report, SearchBound, SearchEvent,
     SearchFlags, SearchInputs, SearchMode, SearchOptions, SearchQuery, SearchQueryBuilder,
     SearchSink, Searcher, SpanCount, Stats, StatsMode, ZeroCounts,
 };

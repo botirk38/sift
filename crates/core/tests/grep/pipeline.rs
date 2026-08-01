@@ -37,7 +37,7 @@ fn grep_finds_match_in_indexed_corpus() {
         .build()
         .expect("query");
     let source = CandidateSource::new(
-        &indexes,
+        Some(&indexes),
         &filter,
         None,
         index_scope(CandidateOrder::default()),
@@ -78,7 +78,7 @@ fn candidate_planner_all_indexed_uses_index_when_metadata_missing() {
         .build()
         .expect("query");
     let source = CandidateSource::new(
-        &indexes,
+        Some(&indexes),
         &filter,
         None,
         index_scope(CandidateOrder::default()),
@@ -109,7 +109,7 @@ fn high_level_grep_search_resolves_candidates_and_reports_matches() {
     let indexes = open_indexes(&sift_dir);
     let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
     let source = CandidateSource::new(
-        &indexes,
+        Some(&indexes),
         &filter,
         None,
         index_scope(CandidateOrder::default()),
@@ -150,7 +150,7 @@ fn high_level_grep_stream_emits_events_without_collecting_matches() {
     let indexes = open_indexes(&sift_dir);
     let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
     let source = CandidateSource::new(
-        &indexes,
+        Some(&indexes),
         &filter,
         None,
         index_scope(CandidateOrder::default()),
@@ -193,7 +193,7 @@ fn high_level_grep_files_without_match_selects_nonmatching_files() {
     let indexes = open_indexes(&sift_dir);
     let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
     let source = CandidateSource::new(
-        &indexes,
+        Some(&indexes),
         &filter,
         None,
         ScanScope::Walk {
@@ -235,7 +235,7 @@ fn high_level_grep_files_without_match_uses_full_corpus_with_index() {
     let indexes = open_indexes(&sift_dir);
     let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
     let source = CandidateSource::new(
-        &indexes,
+        Some(&indexes),
         &filter,
         None,
         index_scope(CandidateOrder::default()),
@@ -274,7 +274,7 @@ fn high_level_grep_files_without_match_is_not_selected_when_all_files_match() {
     let indexes = open_indexes(&sift_dir);
     let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
     let source = CandidateSource::new(
-        &indexes,
+        Some(&indexes),
         &filter,
         None,
         index_scope(CandidateOrder::default()),
@@ -329,7 +329,7 @@ fn grep_finds_match_in_stdin_stream() {
 
     let indexes = open_indexes(&tmp.path().join(".sift"));
     let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
-    let source = CandidateSource::new(&indexes, &filter, None, ScanScope::StreamsOnly);
+    let source = CandidateSource::new(Some(&indexes), &filter, None, ScanScope::StreamsOnly);
     let request = GrepRequest {
         query: query.clone(),
         streams: Inputs::empty(),
@@ -376,7 +376,7 @@ fn count_include_zero_lists_zeros_but_found_requires_hits() {
     let indexes = open_indexes(&sift_dir);
     let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
     let source = CandidateSource::new(
-        &indexes,
+        Some(&indexes),
         &filter,
         None,
         ScanScope::Walk {
@@ -419,7 +419,7 @@ fn stream_begin_path_shares_arc_with_listed_file() {
     let indexes = open_indexes(&sift_dir);
     let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
     let source = CandidateSource::new(
-        &indexes,
+        Some(&indexes),
         &filter,
         None,
         index_scope(CandidateOrder::default()),
@@ -483,7 +483,7 @@ fn first_match_settles_on_pattern_hit_not_include_zero() {
     let indexes = open_indexes(&sift_dir);
     let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
     let source = CandidateSource::new(
-        &indexes,
+        Some(&indexes),
         &filter,
         None,
         ScanScope::Walk {
@@ -502,7 +502,7 @@ fn first_match_settles_on_pattern_hit_not_include_zero() {
                 .options(options)
                 .build()
                 .expect("query")
-                .without_index_narrowing(),
+                .with_narrowing(sift_core::Narrowing::Disabled),
             streams: Inputs::empty(),
             conversion: InputConversion::new(&[], PathDisplay::Relative, None),
             mode: SearchMode::CountLines {

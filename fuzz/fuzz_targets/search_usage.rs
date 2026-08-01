@@ -70,10 +70,7 @@ fn indexed() -> &'static IndexHolder {
             vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
         );
         let indexes = Indexes::open(&sift_dir, &meta).expect("open_index");
-        let root = indexes
-            .corpus_root()
-            .expect("indexed corpus")
-            .to_path_buf();
+        let root = indexes.corpus_root().to_path_buf();
         IndexHolder {
             _temp: tmp,
             indexes,
@@ -114,7 +111,7 @@ fn run_search(holder: &IndexHolder, patterns: &[String], opts: &SearchOptions) {
     };
     let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &holder.root).unwrap();
     let source = CandidateSource::new(
-        &holder.indexes,
+        Some(&holder.indexes),
         &filter,
         None,
         ScanScope::Index {

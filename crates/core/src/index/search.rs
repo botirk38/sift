@@ -47,7 +47,7 @@ impl Indexes {
     pub fn open(sift_dir: &Path, meta: &StoreMeta) -> crate::Result<Self> {
         std::fs::create_dir_all(sift_dir)?;
         if !StoreMeta::path(sift_dir).exists() {
-            let guard = acquire_write_lock(sift_dir)?;
+            let guard = WriteLockGuard::acquire(sift_dir)?;
             if !StoreMeta::path(sift_dir).exists() {
                 meta.write(sift_dir)?;
             }
@@ -59,29 +59,23 @@ impl Indexes {
 
     /// Load an existing store for search. Does not create meta or directories.
     ///
-    /// When no store exists, returns an empty (unusable) indexes handle so
-    /// callers can fall back to walking the corpus. A dangling `CURRENT`
-    /// without meta is treated as a broken store and returns an error.
+    /// Returns `Ok(None)` when no store exists. A dangling `CURRENT` without
+    /// meta is treated as a broken store and returns an error.
     ///
     /// # Errors
     ///
     /// Returns an error if metadata exists but cannot be read, the current
     /// snapshot cannot be opened, or the store is inconsistent.
-    pub fn load(sift_dir: &Path) -> crate::Result<Self> {
+    pub fn load(sift_dir: &Path) -> crate::Result<Option<Self>> {
         if !StoreMeta::path(sift_dir).exists() {
             if DiskSnapshotStore::read_current_id(sift_dir)?.is_some() {
                 // CURRENT without meta is inconsistent — surface the open error.
                 let _ = Snapshot::open_current(sift_dir, PathBuf::new(), CorpusKind::Directory)?;
             }
-            return Ok(Self {
-                sift_dir: sift_dir.to_path_buf(),
-                snapshots: DiskSnapshotStore::open(sift_dir)?,
-                meta: empty_search_meta(),
-                snapshot: Snapshot::empty(PathBuf::new()),
-            });
+            return Ok(None);
         }
         let stored_meta = StoreMeta::read(sift_dir)?;
-        Self::from_stored(sift_dir, stored_meta)
+        Self::from_stored(sift_dir, stored_meta).map(Some)
     }
 
     fn from_stored(sift_dir: &Path, stored_meta: StoreMeta) -> crate::Result<Self> {
@@ -128,28 +122,28 @@ impl Indexes {
         self.sift_dir.join("snapshots").join(id)
     }
 
-    /// Whether opened indexes are usable for candidate discovery.
+    /// Whether any opened index is available for candidate narrowing.
     #[must_use]
-    pub fn usable(&self) -> bool {
-        !self.snapshot.is_empty() && !self.snapshot.indexes().is_empty()
+    pub fn queryable(&self) -> bool {
+        !self.snapshot.indexes().is_empty()
     }
 
     /// Corpus root recorded in metadata.
     #[must_use]
-    pub fn corpus_root(&self) -> Option<&Path> {
-        self.usable().then_some(self.meta.corpus.root.as_path())
+    pub fn corpus_root(&self) -> &Path {
+        self.meta.corpus.root.as_path()
     }
 
     /// Corpus kind recorded in metadata.
     #[must_use]
-    pub fn corpus_kind(&self) -> Option<CorpusKind> {
-        self.usable().then_some(self.meta.corpus.kind)
+    pub const fn corpus_kind(&self) -> CorpusKind {
+        self.meta.corpus.kind
     }
 
     /// Committed snapshot id when present.
     #[must_use]
-    pub fn snapshot_id(&self) -> Option<&SnapshotId> {
-        self.usable().then(|| self.snapshot.id()).flatten()
+    pub const fn snapshot_id(&self) -> Option<&SnapshotId> {
+        self.snapshot.id()
     }
 
     /// Corpus-relative paths covered by every opened index in this snapshot.
@@ -307,12 +301,29 @@ impl Indexes {
         plans.sort_by_key(Vec::len);
         let mut cur = plans.remove(0);
         for next in plans {
-            cur = intersect_sorted(&cur, &next);
+            cur = Self::intersect_sorted(&cur, &next);
             if cur.is_empty() {
                 break;
             }
         }
         cur
+    }
+
+    fn intersect_sorted(a: &[FileId], b: &[FileId]) -> Vec<FileId> {
+        let mut out = Vec::with_capacity(a.len().min(b.len()));
+        let (mut i, mut j) = (0usize, 0usize);
+        while i < a.len() && j < b.len() {
+            match a[i].cmp(&b[j]) {
+                std::cmp::Ordering::Less => i += 1,
+                std::cmp::Ordering::Greater => j += 1,
+                std::cmp::Ordering::Equal => {
+                    out.push(a[i]);
+                    i += 1;
+                    j += 1;
+                }
+            }
+        }
+        out
     }
 
     pub(crate) const fn indexed_candidates<'a>(
@@ -375,58 +386,21 @@ impl Indexes {
     }
 }
 
-fn acquire_write_lock(sift_dir: &Path) -> crate::Result<WriteLockGuard> {
-    let lock_path = sift_dir.join("write.lock");
-    let mut lock_file = fslock::LockFile::open(&lock_path)?;
-    lock_file.lock()?;
-    Ok(WriteLockGuard { file: lock_file })
-}
-
-fn empty_search_meta() -> StoreMeta {
-    StoreMeta::new(
-        super::meta::CorpusMeta {
-            root: PathBuf::new(),
-            kind: CorpusKind::Directory,
-            include_paths: Vec::new(),
-            exclude_paths: Vec::new(),
-        },
-        super::meta::IndexCoverage::Complete,
-        super::meta::WalkMeta {
-            follow_links: false,
-            one_file_system: false,
-            max_depth: None,
-            max_filesize: None,
-        },
-        super::meta::FilterMeta {
-            visibility: crate::corpus::filter::VisibilityConfig::default(),
-        },
-        super::contract::IndexRecord::default_catalog(),
-    )
-}
-
 struct WriteLockGuard {
     file: fslock::LockFile,
+}
+
+impl WriteLockGuard {
+    fn acquire(sift_dir: &Path) -> crate::Result<Self> {
+        let lock_path = sift_dir.join("write.lock");
+        let mut lock_file = fslock::LockFile::open(&lock_path)?;
+        lock_file.lock()?;
+        Ok(Self { file: lock_file })
+    }
 }
 
 impl Drop for WriteLockGuard {
     fn drop(&mut self) {
         let _ = &mut self.file;
     }
-}
-
-fn intersect_sorted(a: &[FileId], b: &[FileId]) -> Vec<FileId> {
-    let mut out = Vec::with_capacity(a.len().min(b.len()));
-    let (mut i, mut j) = (0usize, 0usize);
-    while i < a.len() && j < b.len() {
-        match a[i].cmp(&b[j]) {
-            std::cmp::Ordering::Less => i += 1,
-            std::cmp::Ordering::Greater => j += 1,
-            std::cmp::Ordering::Equal => {
-                out.push(a[i]);
-                i += 1;
-                j += 1;
-            }
-        }
-    }
-    out
 }

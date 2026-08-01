@@ -20,7 +20,8 @@ pub use input::{
 };
 pub use mode::{SearchMode, ZeroCounts};
 pub use options::{
-    BinaryMode, CaseMode, InputEncoding, RegexEngine, SearchBound, SearchFlags, SearchOptions,
+    BinaryMode, Case, CaseMode, InputEncoding, Narrowing, RegexEngine, SearchBound, SearchFlags,
+    SearchOptions,
 };
 pub use query::{SearchQuery, SearchQueryBuilder};
 pub use report::Report;

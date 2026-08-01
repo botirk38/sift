@@ -1,5 +1,7 @@
 use crate::grep::Error;
-use crate::search::options::{CaseMode, InputEncoding, RegexEngine, SearchOptions};
+use crate::search::options::{
+    Case, CaseMode, InputEncoding, Narrowing, RegexEngine, SearchOptions,
+};
 
 /// Patterns and options for search and index narrowing.
 #[derive(Debug, Clone)]
@@ -43,10 +45,9 @@ impl SearchQuery {
         self
     }
 
-    /// Disable index narrowing (e.g. content transform searches raw-indexed files).
     #[must_use]
-    pub const fn without_index_narrowing(mut self) -> Self {
-        self.options.allow_index_narrowing = false;
+    pub const fn with_narrowing(mut self, narrowing: Narrowing) -> Self {
+        self.options.narrowing = narrowing;
         self
     }
 
@@ -75,29 +76,38 @@ impl SearchQuery {
         matches!(self.options.input_encoding, InputEncoding::Auto)
     }
 
-    /// Whether index gram matching should treat letters case-insensitively.
-    ///
-    /// Resolves [`CaseMode::Smart`] from patterns: all-ASCII-lowercase → insensitive
-    /// (matcher `case_smart`); otherwise sensitive.
+    /// Letter-case matching for index grams after resolving [`CaseMode::Smart`].
     #[must_use]
-    pub fn case_insensitive_for_index(&self) -> bool {
+    pub fn case(&self) -> Case {
         match self.options.case_mode {
-            CaseMode::Sensitive => false,
-            CaseMode::Insensitive => true,
-            CaseMode::Smart => self
-                .patterns
-                .iter()
-                .all(|p| !p.chars().any(|c| c.is_ascii_uppercase())),
+            CaseMode::Sensitive => Case::Sensitive,
+            CaseMode::Insensitive => Case::Insensitive,
+            CaseMode::Smart => {
+                if self
+                    .patterns
+                    .iter()
+                    .all(|p| !p.chars().any(|c| c.is_ascii_uppercase()))
+                {
+                    Case::Insensitive
+                } else {
+                    Case::Sensitive
+                }
+            }
         }
     }
 
-    /// Whether the index may narrow candidates for this query.
+    /// Effective narrowing after engine, invert, and encoding constraints.
     #[must_use]
-    pub const fn narrowing_allowed(&self) -> bool {
-        self.options.allow_index_narrowing
-            && !self.options.invert_match()
-            && !self.options.input_encoding.forces_decode()
-            && !matches!(self.options.regex_engine, RegexEngine::Pcre2)
+    pub const fn narrowing(&self) -> Narrowing {
+        if matches!(self.options.narrowing, Narrowing::Disabled)
+            || self.options.invert_match()
+            || self.options.input_encoding.forces_decode()
+            || matches!(self.options.regex_engine, RegexEngine::Pcre2)
+        {
+            Narrowing::Disabled
+        } else {
+            Narrowing::Allowed
+        }
     }
 }
 
@@ -132,7 +142,7 @@ mod tests {
     use crate::search::options::{CaseMode, RegexEngine, SearchOptions};
 
     #[test]
-    fn smart_case_lowercase_is_insensitive_for_index() {
+    fn smart_case_lowercase_is_insensitive() {
         let query = SearchQuery::new(
             vec!["err_sys".into()],
             SearchOptions {
@@ -141,12 +151,12 @@ mod tests {
             },
         )
         .expect("query");
-        assert!(query.case_insensitive_for_index());
-        assert!(query.narrowing_allowed());
+        assert_eq!(query.case(), Case::Insensitive);
+        assert_eq!(query.narrowing(), Narrowing::Allowed);
     }
 
     #[test]
-    fn smart_case_uppercase_is_sensitive_for_index() {
+    fn smart_case_uppercase_is_sensitive() {
         let query = SearchQuery::new(
             vec!["ERR_SYS".into()],
             SearchOptions {
@@ -155,7 +165,7 @@ mod tests {
             },
         )
         .expect("query");
-        assert!(!query.case_insensitive_for_index());
+        assert_eq!(query.case(), Case::Sensitive);
     }
 
     #[test]
@@ -168,6 +178,6 @@ mod tests {
             },
         )
         .expect("query");
-        assert!(!query.narrowing_allowed());
+        assert_eq!(query.narrowing(), Narrowing::Disabled);
     }
 }

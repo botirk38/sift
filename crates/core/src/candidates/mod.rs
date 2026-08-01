@@ -1,5 +1,4 @@
 pub mod plan;
-pub mod planner;
 pub mod scope;
 pub mod source;
 

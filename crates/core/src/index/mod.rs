@@ -67,7 +67,7 @@ mod tests {
         fs::create_dir_all(&sift_dir).expect("create sift dir");
         let meta = empty_meta(tmp.path().to_path_buf());
         let indexes = Indexes::open(&sift_dir, &meta).expect("open indexes");
-        assert!(!indexes.usable());
+        assert!(!indexes.queryable());
     }
 
     #[test]
@@ -75,7 +75,7 @@ mod tests {
         let tmp = TempDir::new().expect("create temp dir");
         let sift_dir = tmp.path().join(".sift");
         let indexes = Indexes::load(&sift_dir).expect("load indexes");
-        assert!(!indexes.usable());
+        assert!(indexes.is_none());
         assert!(!StoreMeta::path(&sift_dir).exists());
         assert!(!sift_dir.exists());
     }

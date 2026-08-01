@@ -7,13 +7,14 @@ Composable indexed code search: index lifecycle, candidate planning, and grep-st
 ## Architecture
 
 ```
-Indexes::open (lifecycle) / Indexes::load (search)  →  Indexes
-CandidatePlanner::plan  →  CandidatePlan::resolve  →  Grep::search
+Indexes::open (lifecycle) / Indexes::load → Option (search)
+Plan::new (pure) → Plan::resolve (query I/O) → Grep::search
 ```
 
-- `Indexes` — build/update/publish and query/hydrate over one store
+- `Indexes` — build/update/publish and query/hydrate over one store (`load` is `None` when absent)
 - `Snapshot` — opened `Box<dyn Index>` vec for a committed snapshot
-- `Grep` — single public entry for resolve + search
+- `Plan` — pure discovery decision; `resolve` owns index query I/O
+- `Grep` — public entry for resolve + search
 
 Today the default index is `ngram::Index::new()` (trigram width).
 
@@ -24,9 +25,9 @@ Search (re-exported from `lib.rs`):
 - `Grep`, `GrepRequest`, `Grep::resolve_candidates`, `Searcher`, `Report`
 - `Indexes`, `IndexedCorpus`, `SnapshotId`
 - `Index`, `IndexRecord`, `IndexConfig`, `IndexWrite`, `ngram::Index`, `GramWidth`
-- `Candidates`, `CandidateSource`, `ScanScope`, `SnapshotFreshness`, `IndexNarrowing`
+- `Candidates`, `CandidateSource`, `ScanScope`, `SnapshotFreshness`
 
-Internal: `CandidatePlanner`, `CandidatePlan`, `CandidateQuery`.
+Internal: `Plan`.
 
 ## Source map
 
@@ -37,8 +38,7 @@ Internal: `CandidatePlanner`, `CandidatePlan`, `CandidateQuery`.
 | `index/snapshot/` | `Snapshot`, persistence |
 | `index/ngram/` | N-gram implementation |
 | `grep/` | Public search API |
-| `candidates/planner.rs` | `CandidatePlanner` (pure planning) |
-| `candidates/plan.rs` | `CandidatePlan`, `PlannedDiscovery`, resolve I/O |
+| `candidates/plan.rs` | `Plan` (plan + resolve) |
 | `candidates/candidates.rs` | `Candidates` collection |
 | `corpus/` | `Candidate`, filters, walk |
 
@@ -46,13 +46,13 @@ Internal: `CandidatePlanner`, `CandidatePlan`, `CandidateQuery`.
 
 ```text
 Grep::execute
-  1. coverage   ← GrepRequest::candidate_coverage()
-  2. plan       ← CandidatePlanner::plan(source, query, coverage)
+  1. coverage   ← Coverage::from_mode(mode)
+  2. plan       ← Plan::new(source, query, coverage)
   3. candidates ← plan.resolve(source)
   4. search     ← Searcher::execute(...)
 ```
 
-Planning is pure; `CandidatePlan::resolve` is the only candidate I/O boundary.
+Planning is pure; `Plan::resolve` is the only candidate I/O boundary.
 
 ## Invariants
 

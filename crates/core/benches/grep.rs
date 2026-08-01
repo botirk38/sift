@@ -43,7 +43,7 @@ fn run_grep(
     query: &(Vec<String>, SearchOptions),
 ) -> bool {
     let source = CandidateSource::new(
-        indexes,
+        Some(indexes),
         filter,
         None,
         ScanScope::Index {
@@ -76,7 +76,7 @@ fn run_grep(
 fn bench_indexed_search(c: &mut Criterion) {
     let fixture = common::open_large_indexes();
     let indexes = fixture.1;
-    let root = indexes.corpus_root().expect("indexed corpus").to_path_buf();
+    let root = indexes.corpus_root().to_path_buf();
     let filter = make_filter(&CandidateFilterConfig::default(), &root);
 
     let mut g = c.benchmark_group("grep_indexed");

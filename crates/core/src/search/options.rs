@@ -46,6 +46,23 @@ pub enum CaseMode {
     Smart,
 }
 
+/// Letter-case matching after [`CaseMode::Smart`] is resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Case {
+    Sensitive,
+    Insensitive,
+}
+
+/// Whether the search may use indexes to narrow candidates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Narrowing {
+    /// Plan may query indexes for potential matches.
+    #[default]
+    Allowed,
+    /// Plan must not use index narrowing (e.g. content transforms).
+    Disabled,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BinaryMode {
     #[default]
@@ -132,8 +149,7 @@ pub struct SearchOptions {
     pub regex_size_limit: usize,
     pub dfa_size_limit: usize,
     pub regex_engine: RegexEngine,
-    /// When false, plan must not use index narrowing (e.g. content transforms).
-    pub allow_index_narrowing: bool,
+    pub narrowing: Narrowing,
 }
 
 impl Default for SearchOptions {
@@ -152,7 +168,7 @@ impl Default for SearchOptions {
             regex_size_limit: 0,
             dfa_size_limit: 0,
             regex_engine: RegexEngine::default(),
-            allow_index_narrowing: true,
+            narrowing: Narrowing::default(),
         }
     }
 }

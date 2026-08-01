@@ -335,9 +335,12 @@ mod tests {
             },
         )
         .expect("query");
-        assert!(query.narrowing_allowed());
+        assert_eq!(query.narrowing(), crate::search::Narrowing::Allowed);
         let searcher = Searcher::new(query).expect("compile via Auto→PCRE2");
         assert_eq!(searcher.query.options().regex_engine, RegexEngine::Pcre2);
-        assert!(!searcher.query.narrowing_allowed());
+        assert_eq!(
+            searcher.query.narrowing(),
+            crate::search::Narrowing::Disabled
+        );
     }
 }
