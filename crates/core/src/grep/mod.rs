@@ -77,16 +77,7 @@ impl<'a> Grep<'a> {
     ) -> crate::Result<crate::Candidates<'a>> {
         let searcher = Searcher::new(request.query.clone())?;
         let coverage = CandidateCoverage::from_mode(request.mode);
-        self.resolve_compiled(&searcher.query, coverage)
-    }
-
-    fn resolve_compiled(
-        &'a self,
-        query: &SearchQuery,
-        coverage: CandidateCoverage,
-    ) -> crate::Result<crate::Candidates<'a>> {
-        let plan = CandidatePlanner::plan(&self.source, query, coverage);
-        plan.resolve(&self.source)
+        CandidatePlanner::plan(&self.source, &searcher.query, coverage).resolve(&self.source)
     }
 
     fn execute(
@@ -103,7 +94,8 @@ impl<'a> Grep<'a> {
         } = request;
         let searcher = Searcher::new(query)?;
         let coverage = CandidateCoverage::from_mode(mode);
-        let candidates = self.resolve_compiled(&searcher.query, coverage)?;
+        let candidates = CandidatePlanner::plan(&self.source, &searcher.query, coverage)
+            .resolve(&self.source)?;
         let inputs = SearchInputs {
             candidates,
             streams,
