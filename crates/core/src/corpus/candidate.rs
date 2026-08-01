@@ -73,12 +73,6 @@ impl Candidate {
         &self.abs_path
     }
 
-    /// Move the absolute open path out for owned search inputs.
-    #[must_use]
-    pub(crate) fn into_abs_path(self) -> PathBuf {
-        self.abs_path
-    }
-
     /// Normalized relative path string (forward slashes), computed lazily.
     #[must_use]
     pub fn rel_str(&self) -> &str {

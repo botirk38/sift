@@ -184,14 +184,6 @@ pub trait CandidateTransform: Sync {
     fn read_candidate(&self, candidate: &Candidate) -> crate::Result<Vec<u8>>;
 }
 
-/// How a corpus file is identified when converting to a searchable input.
-pub enum SearchFile<'a> {
-    /// Walk / already-resolved candidate; abs path may be borrowed for the search.
-    Resolved(&'a Candidate),
-    /// Index-hydrated candidate; ownership moves into the input so the worker can drop it.
-    Hydrated(Candidate),
-}
-
 /// How a discovered file is presented as a search input.
 pub struct InputConversion<'a> {
     explicit_paths: &'a [PathBuf],
@@ -213,59 +205,28 @@ impl<'a> InputConversion<'a> {
         }
     }
 
-    /// Materialize one candidate into a searchable input.
+    /// Open a candidate as a searchable input.
     ///
     /// # Errors
     ///
     /// Returns an error if the configured candidate transform cannot read input bytes.
-    pub fn materialize<'c>(&self, candidate: &'c Candidate) -> crate::Result<Input<'c>> {
-        self.open(SearchFile::Resolved(candidate))
-    }
-
-    /// Open a search file from either a borrowed or hydrated candidate.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the configured candidate transform cannot read input bytes.
-    pub fn open<'f>(&self, file: SearchFile<'f>) -> crate::Result<Input<'f>> {
-        match file {
-            SearchFile::Resolved(candidate) => {
-                let explicit = self.is_explicit(candidate);
-                let identity = self.identity(candidate);
-                if let Some(transform) = self.transform {
-                    let bytes = transform.read_candidate(candidate)?;
-                    return Ok(Input::Bytes {
-                        path: Cow::Owned(candidate.abs_path().display().to_string()),
-                        bytes: Cow::Owned(bytes),
-                        identity,
-                        explicit,
-                    });
-                }
-                Ok(Input::Path {
-                    path: Cow::Borrowed(candidate.abs_path()),
-                    identity,
-                    explicit,
-                })
-            }
-            SearchFile::Hydrated(candidate) => {
-                let explicit = self.is_explicit(&candidate);
-                let identity = self.identity(&candidate);
-                if let Some(transform) = self.transform {
-                    let bytes = transform.read_candidate(&candidate)?;
-                    return Ok(Input::Bytes {
-                        path: Cow::Owned(candidate.abs_path().display().to_string()),
-                        bytes: Cow::Owned(bytes),
-                        identity,
-                        explicit,
-                    });
-                }
-                Ok(Input::Path {
-                    path: Cow::Owned(candidate.into_abs_path()),
-                    identity,
-                    explicit,
-                })
-            }
+    pub fn open<'c>(&self, candidate: &'c Candidate) -> crate::Result<Input<'c>> {
+        let explicit = self.is_explicit(candidate);
+        let identity = self.identity(candidate);
+        if let Some(transform) = self.transform {
+            let bytes = transform.read_candidate(candidate)?;
+            return Ok(Input::Bytes {
+                path: Cow::Owned(candidate.abs_path().display().to_string()),
+                bytes: Cow::Owned(bytes),
+                identity,
+                explicit,
+            });
         }
+        Ok(Input::Path {
+            path: Cow::Borrowed(candidate.abs_path()),
+            identity,
+            explicit,
+        })
     }
 
     fn is_explicit(&self, candidate: &Candidate) -> bool {

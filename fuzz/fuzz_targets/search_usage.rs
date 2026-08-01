@@ -6,8 +6,8 @@ use sift_core::grep::{
     CandidateFilter, CandidateFilterConfig, Grep, GrepRequest, PathDisplay, VisibilityConfig,
 };
 use sift_core::search::{
-    InputConversion, SearchFlags, SearchInputs, SearchOptions, SearchQueryBuilder, Searcher,
-    StatsMode,
+    EventEmission, InputConversion, SearchFlags, SearchInputs, SearchMode, SearchOptions,
+    SearchQueryBuilder, Searcher, StatsMode,
 };
 use sift_core::{
     CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramWidth, IndexConfig, IndexCoverage,
@@ -134,7 +134,7 @@ fn run_search(holder: &IndexHolder, patterns: &[String], opts: &SearchOptions) {
         streams: Inputs::empty(),
         conversion: InputConversion::new(&[], PathDisplay::Relative, None),
     };
-    let _ = searcher.search(inputs, StatsMode::Off);
+    let _ = searcher.execute(inputs, StatsMode::Off, SearchMode::Lines, EventEmission::Discard);
 }
 
 fuzz_target!(|data: &[u8]| {

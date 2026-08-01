@@ -13,7 +13,6 @@ use super::snapshot::{
 };
 use super::{IndexDestination, IndexSource};
 
-use crate::candidates::Candidates;
 use crate::corpus::Candidate;
 use crate::corpus::filter::{CandidateFilter, FilterAdmission};
 use crate::search::SearchQuery;
@@ -324,15 +323,6 @@ impl Indexes {
             }
         }
         out
-    }
-
-    pub(crate) const fn indexed_candidates<'a>(
-        &'a self,
-        file_ids: Vec<FileId>,
-        filter: &'a CandidateFilter,
-        admission: FilterAdmission,
-    ) -> Candidates<'a> {
-        Candidates::indexed(self, file_ids, filter, admission)
     }
 
     pub(crate) fn candidate(

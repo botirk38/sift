@@ -9,9 +9,7 @@ pub mod grep;
 pub mod index;
 pub mod search;
 
-pub use candidates::{
-    CandidateSource, Candidates, IndexedCandidates, ScanScope, SnapshotFreshness,
-};
+pub use candidates::{CandidateSource, Candidates, ScanScope, SnapshotFreshness};
 pub use corpus::Candidate;
 pub use grep::{
     ByteInput, CandidateFilter, CandidateFilterConfig, CandidateOrder, CandidateTransform,
@@ -19,11 +17,11 @@ pub use grep::{
     IgnoreSources, TypeFilterRule, VisibilityConfig,
 };
 pub use search::{
-    BinaryEvent, BinaryMode, Case, CaseMode, ContextEvent, ContextKind, FileEvent, HitPath, Input,
-    InputConversion, InputEncoding, InputIdentity, Inputs, LineCount, ListedFile, Listing, Match,
-    MatchEvent, MatchTotals, MatchedFile, Narrowing, RegexEngine, Report, SearchBound, SearchEvent,
-    SearchFlags, SearchInputs, SearchMode, SearchOptions, SearchQuery, SearchQueryBuilder,
-    SearchSink, Searcher, SpanCount, Stats, StatsMode, ZeroCounts,
+    BinaryEvent, BinaryMode, Case, CaseMode, ContextEvent, ContextKind, EventEmission, FileEvent,
+    HitPath, Input, InputConversion, InputEncoding, InputIdentity, Inputs, LineCount, ListedFile,
+    Listing, Match, MatchEvent, MatchTotals, MatchedFile, Narrowing, RegexEngine, Report,
+    SearchBound, SearchEvent, SearchFlags, SearchInputs, SearchMode, SearchOptions, SearchQuery,
+    SearchQueryBuilder, SearchSink, Searcher, SpanCount, Stats, StatsMode, ZeroCounts,
 };
 
 pub use ignore::{Walk, WalkBuilder};

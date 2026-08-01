@@ -8,7 +8,7 @@ use crate::search::{Narrowing, SearchQuery};
 use crate::candidates::scope::{Coverage, ScanScope, SnapshotFreshness};
 use crate::candidates::source::CandidateSource;
 
-use super::collection::Candidates;
+use super::output::{Candidates, Inner as CandidatesInner};
 
 /// Pure discovery decision for candidate resolution.
 #[must_use]
@@ -97,7 +97,7 @@ impl Plan {
             Discovery::Index { admission } => {
                 source.indexes.map_or_else(Candidates::empty, |indexes| {
                     let file_ids = Self::file_ids(indexes, &query, coverage);
-                    indexes.indexed_candidates(file_ids, source.filter, admission)
+                    Candidates::indexed(indexes, file_ids, source.filter, admission)
                 })
             }
             Discovery::Merge { admission } => source.indexes.map_or_else(
@@ -244,18 +244,28 @@ impl Plan {
             return Ok(candidates);
         }
         if matches!(order.key, CandidateOrderKey::Path) {
-            match candidates {
-                Candidates::Indexed(mut indexed) => {
+            match candidates.0 {
+                CandidatesInner::Indexed {
+                    indexes,
+                    mut file_ids,
+                    filter,
+                    admission,
+                } => {
                     if matches!(
                         order.direction,
                         crate::corpus::order::CandidateOrderDirection::Descending
                     ) {
-                        indexed.file_ids.reverse();
+                        file_ids.reverse();
                     }
-                    return Ok(Candidates::Indexed(indexed));
+                    return Ok(Candidates(CandidatesInner::Indexed {
+                        indexes,
+                        file_ids,
+                        filter,
+                        admission,
+                    }));
                 }
                 other => {
-                    let mut items = other.into_vec();
+                    let mut items = Candidates(other).into_vec();
                     order.order(&mut items)?;
                     return Ok(Candidates::from(items));
                 }

@@ -1,6 +1,6 @@
 //! Grep-style search execution and filtering benchmarks.
 //!
-//! Exercises the public `Searcher::search` corpus pipeline.
+//! Exercises the public `Searcher::execute` corpus pipeline.
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
@@ -11,8 +11,8 @@ use sift_core::grep::{
     CandidateFilter, CandidateFilterConfig, CandidateOrder, Grep, GrepRequest, PathDisplay,
 };
 use sift_core::search::{
-    InputConversion, SearchFlags, SearchInputs, SearchOptions, SearchQueryBuilder, Searcher,
-    StatsMode,
+    EventEmission, InputConversion, SearchFlags, SearchInputs, SearchMode, SearchOptions,
+    SearchQueryBuilder, Searcher, StatsMode,
 };
 use sift_core::{Indexes, Inputs};
 
@@ -70,7 +70,15 @@ fn run_grep(
         streams: Inputs::empty(),
         conversion: InputConversion::new(&[], PathDisplay::Relative, None),
     };
-    searcher.search(inputs, StatsMode::Off).unwrap().found()
+    searcher
+        .execute(
+            inputs,
+            StatsMode::Off,
+            SearchMode::Lines,
+            EventEmission::Discard,
+        )
+        .unwrap()
+        .found()
 }
 
 fn bench_indexed_search(c: &mut Criterion) {
