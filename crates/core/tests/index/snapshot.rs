@@ -1,6 +1,6 @@
 use std::fs;
 
-use sift_core::{GramWidth, Index, IndexRecord, Indexes, NGramIndex};
+use sift_core::{GramWidth, IndexRecord, Indexes};
 use tempfile::TempDir;
 
 use super::common::{sample_store_meta, standard_build_config};
@@ -19,7 +19,7 @@ fn build_writes_current_snapshot() {
     let meta = sample_store_meta(root, vec![IndexRecord::ngram(GramWidth::TRIGRAM)]);
     let mut indexes = Indexes::open(&sift_dir, &meta).expect("open");
     indexes.refresh_meta(&meta).expect("refresh meta");
-    let catalog: Vec<Box<dyn Index>> = vec![Box::new(NGramIndex::new().width(GramWidth::TRIGRAM))];
+    let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
     indexes.build(&catalog, &config, &[]).expect("build");
 
     let id = indexes.current_id().expect("snapshot id");

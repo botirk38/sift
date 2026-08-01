@@ -22,17 +22,18 @@ IndexRecord / Box<dyn Index> ──Indexes::build──> snapshot on disk
 
 | Type | Role |
 |------|------|
-| `Index` | Kind contract (`build` / `open` / `query` / `candidate` / `update`) |
-| `IndexRecord` | Persisted `{ kind, params }` |
+| `Index` | Opened kind (`query` / `coverage` / `all_file_ids` / `update`) |
+| `IndexRecord` | Typed catalog knobs (`build` / `open`) |
+| `Files` | Snapshot-owned `FileId → Candidate` map |
 | `IndexConfig` | Corpus/walk/visibility for a write |
-| `Indexes` | Lifecycle + search |
+| `Indexes` | Build/update + query/hydrate |
 | `Grep` | Resolve candidates + run search |
 
 ## Modules
 
 | Module | Description |
 |--------|-------------|
-| [`index/`](src/index/) | Contract, snapshot, orchestrator |
+| [`index/`](src/index/) | Record, Files, Snapshot, Indexes |
 | [`index/ngram/`](src/index/ngram/) | N-gram index implementation |
 | [`grep/`](src/grep/) | Public search API |
 | [`candidates/`](src/candidates/) | Planning and resolution |

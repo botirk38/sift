@@ -312,23 +312,23 @@ impl<'a> SnapshotRefresh<'a> {
     /// Propagates build/update failures from the underlying index kinds.
     pub fn run(self, indexes: &mut Indexes) -> sift_core::Result<ReconcileOutcome> {
         let build = self.meta.write_config();
-        let catalog = self.meta.catalog()?;
+        let catalog = self.meta.catalog();
         let (snapshot_id, changed) = if self.paths.is_empty() {
             if indexes.current_id().is_none() {
-                (SnapshotId::new(indexes.build(&catalog, &build, &[])?), true)
+                (SnapshotId::new(indexes.build(catalog, &build, &[])?), true)
             } else {
-                match indexes.update(&catalog, &[])? {
+                match indexes.update(catalog, &[])? {
                     Some(id) => (SnapshotId::new(id), true),
                     None => (Self::current_snapshot_id(indexes, self.sift_dir)?, false),
                 }
             }
         } else if indexes.current_id().is_none() {
             (
-                SnapshotId::new(indexes.build(&catalog, &build, self.paths)?),
+                SnapshotId::new(indexes.build(catalog, &build, self.paths)?),
                 true,
             )
         } else {
-            match indexes.update(&catalog, self.paths)? {
+            match indexes.update(catalog, self.paths)? {
                 Some(id) => (SnapshotId::new(id), true),
                 None => (Self::current_snapshot_id(indexes, self.sift_dir)?, false),
             }

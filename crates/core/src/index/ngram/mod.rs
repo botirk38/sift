@@ -1,11 +1,10 @@
 mod build;
-mod files;
+pub(crate) mod files;
 pub mod gram;
 pub mod storage;
 
 mod candidates;
 mod index;
-mod lifecycle;
 mod literals;
 
 pub use gram::{Gram, GramNorm, GramWidth, GramWindows};
@@ -325,7 +324,7 @@ mod candidate_tests {
         // Posting count mismatches are caught at build time.
         // The open path skips content-level validation for speed.
         let result = Index::new().width(GramWidth::TRIGRAM).open_from(
-            crate::index::IndexSource::Directory(&dir),
+            &dir,
             Path::new("/root"),
             crate::index::CorpusKind::Directory,
         );

@@ -3,7 +3,7 @@ use std::path::Path;
 
 use sift_core::grep::FilterAdmission;
 use sift_core::search::SearchOptions;
-use sift_core::{GramWidth, Index, IndexRecord, Indexes, NGramIndex};
+use sift_core::{GramWidth, IndexRecord, Indexes};
 use tempfile::TempDir;
 
 use super::common::{
@@ -59,7 +59,7 @@ fn empty_ignore_sources_indexes_gitignored_paths() {
     let mut indexes = Indexes::open(&sift_dir, &meta).expect("open");
     indexes.refresh_meta(&meta).expect("refresh meta");
     let config = no_ignore_build_config(tmp.path(), &[]);
-    let catalog: Vec<Box<dyn Index>> = vec![Box::new(NGramIndex::new().width(GramWidth::TRIGRAM))];
+    let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
     indexes.build(&catalog, &config, &[]).expect("build");
     drop(indexes);
 
@@ -109,7 +109,7 @@ fn build_respects_hidden_files_by_default() {
     let meta = sample_store_meta(root, vec![IndexRecord::ngram(GramWidth::TRIGRAM)]);
     let mut indexes = Indexes::open(sift_dir.path(), &meta).expect("open");
     indexes.refresh_meta(&meta).expect("refresh meta");
-    let catalog: Vec<Box<dyn Index>> = vec![Box::new(NGramIndex::new().width(GramWidth::TRIGRAM))];
+    let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
     indexes
         .build(
             &catalog,

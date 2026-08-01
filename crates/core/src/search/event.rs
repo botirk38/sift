@@ -59,3 +59,11 @@ pub trait SearchSink {
     /// Returns an error if the sink cannot accept the event.
     fn event(&mut self, event: SearchEvent) -> crate::Result<()>;
 }
+
+/// Whether search records semantic events.
+pub enum Events<'a> {
+    /// Drop events during search.
+    Discard,
+    /// Buffer events during search, then deliver to the sink.
+    Emit(&'a mut dyn SearchSink),
+}

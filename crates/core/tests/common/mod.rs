@@ -14,8 +14,9 @@ use sift_core::search::{
 };
 use sift_core::{Candidate, CandidateOrder, CandidateSource, ScanScope, SnapshotFreshness};
 use sift_core::{
-    CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramWidth, Index, IndexConfig, IndexCoverage,
-    IndexRecord, IndexWalkConfig, Indexes, Inputs, NGramIndex, StoreMeta, WalkMeta,
+    CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramNorm, GramWidth, IndexConfig,
+    IndexCoverage, IndexDestination, IndexRecord, IndexWalkConfig, IndexWrite, Indexes, Inputs,
+    NGramIndex, StoreMeta, WalkMeta,
 };
 
 pub fn sample_store_meta(root: PathBuf, indexes: Vec<IndexRecord>) -> StoreMeta {
@@ -108,7 +109,7 @@ pub fn build_indexes(corpus: &Path, sift_dir: &Path) -> Indexes {
     let mut indexes = Indexes::open(sift_dir, &meta).expect("open indexes");
     indexes.refresh_meta(&meta).expect("refresh meta");
     let config = standard_build_config(corpus, &[]);
-    let catalog: Vec<Box<dyn Index>> = vec![Box::new(NGramIndex::new().width(GramWidth::TRIGRAM))];
+    let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
     indexes.build(&catalog, &config, &[]).expect("build index");
     indexes
 }
@@ -185,10 +186,23 @@ pub fn build_trigram_in_dir(corpus: &Path, trigram_dir: &Path) -> NGramIndex {
         walk: IndexWalkConfig::new(false),
         visibility: VisibilityConfig::default(),
     };
-    NGramIndex::new()
-        .width(GramWidth::TRIGRAM)
-        .build(&config, trigram_dir, &[])
-        .expect("build trigram index")
+    let knobs = NGramIndex::new().width(GramWidth::TRIGRAM);
+    knobs
+        .build(IndexWrite {
+            dest: IndexDestination::Directory(trigram_dir),
+            config: &config,
+            paths: &[],
+        })
+        .expect("build trigram index");
+    let abs_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    NGramIndex::open(
+        GramWidth::TRIGRAM,
+        GramNorm::Identity,
+        trigram_dir,
+        &abs_root,
+        kind,
+    )
+    .expect("open trigram index")
 }
 
 pub fn dir_size(path: &Path) -> u64 {

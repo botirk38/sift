@@ -11,7 +11,7 @@ pub mod stats;
 mod task;
 
 pub use event::{
-    BinaryEvent, ContextEvent, ContextKind, FileEvent, MatchEvent, SearchEvent, SearchSink,
+    BinaryEvent, ContextEvent, ContextKind, Events, FileEvent, MatchEvent, SearchEvent, SearchSink,
 };
 pub use hit::{LineCount, ListedFile, Listing, Match, MatchedFile, SpanCount};
 pub use input::{
@@ -24,5 +24,5 @@ pub use options::{
 };
 pub use query::{SearchQuery, SearchQueryBuilder};
 pub use report::Report;
-pub use searcher::{EventEmission, Searcher};
+pub use searcher::Searcher;
 pub use stats::{MatchTotals, Stats, StatsMode};

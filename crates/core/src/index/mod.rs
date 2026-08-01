@@ -1,23 +1,25 @@
 pub mod artifacts;
 pub mod config;
-pub mod contract;
 pub mod error;
+pub mod files;
+mod indexes;
 pub mod kinds;
 pub mod meta;
 pub mod mmap;
 pub mod ngram;
 mod paths;
-mod search;
+pub mod record;
 pub mod snapshot;
 
-pub use artifacts::{IndexDestination, IndexSource};
+pub use artifacts::IndexDestination;
 pub use config::{CorpusKind, CorpusSpec, IndexConfig, IndexWalkConfig};
-pub use contract::{Index, IndexRecord, IndexWrite};
 pub use error::IndexError;
+pub use files::Files;
+pub use indexes::Indexes;
 pub use kinds::{FileId, IndexId, PlanMode, QueryPlanOutput};
 pub use meta::{CorpusMeta, FilterMeta, IndexCoverage, StoreMeta, WalkMeta};
 pub use paths::IndexedCorpus;
-pub use search::Indexes;
+pub use record::{Index, IndexRecord, IndexWrite};
 pub use snapshot::SnapshotId;
 
 #[cfg(test)]

@@ -17,10 +17,10 @@ pub use grep::{
     IgnoreSources, TypeFilterRule, VisibilityConfig,
 };
 pub use search::{
-    BinaryEvent, BinaryMode, Case, CaseMode, ContextEvent, ContextKind, EventEmission, FileEvent,
-    HitPath, Input, InputConversion, InputEncoding, InputIdentity, Inputs, LineCount, ListedFile,
-    Listing, Match, MatchEvent, MatchTotals, MatchedFile, Narrowing, RegexEngine, Report,
-    SearchBound, SearchEvent, SearchFlags, SearchInputs, SearchMode, SearchOptions, SearchQuery,
+    BinaryEvent, BinaryMode, Case, CaseMode, ContextEvent, ContextKind, Events, FileEvent, HitPath,
+    Input, InputConversion, InputEncoding, InputIdentity, Inputs, LineCount, ListedFile, Listing,
+    Match, MatchEvent, MatchTotals, MatchedFile, Narrowing, RegexEngine, Report, SearchBound,
+    SearchEvent, SearchFlags, SearchInputs, SearchMode, SearchOptions, SearchQuery,
     SearchQueryBuilder, SearchSink, Searcher, SpanCount, Stats, StatsMode, ZeroCounts,
 };
 
@@ -32,9 +32,9 @@ pub use index::ngram::{
     Gram, GramNorm, GramWidth, GramWindows, Index as NGramIndex, NGramIndexError,
 };
 pub use index::{
-    CorpusKind, CorpusMeta, CorpusSpec, FileId, FilterMeta, Index, IndexConfig, IndexCoverage,
-    IndexError, IndexId, IndexRecord, IndexWrite, IndexedCorpus, Indexes, PlanMode,
-    QueryPlanOutput, SnapshotId, WalkMeta,
+    CorpusKind, CorpusMeta, CorpusSpec, FileId, Files, FilterMeta, Index, IndexConfig,
+    IndexCoverage, IndexDestination, IndexError, IndexId, IndexRecord, IndexWrite, IndexedCorpus,
+    Indexes, PlanMode, QueryPlanOutput, SnapshotId, WalkMeta,
 };
 
 use thiserror::Error;

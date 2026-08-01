@@ -82,11 +82,12 @@ Use short, descriptive kebab-case with a type prefix:
 
 | Type | Role |
 |------|------|
-| `Index` trait | Uniform kind: `build` / `open` / `query` / `candidate` / `update` |
-| `IndexRecord` | Persisted `{ kind, params }` in meta/manifest |
+| `Index` trait | Opened kind only: `query` / `coverage` / `all_file_ids` / `update` |
+| `IndexRecord` | Typed catalog knobs; `build` / `open` |
 | `IndexConfig` | Corpus/walk/visibility for a write |
 | `IndexWrite` | `{ dest, config, paths }` for create and refresh |
-| `Indexes` | Lifecycle + search orchestrator |
+| `Indexes` | Build/update + query/hydrate orchestrator |
+| `Files` | Snapshot-owned `FileId → Candidate` map |
 | `StoreMeta` | Store metadata |
 
 **Do not add to core:** `from_single`, `Indexes::candidates(SearchQuery)`, `reconcile`, `unindexed_hit_paths`, or other caller-specific helpers. Callers compose `Indexes::open`, `indexed_corpus().retain_unindexed`, and `Grep::resolve_candidates`.
@@ -259,18 +260,17 @@ fn build(config, output_dir) -> Result;     // directory
 fn build_into(config, writer, ns) -> Result; // snapshot
 ```
 
-## IndexSource / IndexDestination / IndexWrite
+## IndexDestination / IndexWrite
 
-Index lifecycle uses destination/source domain types and a single write request:
+Index writes use a destination domain type and a single write request:
 
-- `IndexSource` — where index data is read from:
-  `Directory(&Path)` or `Snapshot { reader, namespace }`.
 - `IndexDestination` — where index data is written to:
-  `Directory(&Path)` or `Snapshot { writer, namespace }`.
+ `Directory(&Path)` or `Snapshot { writer, namespace }`.
 - `IndexWrite` — `{ dest, config, paths }` for both `build` and `update`
-  (update differs only because `&self` already holds prior index data).
+ (update differs only because `&self` already holds prior index data).
+- Open is path-only: `IndexRecord::open(dir, root, corpus_kind)`.
 
-See `crates/core/src/index/artifacts.rs`, `contract.rs`, and `ngram/`.
+See `crates/core/src/index/artifacts.rs`, `record.rs`, and `ngram/`.
 
 ## Module Organization
 

@@ -11,7 +11,7 @@ use sift_core::grep::{
     CandidateFilter, CandidateFilterConfig, CandidateOrder, Grep, GrepRequest, PathDisplay,
 };
 use sift_core::search::{
-    EventEmission, InputConversion, SearchFlags, SearchInputs, SearchMode, SearchOptions,
+    Events, InputConversion, SearchFlags, SearchInputs, SearchMode, SearchOptions,
     SearchQueryBuilder, Searcher, StatsMode,
 };
 use sift_core::{Indexes, Inputs};
@@ -71,12 +71,7 @@ fn run_grep(
         conversion: InputConversion::new(&[], PathDisplay::Relative, None),
     };
     searcher
-        .execute(
-            inputs,
-            StatsMode::Off,
-            SearchMode::Lines,
-            EventEmission::Discard,
-        )
+        .execute(inputs, StatsMode::Off, SearchMode::Lines, Events::Discard)
         .unwrap()
         .found()
 }

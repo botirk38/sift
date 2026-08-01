@@ -163,7 +163,11 @@ pub fn build_index(corpus: &Path, idx_dir: &Path) -> NGramIndex {
         visibility: VisibilityConfig::default(),
     };
     let config_index = NGramConfig::new(GramWidth::TRIGRAM);
-    config_index.build(&config, idx_dir, &[]).unwrap();
+    config_index.build(sift_core::IndexWrite {
+        dest: sift_core::IndexDestination::Directory(idx_dir),
+        config: &config,
+        paths: &[],
+    }).unwrap();
     NGramConfig::open(GramWidth::TRIGRAM, idx_dir, root, kind).unwrap()
 }
 

@@ -14,8 +14,9 @@ use sift_core::search::{
     InputConversion, SearchMode, SearchOptions, SearchQueryBuilder, StatsMode,
 };
 use sift_core::{
-    CaseMode, CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramWidth, Index, IndexConfig,
-    IndexRecord, IndexWalkConfig, Indexes, Inputs, NGramIndex, StoreMeta, WalkMeta,
+    CaseMode, CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramNorm, GramWidth, IndexConfig,
+    IndexDestination, IndexRecord, IndexWalkConfig, IndexWrite, Indexes, Inputs, NGramIndex,
+    StoreMeta, WalkMeta,
 };
 
 mod common;
@@ -40,12 +41,18 @@ fn build_index(corpus: &Path, idx_dir: &Path) -> NGramIndex {
         visibility: VisibilityConfig::default(),
     };
     let config_index = NGramIndex::new().width(GramWidth::TRIGRAM);
-    config_index.build(&config, idx_dir, &[]).unwrap();
-    NGramIndex::open(GramWidth::TRIGRAM, idx_dir, root, kind).unwrap()
+    config_index
+        .build(IndexWrite {
+            dest: IndexDestination::Directory(idx_dir),
+            config: &config,
+            paths: &[],
+        })
+        .unwrap();
+    NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, root, kind).unwrap()
 }
 
 fn open_index(idx_dir: &Path, root: &Path, kind: CorpusKind) -> NGramIndex {
-    NGramIndex::open(GramWidth::TRIGRAM, idx_dir, root, kind).unwrap()
+    NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, root, kind).unwrap()
 }
 
 fn open_large_index() -> (tempfile::TempDir, NGramIndex) {
@@ -233,7 +240,7 @@ fn build_index_via_store(corpus: &Path, sift_dir: &Path) {
     let mut indexes = Indexes::open(sift_dir, &meta).unwrap();
     indexes.refresh_meta(&meta).unwrap();
     let config = standard_build_config(corpus, &[]);
-    let catalog: Vec<Box<dyn Index>> = vec![Box::new(NGramIndex::new().width(GramWidth::TRIGRAM))];
+    let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
     indexes.build(&catalog, &config, &[]).unwrap();
 }
 
@@ -366,7 +373,15 @@ fn bench_index_update(c: &mut Criterion) {
         let paths = [rel];
         let config = standard_build_config(&fx.corpus, &[]);
         b.iter(|| {
-            black_box(fx.index.update(&config, &fx.out_dir, &paths).unwrap());
+            black_box(
+                fx.index
+                    .update(IndexWrite {
+                        dest: IndexDestination::Directory(&fx.out_dir),
+                        config: &config,
+                        paths: &paths,
+                    })
+                    .unwrap(),
+            );
         });
     });
 
@@ -380,7 +395,15 @@ fn bench_index_update(c: &mut Criterion) {
         let paths = [rel];
         let config = standard_build_config(&fx.corpus, &[]);
         b.iter(|| {
-            black_box(fx.index.update(&config, &fx.out_dir, &paths).unwrap());
+            black_box(
+                fx.index
+                    .update(IndexWrite {
+                        dest: IndexDestination::Directory(&fx.out_dir),
+                        config: &config,
+                        paths: &paths,
+                    })
+                    .unwrap(),
+            );
         });
     });
 
@@ -390,7 +413,15 @@ fn bench_index_update(c: &mut Criterion) {
         // Deletion is detected only by a full rescan (empty `paths`).
         let config = standard_build_config(&fx.corpus, &[]);
         b.iter(|| {
-            black_box(fx.index.update(&config, &fx.out_dir, &[]).unwrap());
+            black_box(
+                fx.index
+                    .update(IndexWrite {
+                        dest: IndexDestination::Directory(&fx.out_dir),
+                        config: &config,
+                        paths: &[],
+                    })
+                    .unwrap(),
+            );
         });
     });
 
@@ -405,7 +436,15 @@ fn bench_index_update(c: &mut Criterion) {
             .collect();
         let config = standard_build_config(&fx.corpus, &[]);
         b.iter(|| {
-            black_box(fx.index.update(&config, &fx.out_dir, &paths).unwrap());
+            black_box(
+                fx.index
+                    .update(IndexWrite {
+                        dest: IndexDestination::Directory(&fx.out_dir),
+                        config: &config,
+                        paths: &paths,
+                    })
+                    .unwrap(),
+            );
         });
     });
 
@@ -512,8 +551,7 @@ fn bench_indexes_open(c: &mut Criterion) {
             );
             let mut indexes = Indexes::open(&sift, &meta).expect("open indexes");
             indexes.refresh_meta(&meta).expect("refresh meta");
-            let catalog: Vec<Box<dyn Index>> =
-                vec![Box::new(NGramIndex::new().width(GramWidth::TRIGRAM))];
+            let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
             indexes
                 .build(
                     &catalog,

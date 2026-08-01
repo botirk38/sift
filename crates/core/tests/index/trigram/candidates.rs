@@ -3,7 +3,7 @@ use std::{fs, path::Path};
 use sift_core::grep::FilterAdmission;
 use sift_core::search::CaseMode;
 use sift_core::search::SearchOptions;
-use sift_core::{GramWidth, Index, Indexes, NGramIndex};
+use sift_core::{GramWidth, Indexes, NGramIndex};
 use tempfile::TempDir;
 
 use super::super::common::{
@@ -213,14 +213,13 @@ fn dual_indexes_intersect_identity_all_with_ascii_lower_matched() {
     let root = corpus.canonicalize().unwrap_or_else(|_| corpus.clone());
     let identity = NGramIndex::new().width(GramWidth::TRIGRAM);
     let ascii_lower = NGramIndex::ASCII_LOWER_5;
-    let records = vec![identity.to_record(), ascii_lower.to_record()];
-    let meta = sample_store_meta(root, records);
+    let records = [identity.to_record(), ascii_lower.to_record()];
+    let meta = sample_store_meta(root, records.to_vec());
     let mut indexes = Indexes::open(&sift_dir, &meta).expect("open indexes");
     indexes.refresh_meta(&meta).expect("refresh meta");
     let config = standard_build_config(&corpus, &[]);
-    let catalog: Vec<Box<dyn Index>> = vec![Box::new(identity), Box::new(ascii_lower)];
     indexes
-        .build(&catalog, &config, &[])
+        .build(&records, &config, &[])
         .expect("build dual indexes");
 
     let indexes = open_indexes(&sift_dir);

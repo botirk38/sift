@@ -16,13 +16,28 @@ use crate::search::input::{HitPath, Input};
 use crate::search::matcher::Matcher;
 use crate::search::mode::SearchMode;
 use crate::search::options::{BinaryMode, SearchOptions};
-use crate::search::searcher::Events;
 
-pub(in crate::search) struct SearchTask<'searcher, 'input> {
+/// Whether a search task buffers semantic events for later delivery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Buffer {
+    Discard,
+    Collect,
+}
+
+impl Buffer {
+    pub(super) const fn from(events: &crate::search::event::Events<'_>) -> Self {
+        match events {
+            crate::search::event::Events::Discard => Self::Discard,
+            crate::search::event::Events::Emit(_) => Self::Collect,
+        }
+    }
+}
+
+pub(super) struct SearchTask<'searcher, 'input> {
     matcher: &'searcher Matcher,
     options: &'searcher SearchOptions,
     mode: SearchMode,
-    events: Events,
+    buffer: Buffer,
     input: &'input Input<'input>,
 }
 
@@ -53,23 +68,23 @@ enum InputOrigin {
 }
 
 impl<'searcher, 'input> SearchTask<'searcher, 'input> {
-    pub(in crate::search) const fn new(
+    pub(super) const fn new(
         matcher: &'searcher Matcher,
         options: &'searcher SearchOptions,
         mode: SearchMode,
-        events: Events,
+        buffer: Buffer,
         input: &'input Input<'input>,
     ) -> Self {
         Self {
             matcher,
             options,
             mode,
-            events,
+            buffer,
             input,
         }
     }
 
-    pub(in crate::search) fn execute(self, grep: &mut RegexSearcher) -> FileSearch {
+    pub(super) fn execute(self, grep: &mut RegexSearcher) -> FileSearch {
         let origin = InputOrigin::from(self.input);
         match origin {
             InputOrigin::Discovered => match self.matcher {
@@ -90,10 +105,7 @@ impl<'searcher, 'input> SearchTask<'searcher, 'input> {
         }
     }
 
-    pub(in crate::search) fn discovered_searcher(
-        options: &SearchOptions,
-        mode: SearchMode,
-    ) -> RegexSearcher {
+    pub(super) fn discovered_searcher(options: &SearchOptions, mode: SearchMode) -> RegexSearcher {
         Self::searcher(options, mode, InputOrigin::Discovered)
     }
 
@@ -139,7 +151,7 @@ impl<'searcher, 'input> SearchTask<'searcher, 'input> {
                 .map(str::as_bytes)
                 .map(<[u8]>::to_vec),
             match_emission,
-            buffered: self.events,
+            buffer: self.buffer,
             mode: self.mode,
             line_matches: 0,
             match_spans: 0,
@@ -184,7 +196,7 @@ impl<'searcher, 'input> SearchTask<'searcher, 'input> {
 }
 
 impl FileSearch {
-    pub(in crate::search) fn drain_events(&mut self) -> impl Iterator<Item = SearchEvent> + '_ {
+    pub(super) fn drain_events(&mut self) -> impl Iterator<Item = SearchEvent> + '_ {
         self.events.drain(..)
     }
 }
@@ -231,7 +243,7 @@ struct MatchSink<'a, M> {
     matcher: &'a M,
     replacement: Option<Vec<u8>>,
     match_emission: MatchEmission,
-    buffered: Events,
+    buffer: Buffer,
     mode: SearchMode,
     line_matches: usize,
     match_spans: usize,
@@ -337,7 +349,7 @@ impl<M: GrepMatcherTrait> MatchSink<'_, M> {
     fn record_match(&mut self, mat: &SinkMatch<'_>, line: usize, line_bytes: &[u8]) -> bool {
         match self.match_emission {
             MatchEmission::Presence | MatchEmission::LineCount => {
-                if matches!(self.buffered, Events::Collect) {
+                if matches!(self.buffer, Buffer::Collect) {
                     self.events.push(SearchEvent::Match(MatchEvent {
                         path: Arc::clone(&self.path),
                         line_number: mat.line_number(),
@@ -349,7 +361,7 @@ impl<M: GrepMatcherTrait> MatchSink<'_, M> {
                     }));
                 }
             }
-            MatchEmission::Lines if matches!(self.buffered, Events::Discard) => {
+            MatchEmission::Lines if matches!(self.buffer, Buffer::Discard) => {
                 if self.replacement.is_some() {
                     let _ = self
                         .matcher
@@ -389,7 +401,7 @@ impl<M: GrepMatcherTrait> MatchSink<'_, M> {
                     replacement_matches: replacement.map_or_else(Vec::new, |r| r.matches),
                 }));
             }
-            MatchEmission::Spans if matches!(self.buffered, Events::Discard) => match self.mode {
+            MatchEmission::Spans if matches!(self.buffer, Buffer::Discard) => match self.mode {
                 SearchMode::CountMatches { .. } | SearchMode::CountLines { .. } => {
                     self.count_spans(line_bytes);
                 }
@@ -406,9 +418,9 @@ impl<M: GrepMatcherTrait> Sink for MatchSink<'_, M> {
     type Error = io::Error;
 
     fn begin(&mut self, _searcher: &RegexSearcher) -> Result<bool, Self::Error> {
-        match self.buffered {
-            Events::Discard => {}
-            Events::Collect => self.events.push(SearchEvent::Begin(FileEvent {
+        match self.buffer {
+            Buffer::Discard => {}
+            Buffer::Collect => self.events.push(SearchEvent::Begin(FileEvent {
                 path: Arc::clone(&self.path),
             })),
         }
@@ -431,9 +443,9 @@ impl<M: GrepMatcherTrait> Sink for MatchSink<'_, M> {
         _searcher: &RegexSearcher,
         context: &SinkContext<'_>,
     ) -> Result<bool, Self::Error> {
-        match self.buffered {
-            Events::Discard => {}
-            Events::Collect => self.events.push(SearchEvent::Context(ContextEvent {
+        match self.buffer {
+            Buffer::Discard => {}
+            Buffer::Collect => self.events.push(SearchEvent::Context(ContextEvent {
                 path: Arc::clone(&self.path),
                 kind: ContextKind::from(context.kind()),
                 line_number: context.line_number(),
@@ -445,9 +457,9 @@ impl<M: GrepMatcherTrait> Sink for MatchSink<'_, M> {
     }
 
     fn context_break(&mut self, _searcher: &RegexSearcher) -> Result<bool, Self::Error> {
-        match self.buffered {
-            Events::Discard => {}
-            Events::Collect => self.events.push(SearchEvent::ContextBreak),
+        match self.buffer {
+            Buffer::Discard => {}
+            Buffer::Collect => self.events.push(SearchEvent::ContextBreak),
         }
         Ok(true)
     }
@@ -458,9 +470,9 @@ impl<M: GrepMatcherTrait> Sink for MatchSink<'_, M> {
         binary_byte_offset: u64,
     ) -> Result<bool, Self::Error> {
         self.binary_byte_offset.get_or_insert(binary_byte_offset);
-        match self.buffered {
-            Events::Discard => {}
-            Events::Collect => self.events.push(SearchEvent::Binary(BinaryEvent {
+        match self.buffer {
+            Buffer::Discard => {}
+            Buffer::Collect => self.events.push(SearchEvent::Binary(BinaryEvent {
                 path: Arc::clone(&self.path),
                 absolute_byte_offset: binary_byte_offset,
                 explicit: matches!(self.origin, InputOrigin::Explicit),
@@ -478,9 +490,9 @@ impl<M: GrepMatcherTrait> Sink for MatchSink<'_, M> {
         if self.binary_byte_offset.is_none() {
             self.binary_byte_offset = finish.binary_byte_offset();
         }
-        match self.buffered {
-            Events::Discard => {}
-            Events::Collect => self.events.push(SearchEvent::End(FileEvent {
+        match self.buffer {
+            Buffer::Discard => {}
+            Buffer::Collect => self.events.push(SearchEvent::End(FileEvent {
                 path: Arc::clone(&self.path),
             })),
         }

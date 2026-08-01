@@ -7,7 +7,7 @@ use crate::candidates::CandidateSource;
 use crate::candidates::plan::Plan;
 use crate::candidates::scope::Coverage;
 use crate::search::{
-    EventEmission, Report, SearchInputs, SearchMode, SearchQuery, SearchSink, Searcher, StatsMode,
+    Events, Report, SearchInputs, SearchMode, SearchQuery, SearchSink, Searcher, StatsMode,
 };
 pub use crate::search::{InputConversion, Inputs};
 
@@ -48,7 +48,7 @@ impl<'a> Grep<'a> {
     ///
     /// Returns an error if query compilation, candidate resolution, or search fails.
     pub fn search(&self, request: GrepRequest<'a>) -> crate::Result<Report> {
-        self.execute(request, EventEmission::Discard)
+        self.execute(request, Events::Discard)
     }
 
     /// Run a grep search and emit semantic search events to a sink.
@@ -61,7 +61,7 @@ impl<'a> Grep<'a> {
         request: GrepRequest<'a>,
         sink: &mut impl SearchSink,
     ) -> crate::Result<Report> {
-        self.execute(request, EventEmission::Emit(sink))
+        self.execute(request, Events::Emit(sink))
     }
 
     /// Resolve corpus candidates for a search request without running search.
@@ -80,11 +80,7 @@ impl<'a> Grep<'a> {
         Plan::new(&self.source, &searcher.query, coverage).resolve(&self.source)
     }
 
-    fn execute(
-        &self,
-        request: GrepRequest<'a>,
-        events: EventEmission<'_>,
-    ) -> crate::Result<Report> {
+    fn execute(&self, request: GrepRequest<'a>, events: Events<'_>) -> crate::Result<Report> {
         let GrepRequest {
             query,
             streams,
