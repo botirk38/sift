@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use crate::corpus::Candidate;
+use crate::corpus::File;
 use crate::corpus::walk::LinkTraversal;
 use crate::corpus::walk::{FileWalk, WalkFile};
 use crate::index::snapshot::ArtifactData;
@@ -221,7 +221,7 @@ impl Index {
     #[must_use]
     pub fn explain(&self, query: &Query) -> crate::index::QueryPlanOutput {
         let mode = match Self::extract_literal_arms(self.width, query) {
-            Some(_) => crate::index::PlanMode::IndexedCandidates,
+            Some(_) => crate::index::PlanMode::Indexed,
             None => crate::index::PlanMode::FullScan,
         };
         crate::index::QueryPlanOutput {
@@ -236,11 +236,11 @@ impl Index {
     }
 
     #[must_use]
-    pub fn candidate(&self, id: FileId) -> Option<Candidate> {
+    pub fn file(&self, id: FileId) -> Option<File> {
         let row = self.storage.files.row(id)?;
         let rel = PathBuf::from(row.path);
         let abs = self.storage.root.join(&rel);
-        Some(Candidate::with_metadata(rel, abs, Some(row.size), None))
+        Some(File::with_metadata(rel, abs, Some(row.size), None))
     }
 
     #[must_use]

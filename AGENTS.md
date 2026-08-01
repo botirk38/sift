@@ -6,7 +6,7 @@ Guidelines for AI agents working on the sift codebase.
 
 Sift is an indexed code search engine written in Rust, built around **composable on-disk indexes**. It builds indexes tuned to the search workload, then uses them to narrow candidate files before running the full regex engine.
 
-The core architecture treats code search like database query execution: every kind implements one `Index` trait; `Indexes` orchestrates build/update/search and intersects `query` results. Candidate resolution goes through `Plan::resolve`. Today the default index is runtime-width N-gram (trigram default).
+The core architecture treats code search like database query execution: every kind implements one `Index` trait; `Indexes` orchestrates build/update/search and intersects `query` results. File resolution goes through `Plan::resolve`. Today the default index is runtime-width N-gram (trigram default).
 
 The candidate pipeline is **plan (pure) → resolve (I/O) → search**: `Plan::new` decides discovery without querying indexes; `Plan::resolve` is the single I/O boundary (query + walk + order); `Searcher` consumes lazy `Candidates` (`into_vec()` materializes all).
 
@@ -42,7 +42,8 @@ evidence for performance PRs.
 | `crates/core/src/candidates/` | Index-agnostic candidate description, planning, and resolution |
 | `crates/core/src/index/` | `Index` trait, `IndexRecord`, `Indexes` orchestrator, `Snapshot` |
 | `crates/core/src/index/ngram/` | N-gram `Index` impl (first shipped kind) |
-| `crates/core/src/grep/` | Grep search API and matcher execution |
+| `crates/core/src/search/` | Query, Searcher, Origin, SearchMode, report/events |
+| `crates/core/src/corpus/` | `File`, `FileFilter`, `FileOrder`, walk |
 | `crates/cli/` | `sift-cli`: `sift` binary (clap CLI over core) |
 | `fuzz/` | `cargo-fuzz` targets (standalone package, nightly) |
 | `benchsuite/` | Comparative `rg` vs `sift` benchmarks |
@@ -87,7 +88,7 @@ Use short, descriptive kebab-case with a type prefix:
 | `IndexConfig` | Corpus/walk/visibility for a write |
 | `IndexDestination` | Directory or snapshot write target |
 | `Indexes` | Build/update + query/hydrate orchestrator |
-| `Files` | Snapshot-owned `FileId → Candidate` map |
+| `Files` | Snapshot-owned `FileId → File` map |
 | `StoreMeta` | Store metadata |
 
 **Do not add to core:** `from_single`, `Indexes::candidates(Query)`, `reconcile`, `unindexed_hit_paths`, or other caller-specific helpers. Callers compose `Indexes::open`, `indexed_corpus().retain_unindexed`, and `Plan::resolve`.
@@ -151,7 +152,7 @@ done.
 When adding request/config structs, name them after the domain decision they
 represent, not the mechanical data they carry. Avoid vague bundles such as
 `Context`, `State`, `Read`, or `Options` unless those are the actual domain
-terms. Prefer names like `CandidateSource`, `ScanScope`, and
+terms. Prefer names like `Scan`, `ScanScope`, and
 `IndexCoverage` that tell callers how to reason about the API.
 
 Do not expose low-level planner knobs through higher-level APIs as loose fields.
@@ -330,3 +331,11 @@ Clap parses `*Decl` flag groups; **`Argv` resolves effective runtime values**
 - When work is split across multiple PRs, stop after each PR and pull from master before starting the next.
 - Prefer unifying types across layers over adapter or translation layers between near-duplicates.
 - Treat narrowly crate-restricted `pub(in crate::...)` wrapper enums as a smell; prefer domain types with clear ownership.
+- Prefer search identity as `Origin::{File, Stream}` (not `Candidate`); stream identity is a string `label`, not a filesystem `Path`.
+- Prefer printer/JSON rendering via match on `Origin` variants; do not Path-force stream labels for API uniformity.
+- Prefer enums over bools for real alternatives (`Quiet`, `InvertMatch`, `MatchEmissionMode`, `ZeroCounts`).
+- Minimize helper methods as well as free functions—only when absolutely justified.
+
+## Learned Workspace Facts
+
+- Core search lives under `crates/core/src/search/` (`Query`, `Searcher`, `Plan`, `SearchInputs`, `SearchError`); there is no `sift_core::grep` module or `Grep` facade. The CLI may still keep a local `grep` module for `Run`.

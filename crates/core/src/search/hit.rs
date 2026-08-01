@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use crate::search::input::FileIdentity;
+use crate::corpus::PathDisplay;
+use crate::search::input::Origin;
 
 /// One match hit (line text or span text); path lives on the enclosing listed file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10,10 +10,10 @@ pub struct Match {
     pub text: String,
 }
 
-/// File identity for a listed search result.
+/// Listed search result row identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedFile {
-    pub identity: Arc<FileIdentity>,
+    pub origin: Origin,
     pub binary_byte_offset: Option<u64>,
 }
 
@@ -21,13 +21,13 @@ impl ListedFile {
     /// Corpus-relative path for daemon / lazy index enqueue, if any.
     #[must_use]
     pub fn corpus_path(&self) -> Option<&Path> {
-        self.identity.corpus_path()
+        self.origin.corpus_path()
     }
 
-    /// Path shown to the user for this identity.
+    /// Text shown to the user for this origin.
     #[must_use]
-    pub fn display_path(&self, mode: crate::corpus::candidate::PathDisplay) -> &Path {
-        self.identity.display_path(mode)
+    pub fn display(&self, mode: PathDisplay) -> std::borrow::Cow<'_, str> {
+        self.origin.display(mode)
     }
 }
 
@@ -87,7 +87,7 @@ impl Listing {
     pub(crate) const fn empty(mode: crate::search::SearchMode) -> Self {
         use crate::search::SearchMode;
         match mode {
-            SearchMode::FilesWithMatches => Self::MatchingPaths(Vec::new()),
+            SearchMode::FilesWithMatches | SearchMode::Paths => Self::MatchingPaths(Vec::new()),
             SearchMode::FilesWithoutMatch => Self::NonMatchingPaths(Vec::new()),
             SearchMode::CountLines { .. } => Self::LineCounts(Vec::new()),
             SearchMode::CountMatches { .. } => Self::SpanCounts(Vec::new()),

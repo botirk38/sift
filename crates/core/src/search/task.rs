@@ -1,17 +1,15 @@
-use std::io;
-use std::sync::Arc;
-
 use grep_matcher::{Captures, LineTerminator, Matcher as GrepMatcherTrait};
 use grep_searcher::{
     BinaryDetection, Searcher as RegexSearcher, SearcherBuilder as RegexSearcherBuilder, Sink,
     SinkContext, SinkContextKind, SinkFinish, SinkMatch,
 };
+use std::io;
 
 use crate::search::event::{
     BinaryEvent, ContextEvent, ContextKind, FileEvent, MatchEvent, SearchEvent,
 };
 use crate::search::hit::{LineCount, ListedFile, ListedRow, Match, MatchedFile, SpanCount};
-use crate::search::input::{FileIdentity, Input};
+use crate::search::input::{Input, Origin};
 use crate::search::matcher::Matcher;
 use crate::search::mode::SearchMode;
 use crate::search::options::{BinaryMode, SearchOptions};
@@ -118,7 +116,7 @@ impl<'searcher, 'input> SearchTask<'searcher, 'input> {
             .invert_match(options.invert_match())
             .line_number(!matches!(
                 mode,
-                SearchMode::FilesWithMatches | SearchMode::FilesWithoutMatch
+                SearchMode::FilesWithMatches | SearchMode::FilesWithoutMatch | SearchMode::Paths
             ))
             .max_matches(Self::match_limit_for(mode, options));
         builder.before_context(options.before_context);
@@ -136,10 +134,9 @@ impl<'searcher, 'input> SearchTask<'searcher, 'input> {
         origin: InputOrigin,
     ) -> FileSearch {
         let match_emission = MatchEmission::from(self.mode, self.options);
-        let file = Arc::clone(self.input.file());
         let mut sink = MatchSink {
-            file,
-            origin,
+            origin: self.input.origin().clone(),
+            admission: origin,
             matcher: grep_matcher,
             replacement: self
                 .options
@@ -158,7 +155,8 @@ impl<'searcher, 'input> SearchTask<'searcher, 'input> {
             events: Vec::new(),
         };
         match self.input {
-            Input::Path { path, .. } => {
+            Input::Path { origin, .. } => {
+                let path = origin.abs_path().expect("path input has file origin");
                 let _ = grep.search_path(grep_matcher, path, &mut sink);
             }
             Input::Bytes { bytes, .. } => {
@@ -170,7 +168,9 @@ impl<'searcher, 'input> SearchTask<'searcher, 'input> {
 
     fn match_limit_for(mode: SearchMode, options: &SearchOptions) -> Option<u64> {
         match mode {
-            SearchMode::FilesWithMatches | SearchMode::FilesWithoutMatch => Some(1),
+            SearchMode::FilesWithMatches | SearchMode::FilesWithoutMatch | SearchMode::Paths => {
+                Some(1)
+            }
             SearchMode::Lines
             | SearchMode::Matches
             | SearchMode::CountLines { .. }
@@ -208,7 +208,9 @@ impl MatchEmission {
             };
         }
         match mode {
-            SearchMode::FilesWithMatches | SearchMode::FilesWithoutMatch => Self::Presence,
+            SearchMode::FilesWithMatches | SearchMode::FilesWithoutMatch | SearchMode::Paths => {
+                Self::Presence
+            }
             SearchMode::CountLines { .. } => Self::LineCount,
             SearchMode::CountMatches { .. } | SearchMode::Matches => Self::Spans,
             SearchMode::Lines if options.only_matching() => Self::Spans,
@@ -234,8 +236,8 @@ impl From<&Input<'_>> for InputOrigin {
 }
 
 struct MatchSink<'a, M> {
-    file: Arc<FileIdentity>,
-    origin: InputOrigin,
+    origin: Origin,
+    admission: InputOrigin,
     matcher: &'a M,
     replacement: Option<Vec<u8>>,
     match_emission: MatchEmission,
@@ -253,12 +255,14 @@ impl<M: GrepMatcherTrait> MatchSink<'_, M> {
     fn into_row(self) -> FileSearch {
         let matched = self.line_matches > 0;
         let listed_file = ListedFile {
-            identity: Arc::clone(&self.file),
+            origin: self.origin.clone(),
             binary_byte_offset: self.binary_byte_offset,
         };
         let row = if self.mode.admits(matched) {
             Some(match self.mode {
-                SearchMode::FilesWithMatches => ListedRow::MatchingPath(listed_file),
+                SearchMode::FilesWithMatches | SearchMode::Paths => {
+                    ListedRow::MatchingPath(listed_file)
+                }
                 SearchMode::FilesWithoutMatch => ListedRow::NonMatchingPath(listed_file),
                 SearchMode::CountLines { .. } => ListedRow::LineCount(LineCount {
                     file: listed_file,
@@ -325,7 +329,7 @@ impl<M: GrepMatcherTrait> MatchSink<'_, M> {
                 true
             });
         self.events.push(SearchEvent::Match(MatchEvent {
-            file: Arc::clone(&self.file),
+            origin: self.origin.clone(),
             line_number: mat.line_number(),
             absolute_byte_offset: Some(mat.absolute_byte_offset()),
             bytes: line_bytes.to_vec(),
@@ -342,7 +346,7 @@ impl<M: GrepMatcherTrait> MatchSink<'_, M> {
             MatchEmission::Presence | MatchEmission::LineCount => {
                 if matches!(self.buffer, Buffer::Collect) {
                     self.events.push(SearchEvent::Match(MatchEvent {
-                        file: Arc::clone(&self.file),
+                        origin: self.origin.clone(),
                         line_number: mat.line_number(),
                         absolute_byte_offset: Some(mat.absolute_byte_offset()),
                         bytes: Vec::new(),
@@ -381,7 +385,7 @@ impl<M: GrepMatcherTrait> MatchSink<'_, M> {
                         true
                     });
                 self.events.push(SearchEvent::Match(MatchEvent {
-                    file: Arc::clone(&self.file),
+                    origin: self.origin.clone(),
                     line_number: mat.line_number(),
                     absolute_byte_offset: Some(mat.absolute_byte_offset()),
                     bytes: line_bytes.to_vec(),
@@ -412,7 +416,7 @@ impl<M: GrepMatcherTrait> Sink for MatchSink<'_, M> {
         match self.buffer {
             Buffer::Discard => {}
             Buffer::Collect => self.events.push(SearchEvent::Begin(FileEvent {
-                file: Arc::clone(&self.file),
+                origin: self.origin.clone(),
             })),
         }
         Ok(true)
@@ -437,7 +441,7 @@ impl<M: GrepMatcherTrait> Sink for MatchSink<'_, M> {
         match self.buffer {
             Buffer::Discard => {}
             Buffer::Collect => self.events.push(SearchEvent::Context(ContextEvent {
-                file: Arc::clone(&self.file),
+                origin: self.origin.clone(),
                 kind: ContextKind::from(context.kind()),
                 line_number: context.line_number(),
                 absolute_byte_offset: context.absolute_byte_offset(),
@@ -464,9 +468,9 @@ impl<M: GrepMatcherTrait> Sink for MatchSink<'_, M> {
         match self.buffer {
             Buffer::Discard => {}
             Buffer::Collect => self.events.push(SearchEvent::Binary(BinaryEvent {
-                file: Arc::clone(&self.file),
+                origin: self.origin.clone(),
                 absolute_byte_offset: binary_byte_offset,
-                explicit: matches!(self.origin, InputOrigin::Explicit),
+                explicit: matches!(self.admission, InputOrigin::Explicit),
             })),
         }
         Ok(true)
@@ -484,7 +488,7 @@ impl<M: GrepMatcherTrait> Sink for MatchSink<'_, M> {
         match self.buffer {
             Buffer::Discard => {}
             Buffer::Collect => self.events.push(SearchEvent::End(FileEvent {
-                file: Arc::clone(&self.file),
+                origin: self.origin.clone(),
             })),
         }
         Ok(())

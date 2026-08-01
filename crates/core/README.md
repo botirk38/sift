@@ -24,7 +24,7 @@ IndexRecord / Box<dyn Index> ──Indexes::build──> snapshot on disk
 |------|------|
 | `Index` | Opened kind (`query` / `coverage` / `all_file_ids` / `update`) |
 | `IndexRecord` | Typed catalog knobs (`build` / `open`) |
-| `Files` | Snapshot-owned `FileId → Candidate` map |
+| `Files` | Snapshot-owned `FileId → File` map |
 | `IndexConfig` | Corpus/walk/visibility for a write |
 | `Indexes` | Build/update + query/hydrate |
 | `Query` / `Searcher` | Patterns + execute |
@@ -43,12 +43,12 @@ IndexRecord / Box<dyn Index> ──Indexes::build──> snapshot on disk
 
 ```rust
 use sift_core::{
-    CandidateSource, Events, Inputs, Plan, Query, ScanScope, SearchInputs, SearchMode,
+    Scan, Events, Inputs, Plan, Query, ScanScope, SearchInputs, SearchMode,
     SearchOptions, Searcher, SnapshotFreshness, StatsMode,
 };
 
 let searcher = Searcher::new(Query::new(vec!["pattern".into()], SearchOptions::default())?)?;
-let source = CandidateSource::new(
+let source = Scan::new(
     indexes.as_ref(),
     &filter,
     store_meta.as_ref(),

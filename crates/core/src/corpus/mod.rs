@@ -1,14 +1,14 @@
 //! Shared corpus foundation: candidates, filters, and filesystem walk.
 
-pub mod candidate;
+pub mod file;
 pub mod filter;
 pub mod order;
 pub mod walk;
 
-pub use candidate::{Candidate, PathDisplay};
+pub use file::{File, PathDisplay};
 pub use filter::{
-    CandidateFilter, CandidateFilterConfig, FilterAdmission, GlobConfig, HiddenMode, IgnoreConfig,
+    FileFilter, FileFilterConfig, FilterAdmission, GlobConfig, HiddenMode, IgnoreConfig,
     IgnoreSources, TypeFilterRule, VisibilityConfig,
 };
-pub use order::{CandidateOrder, CandidateOrderDirection, CandidateOrderKey};
+pub use order::{FileOrder, FileOrderDirection, FileOrderKey};
 pub use walk::{AllFiles, FileWalk, WalkFile, WalkMetadata, WalkSelector};

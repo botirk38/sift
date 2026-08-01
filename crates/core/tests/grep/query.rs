@@ -70,7 +70,7 @@ fn explain_reports_indexed_for_literal() {
     let query = Query::new(vec!["foo.*".to_string()], SearchOptions::default()).expect("query");
     let output = index.explain(&query);
     assert_eq!(output.pattern, "foo.*");
-    assert_eq!(output.mode, PlanMode::IndexedCandidates);
+    assert_eq!(output.mode, PlanMode::Indexed);
 }
 
 #[test]

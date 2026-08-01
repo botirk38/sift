@@ -1,18 +1,17 @@
 use std::borrow::Cow;
 use std::fs;
-use std::sync::Arc;
 
 use sift_core::{
-    ByteInput, CandidateFilter, CandidateFilterConfig, CandidateOrder, CandidateOrderDirection,
-    CandidateOrderKey, CandidateSource, Events, FileIdentity, Inputs, Listing, Narrowing,
-    PathDisplay, Plan, Query, ScanScope, SearchEvent, SearchInputs, SearchMode, SearchOptions,
-    SearchSink, Searcher, SnapshotFreshness, StatsMode, ZeroCounts,
+    ByteInput, Events, FileFilter, FileFilterConfig, FileOrder, FileOrderDirection, FileOrderKey,
+    Inputs, Listing, Narrowing, Origin, PathDisplay, Plan, Query, Scan, ScanScope, SearchEvent,
+    SearchInputs, SearchMode, SearchOptions, SearchSink, Searcher, SnapshotFreshness, StatsMode,
+    ZeroCounts,
 };
 use tempfile::TempDir;
 
 use super::common::{make_parity_corpus, open_indexes};
 
-const fn index_scope(order: CandidateOrder) -> ScanScope {
+const fn index_scope(order: FileOrder) -> ScanScope {
     ScanScope::Index {
         order,
         freshness: SnapshotFreshness::Current,
@@ -29,14 +28,14 @@ fn grep_finds_match_in_indexed_corpus() {
     super::common::build_indexes(&corpus, &sift_dir);
 
     let indexes = open_indexes(&sift_dir);
-    let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
+    let filter = FileFilter::new(&FileFilterConfig::default(), &corpus).expect("filter");
     let query = Query::new(vec!["beta".to_string()], SearchOptions::default()).expect("query");
     let searcher = Searcher::new(query).expect("searcher");
-    let source = CandidateSource::new(
+    let source = Scan::new(
         Some(&indexes),
         &filter,
         None,
-        index_scope(CandidateOrder::default()),
+        index_scope(FileOrder::default()),
     );
     let candidates = Plan::new(&source, searcher.query(), SearchMode::Lines.coverage())
         .resolve(&source)
@@ -67,18 +66,18 @@ fn candidate_planner_all_indexed_uses_index_when_metadata_missing() {
     super::common::build_indexes(&corpus, &sift_dir);
 
     let indexes = open_indexes(&sift_dir);
-    let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
+    let filter = FileFilter::new(&FileFilterConfig::default(), &corpus).expect("filter");
     let query = Query::new(
         vec!["alpha|beta|gamma|delta".to_string()],
         SearchOptions::default(),
     )
     .expect("query");
     let searcher = Searcher::new(query).expect("searcher");
-    let source = CandidateSource::new(
+    let source = Scan::new(
         Some(&indexes),
         &filter,
         None,
-        index_scope(CandidateOrder::default()),
+        index_scope(FileOrder::default()),
     );
 
     let candidates = Plan::new(&source, searcher.query(), SearchMode::Lines.coverage())
@@ -98,12 +97,12 @@ fn high_level_grep_search_resolves_candidates_and_reports_matches() {
     super::common::build_indexes(&corpus, &sift_dir);
 
     let indexes = open_indexes(&sift_dir);
-    let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
-    let source = CandidateSource::new(
+    let filter = FileFilter::new(&FileFilterConfig::default(), &corpus).expect("filter");
+    let source = Scan::new(
         Some(&indexes),
         &filter,
         None,
-        index_scope(CandidateOrder::default()),
+        index_scope(FileOrder::default()),
     );
 
     let query = Query::new(vec!["beta".to_string()], SearchOptions::default()).expect("query");
@@ -146,12 +145,12 @@ fn high_level_grep_stream_emits_events_without_collecting_matches() {
     super::common::build_indexes(&corpus, &sift_dir);
 
     let indexes = open_indexes(&sift_dir);
-    let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
-    let source = CandidateSource::new(
+    let filter = FileFilter::new(&FileFilterConfig::default(), &corpus).expect("filter");
+    let source = Scan::new(
         Some(&indexes),
         &filter,
         None,
-        index_scope(CandidateOrder::default()),
+        index_scope(FileOrder::default()),
     );
     let mut sink = EventRecorder::default();
 
@@ -193,13 +192,13 @@ fn high_level_grep_files_without_match_selects_nonmatching_files() {
     super::common::build_indexes(&corpus, &sift_dir);
 
     let indexes = open_indexes(&sift_dir);
-    let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
-    let source = CandidateSource::new(
+    let filter = FileFilter::new(&FileFilterConfig::default(), &corpus).expect("filter");
+    let source = Scan::new(
         Some(&indexes),
         &filter,
         None,
         ScanScope::Walk {
-            order: CandidateOrder::default(),
+            order: FileOrder::default(),
         },
     );
 
@@ -242,12 +241,12 @@ fn high_level_grep_files_without_match_uses_full_corpus_with_index() {
     super::common::build_indexes(&corpus, &sift_dir);
 
     let indexes = open_indexes(&sift_dir);
-    let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
-    let source = CandidateSource::new(
+    let filter = FileFilter::new(&FileFilterConfig::default(), &corpus).expect("filter");
+    let source = Scan::new(
         Some(&indexes),
         &filter,
         None,
-        index_scope(CandidateOrder::default()),
+        index_scope(FileOrder::default()),
     );
 
     let query = Query::new(vec!["hello".to_string()], SearchOptions::default()).expect("query");
@@ -275,11 +274,7 @@ fn high_level_grep_files_without_match_uses_full_corpus_with_index() {
         panic!("expected NonMatchingPaths");
     };
     assert_eq!(files.len(), 1);
-    assert!(
-        files[0]
-            .display_path(PathDisplay::Relative)
-            .ends_with("b.txt")
-    );
+    assert!(files[0].display(PathDisplay::Relative).ends_with("b.txt"));
 }
 
 #[test]
@@ -292,12 +287,12 @@ fn high_level_grep_files_without_match_is_not_selected_when_all_files_match() {
     super::common::build_indexes(&corpus, &sift_dir);
 
     let indexes = open_indexes(&sift_dir);
-    let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
-    let source = CandidateSource::new(
+    let filter = FileFilter::new(&FileFilterConfig::default(), &corpus).expect("filter");
+    let source = Scan::new(
         Some(&indexes),
         &filter,
         None,
-        index_scope(CandidateOrder::default()),
+        index_scope(FileOrder::default()),
     );
 
     let query = Query::new(
@@ -357,14 +352,14 @@ fn grep_finds_match_in_stdin_stream() {
     let searcher = Searcher::new(query).expect("searcher");
 
     let indexes = open_indexes(&tmp.path().join(".sift"));
-    let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
-    let source = CandidateSource::new(Some(&indexes), &filter, None, ScanScope::StreamsOnly);
+    let filter = FileFilter::new(&FileFilterConfig::default(), &corpus).expect("filter");
+    let source = Scan::new(Some(&indexes), &filter, None, ScanScope::StreamsOnly);
     let candidates = Plan::new(&source, searcher.query(), SearchMode::Lines.coverage())
         .resolve(&source)
         .expect("candidates");
 
     let streams = Inputs::empty().with_stream(ByteInput {
-        path: Cow::Borrowed("<stdin>"),
+        label: Cow::Borrowed("<stdin>"),
         bytes: Cow::Borrowed(b"hello needle world\n"),
         explicit: false,
     });
@@ -402,13 +397,13 @@ fn count_include_zero_lists_zeros_but_found_requires_hits() {
     super::common::build_indexes(&corpus, &sift_dir);
 
     let indexes = open_indexes(&sift_dir);
-    let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
-    let source = CandidateSource::new(
+    let filter = FileFilter::new(&FileFilterConfig::default(), &corpus).expect("filter");
+    let source = Scan::new(
         Some(&indexes),
         &filter,
         None,
         ScanScope::Walk {
-            order: CandidateOrder::default(),
+            order: FileOrder::default(),
         },
     );
 
@@ -452,12 +447,12 @@ fn stream_begin_path_shares_arc_with_listed_file() {
     super::common::build_indexes(&corpus, &sift_dir);
 
     let indexes = open_indexes(&sift_dir);
-    let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
-    let source = CandidateSource::new(
+    let filter = FileFilter::new(&FileFilterConfig::default(), &corpus).expect("filter");
+    let source = Scan::new(
         Some(&indexes),
         &filter,
         None,
-        index_scope(CandidateOrder::default()),
+        index_scope(FileOrder::default()),
     );
     let mut sink = PathRecorder::default();
 
@@ -489,19 +484,19 @@ fn stream_begin_path_shares_arc_with_listed_file() {
     assert!(
         sink.begin_identities
             .iter()
-            .any(|begin| { files.iter().any(|f| Arc::ptr_eq(begin, &f.file.identity)) })
+            .any(|begin| files.iter().any(|f| begin == &f.file.origin))
     );
 }
 
 #[derive(Default)]
 struct PathRecorder {
-    begin_identities: Vec<Arc<FileIdentity>>,
+    begin_identities: Vec<Origin>,
 }
 
 impl SearchSink for PathRecorder {
     fn event(&mut self, event: SearchEvent) -> sift_core::Result<()> {
         if let SearchEvent::Begin(event) = event {
-            self.begin_identities.push(event.file);
+            self.begin_identities.push(event.origin);
         }
         Ok(())
     }
@@ -520,13 +515,13 @@ fn first_match_settles_on_pattern_hit_not_include_zero() {
     super::common::build_indexes(&corpus, &sift_dir);
 
     let indexes = open_indexes(&sift_dir);
-    let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
-    let source = CandidateSource::new(
+    let filter = FileFilter::new(&FileFilterConfig::default(), &corpus).expect("filter");
+    let source = Scan::new(
         Some(&indexes),
         &filter,
         None,
         ScanScope::Walk {
-            order: CandidateOrder::new(CandidateOrderKey::Path, CandidateOrderDirection::Ascending),
+            order: FileOrder::new(FileOrderKey::Path, FileOrderDirection::Ascending),
         },
     );
 
@@ -568,7 +563,7 @@ fn first_match_settles_on_pattern_hit_not_include_zero() {
     assert!(
         counts[0]
             .file
-            .display_path(PathDisplay::Relative)
+            .display(PathDisplay::Relative)
             .ends_with("c.txt")
     );
     let stats = report.stats.as_ref().expect("stats");

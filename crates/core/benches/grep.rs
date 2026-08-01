@@ -7,9 +7,9 @@ use std::hint::black_box;
 use std::path::Path;
 
 use sift_core::{
-    CandidateFilter, CandidateFilterConfig, CandidateOrder, CandidateSource, CaseMode, Events,
-    Indexes, Inputs, Plan, Query, ScanScope, SearchFlags, SearchInputs, SearchMode, SearchOptions,
-    Searcher, SnapshotFreshness, StatsMode,
+    CaseMode, Events, FileFilter, FileFilterConfig, FileOrder, Indexes, Inputs, Plan, Query, Scan,
+    ScanScope, SearchFlags, SearchInputs, SearchMode, SearchOptions, Searcher, SnapshotFreshness,
+    StatsMode,
 };
 
 mod common;
@@ -29,21 +29,17 @@ fn make_search(patterns: &[&str], opts: SearchOptions) -> (Vec<String>, SearchOp
     (pats, opts)
 }
 
-fn make_filter(config: &CandidateFilterConfig, root: &Path) -> CandidateFilter {
-    CandidateFilter::new(config, root).unwrap()
+fn make_filter(config: &FileFilterConfig, root: &Path) -> FileFilter {
+    FileFilter::new(config, root).unwrap()
 }
 
-fn run_grep(
-    indexes: &Indexes,
-    filter: &CandidateFilter,
-    query: &(Vec<String>, SearchOptions),
-) -> bool {
-    let source = CandidateSource::new(
+fn run_grep(indexes: &Indexes, filter: &FileFilter, query: &(Vec<String>, SearchOptions)) -> bool {
+    let source = Scan::new(
         Some(indexes),
         filter,
         None,
         ScanScope::Index {
-            order: CandidateOrder::default(),
+            order: FileOrder::default(),
             freshness: SnapshotFreshness::Current,
         },
     );
@@ -72,7 +68,7 @@ fn bench_indexed_search(c: &mut Criterion) {
     let fixture = common::open_large_indexes();
     let indexes = fixture.1;
     let root = indexes.corpus_root().to_path_buf();
-    let filter = make_filter(&CandidateFilterConfig::default(), &root);
+    let filter = make_filter(&FileFilterConfig::default(), &root);
 
     let mut g = c.benchmark_group("grep_indexed");
 
@@ -142,7 +138,7 @@ fn bench_walk_search(c: &mut Criterion) {
     let tmp = tempfile::tempdir().unwrap();
     let corpus = tmp.path().join("corpus");
     common::make_filter_corpus(&corpus);
-    let filter = make_filter(&CandidateFilterConfig::default(), &corpus);
+    let filter = make_filter(&FileFilterConfig::default(), &corpus);
     let sift_dir = tmp.path().join(".sift");
     let meta = sift_core::StoreMeta::read(&sift_dir).unwrap_or_else(|_| {
         sift_core::StoreMeta::new(

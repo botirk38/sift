@@ -13,7 +13,7 @@ use ::ignore::gitignore::Gitignore;
 use ::ignore::overrides::{Override, OverrideBuilder};
 
 pub use config::{
-    CandidateFilterConfig, GlobConfig, HiddenMode, IgnoreConfig, IgnoreSources, TypeFilterRule,
+    FileFilterConfig, GlobConfig, HiddenMode, IgnoreConfig, IgnoreSources, TypeFilterRule,
     VisibilityConfig,
 };
 
@@ -28,7 +28,7 @@ pub enum FilterAdmission {
 }
 
 #[derive(Debug)]
-pub struct CandidateFilter {
+pub struct FileFilter {
     root: PathBuf,
     scopes: Vec<PathBuf>,
     exclude_paths: Vec<PathBuf>,
@@ -43,7 +43,7 @@ pub struct CandidateFilter {
     one_file_system: bool,
 }
 
-impl CandidateFilter {
+impl FileFilter {
     fn path_is_hidden(rel_path: &Path) -> bool {
         // Scan the encoded path bytes once and split on separators instead of
         // materializing a `Components` iterator per candidate. A segment is
@@ -111,7 +111,7 @@ impl CandidateFilter {
     /// # Errors
     ///
     /// Returns `SearchError` if glob patterns are invalid or type definitions are unknown.
-    pub fn new(config: &CandidateFilterConfig, index_root: &Path) -> Result<Self, SearchError> {
+    pub fn new(config: &FileFilterConfig, index_root: &Path) -> Result<Self, SearchError> {
         let scopes = if config.scopes.is_empty() {
             vec![PathBuf::from("")]
         } else {
@@ -161,9 +161,9 @@ impl CandidateFilter {
     #[must_use]
     pub(crate) fn retain(
         &self,
-        candidates: Vec<crate::Candidate>,
+        candidates: Vec<crate::File>,
         admission: FilterAdmission,
-    ) -> Vec<crate::Candidate> {
+    ) -> Vec<crate::File> {
         use rayon::prelude::*;
         candidates
             .into_par_iter()
@@ -180,40 +180,36 @@ impl CandidateFilter {
         if self.is_excluded(rel_path) {
             return false;
         }
-        self.matches_file(rel_path)
+        self.matches_rel_path(rel_path)
     }
 
-    /// Check path-based rules for a candidate under the given admission policy.
-    /// Depth and filesize are checked by [`crate::Candidate::matches`].
+    /// Check path-based rules for a corpus file under the given admission policy.
+    /// Depth and filesize are checked by [`crate::File::matches`].
     #[must_use]
-    pub(crate) fn matches_candidate(
-        &self,
-        candidate: &crate::Candidate,
-        admission: FilterAdmission,
-    ) -> bool {
-        if !self.in_scope(candidate.rel_path()) {
+    pub(crate) fn matches_file(&self, file: &crate::File, admission: FilterAdmission) -> bool {
+        if !self.in_scope(file.rel_path()) {
             return false;
         }
-        if self.is_excluded(candidate.rel_path()) {
+        if self.is_excluded(file.rel_path()) {
             return false;
         }
         match admission {
             FilterAdmission::Full => {
                 if self.visibility.hidden == crate::corpus::filter::config::HiddenMode::Respect
-                    && Self::path_is_hidden(candidate.rel_path())
+                    && Self::path_is_hidden(file.rel_path())
                 {
                     return false;
                 }
                 if !self.needs_rel_str_for_matching() {
                     return true;
                 }
-                self.matches_file_str(Path::new(candidate.rel_str()))
+                self.matches_file_str(Path::new(file.rel_str()))
             }
             FilterAdmission::Indexed => {
                 if !self.needs_search_globs() {
                     return true;
                 }
-                self.matches_search_globs(Path::new(candidate.rel_str()))
+                self.matches_search_globs(Path::new(file.rel_str()))
             }
         }
     }
@@ -236,7 +232,7 @@ impl CandidateFilter {
         false
     }
 
-    fn matches_file(&self, rel_path: &Path) -> bool {
+    fn matches_rel_path(&self, rel_path: &Path) -> bool {
         if self.visibility.hidden == crate::corpus::filter::config::HiddenMode::Respect
             && Self::path_is_hidden(rel_path)
         {
@@ -296,20 +292,20 @@ mod tests {
     use crate::corpus::filter::FilterAdmission;
     use crate::corpus::filter::config::*;
 
-    fn make_filter(config: &CandidateFilterConfig) -> CandidateFilter {
-        CandidateFilter::new(config, Path::new("/root")).expect("create filter")
+    fn make_filter(config: &FileFilterConfig) -> FileFilter {
+        FileFilter::new(config, Path::new("/root")).expect("create filter")
     }
 
     #[test]
     fn empty_config_includes_normal_visible_files() {
-        let config = CandidateFilterConfig::default();
+        let config = FileFilterConfig::default();
         let filter = make_filter(&config);
         assert!(filter.matches_path(Path::new("src/lib.rs")));
     }
 
     #[test]
     fn hidden_paths_rejected_by_default() {
-        let config = CandidateFilterConfig::default();
+        let config = FileFilterConfig::default();
         let filter = make_filter(&config);
         assert!(!filter.matches_path(Path::new(".hidden/file.txt")));
         assert!(!filter.matches_path(Path::new("dir/.hidden")));
@@ -317,12 +313,12 @@ mod tests {
 
     #[test]
     fn hidden_paths_accepted_with_include_mode() {
-        let config = CandidateFilterConfig {
+        let config = FileFilterConfig {
             visibility: VisibilityConfig {
                 hidden: HiddenMode::Include,
                 ignore: IgnoreConfig::default(),
             },
-            ..CandidateFilterConfig::default()
+            ..FileFilterConfig::default()
         };
         let filter = make_filter(&config);
         assert!(filter.matches_path(Path::new(".hidden/file.txt")));
@@ -330,16 +326,16 @@ mod tests {
 
     #[test]
     fn empty_scopes_include_all_files() {
-        let config = CandidateFilterConfig::default();
+        let config = FileFilterConfig::default();
         let filter = make_filter(&config);
         assert!(filter.matches_path(Path::new("any/path/file.txt")));
     }
 
     #[test]
     fn specific_scopes_include_matching_prefixes_only() {
-        let config = CandidateFilterConfig {
+        let config = FileFilterConfig {
             scopes: vec![PathBuf::from("src")],
-            ..CandidateFilterConfig::default()
+            ..FileFilterConfig::default()
         };
         let filter = make_filter(&config);
         assert!(filter.matches_path(Path::new("src/lib.rs")));
@@ -348,13 +344,13 @@ mod tests {
 
     #[test]
     fn exclude_paths_reject_matching_prefixes() {
-        let config = CandidateFilterConfig {
+        let config = FileFilterConfig {
             visibility: VisibilityConfig {
                 hidden: HiddenMode::Include,
                 ignore: IgnoreConfig::default(),
             },
             exclude_paths: vec![PathBuf::from("vendor")],
-            ..CandidateFilterConfig::default()
+            ..FileFilterConfig::default()
         };
         let filter = make_filter(&config);
         assert!(!filter.matches_path(Path::new("vendor/pkg/file.rs")));
@@ -363,25 +359,25 @@ mod tests {
 
     #[test]
     fn path_and_candidate_agree() {
-        let config = CandidateFilterConfig {
+        let config = FileFilterConfig {
             visibility: VisibilityConfig {
                 hidden: HiddenMode::Include,
                 ignore: IgnoreConfig::default(),
             },
-            ..CandidateFilterConfig::default()
+            ..FileFilterConfig::default()
         };
         let filter = make_filter(&config);
         let rel_path = Path::new("src/lib.rs");
-        let info = crate::Candidate::new(rel_path.to_path_buf(), PathBuf::from("/root/src/lib.rs"));
+        let info = crate::File::new(rel_path.to_path_buf(), PathBuf::from("/root/src/lib.rs"));
         assert_eq!(
             filter.matches_path(rel_path),
-            filter.matches_candidate(&info, FilterAdmission::Full)
+            filter.matches_file(&info, FilterAdmission::Full)
         );
     }
 
     #[test]
     fn glob_excludes_reject_excluded_paths() {
-        let config = CandidateFilterConfig {
+        let config = FileFilterConfig {
             visibility: VisibilityConfig {
                 hidden: HiddenMode::Include,
                 ignore: IgnoreConfig::default(),
@@ -390,7 +386,7 @@ mod tests {
                 patterns: vec!["!*.log".to_string()],
                 case_insensitive: false,
             },
-            ..CandidateFilterConfig::default()
+            ..FileFilterConfig::default()
         };
         let filter = make_filter(&config);
         assert!(!filter.matches_path(Path::new("debug.log")));
@@ -399,7 +395,7 @@ mod tests {
 
     #[test]
     fn case_insensitive_glob_matching_works() {
-        let config = CandidateFilterConfig {
+        let config = FileFilterConfig {
             visibility: VisibilityConfig {
                 hidden: HiddenMode::Include,
                 ignore: IgnoreConfig::default(),
@@ -408,7 +404,7 @@ mod tests {
                 patterns: vec!["!*.LOG".to_string()],
                 case_insensitive: true,
             },
-            ..CandidateFilterConfig::default()
+            ..FileFilterConfig::default()
         };
         let filter = make_filter(&config);
         assert!(!filter.matches_path(Path::new("debug.log")));
@@ -417,7 +413,7 @@ mod tests {
 
     #[test]
     fn type_filter_include_accepts_matching_globs() {
-        let config = CandidateFilterConfig {
+        let config = FileFilterConfig {
             visibility: VisibilityConfig {
                 hidden: HiddenMode::Include,
                 ignore: IgnoreConfig::default(),
@@ -426,7 +422,7 @@ mod tests {
                 name: "rust".to_string(),
                 globs: vec!["*.rs".to_string()],
             }],
-            ..CandidateFilterConfig::default()
+            ..FileFilterConfig::default()
         };
         let filter = make_filter(&config);
         assert!(filter.matches_path(Path::new("src/lib.rs")));
@@ -435,7 +431,7 @@ mod tests {
 
     #[test]
     fn type_filter_exclude_rejects_matching_globs() {
-        let config = CandidateFilterConfig {
+        let config = FileFilterConfig {
             visibility: VisibilityConfig {
                 hidden: HiddenMode::Include,
                 ignore: IgnoreConfig::default(),
@@ -444,7 +440,7 @@ mod tests {
                 name: "rust".to_string(),
                 globs: vec!["*.rs".to_string()],
             }],
-            ..CandidateFilterConfig::default()
+            ..FileFilterConfig::default()
         };
         let filter = make_filter(&config);
         assert!(!filter.matches_path(Path::new("src/lib.rs")));
@@ -453,35 +449,35 @@ mod tests {
 
     #[test]
     fn invalid_type_glob_returns_error() {
-        let config = CandidateFilterConfig {
+        let config = FileFilterConfig {
             type_filters: vec![TypeFilterRule::Include {
                 name: "broken".to_string(),
                 globs: vec!["[invalid".to_string()],
             }],
-            ..CandidateFilterConfig::default()
+            ..FileFilterConfig::default()
         };
-        let result = CandidateFilter::new(&config, Path::new("/root"));
+        let result = FileFilter::new(&config, Path::new("/root"));
         assert!(result.is_err());
     }
 
     #[test]
     fn invalid_glob_returns_error() {
-        let config = CandidateFilterConfig {
+        let config = FileFilterConfig {
             glob: GlobConfig {
                 patterns: vec!["[invalid".to_string()],
                 case_insensitive: false,
             },
-            ..CandidateFilterConfig::default()
+            ..FileFilterConfig::default()
         };
-        let result = CandidateFilter::new(&config, Path::new("/root"));
+        let result = FileFilter::new(&config, Path::new("/root"));
         assert!(result.is_err());
     }
 
     #[test]
     fn filter_accessor_follow_links() {
-        let config = CandidateFilterConfig {
+        let config = FileFilterConfig {
             follow_links: true,
-            ..CandidateFilterConfig::default()
+            ..FileFilterConfig::default()
         };
         let filter = make_filter(&config);
         assert!(filter.follow_links());
@@ -489,9 +485,9 @@ mod tests {
 
     #[test]
     fn filter_accessor_max_depth() {
-        let config = CandidateFilterConfig {
+        let config = FileFilterConfig {
             max_depth: Some(5),
-            ..CandidateFilterConfig::default()
+            ..FileFilterConfig::default()
         };
         let filter = make_filter(&config);
         assert_eq!(filter.max_depth(), Some(5));
@@ -499,9 +495,9 @@ mod tests {
 
     #[test]
     fn filter_accessor_max_filesize() {
-        let config = CandidateFilterConfig {
+        let config = FileFilterConfig {
             max_filesize: Some(1024),
-            ..CandidateFilterConfig::default()
+            ..FileFilterConfig::default()
         };
         let filter = make_filter(&config);
         assert_eq!(filter.max_filesize(), Some(1024));
@@ -509,9 +505,9 @@ mod tests {
 
     #[test]
     fn filter_accessor_one_file_system() {
-        let config = CandidateFilterConfig {
+        let config = FileFilterConfig {
             one_file_system: true,
-            ..CandidateFilterConfig::default()
+            ..FileFilterConfig::default()
         };
         let filter = make_filter(&config);
         assert!(filter.one_file_system());
@@ -519,9 +515,9 @@ mod tests {
 
     #[test]
     fn filter_accessor_scopes() {
-        let config = CandidateFilterConfig {
+        let config = FileFilterConfig {
             scopes: vec![PathBuf::from("src")],
-            ..CandidateFilterConfig::default()
+            ..FileFilterConfig::default()
         };
         let filter = make_filter(&config);
         assert_eq!(filter.scopes(), &[PathBuf::from("src")]);
@@ -529,9 +525,9 @@ mod tests {
 
     #[test]
     fn indexed_admission_skips_hidden_and_ignore_rules() {
-        let config = CandidateFilterConfig::default();
+        let config = FileFilterConfig::default();
         let filter = make_filter(&config);
-        let hidden = crate::Candidate::new(
+        let hidden = crate::File::new(
             PathBuf::from(".hidden/file.txt"),
             PathBuf::from("/root/.hidden/file.txt"),
         );
@@ -541,7 +537,7 @@ mod tests {
 
     #[test]
     fn indexed_admission_still_applies_globs() {
-        let config = CandidateFilterConfig {
+        let config = FileFilterConfig {
             visibility: VisibilityConfig {
                 hidden: HiddenMode::Include,
                 ignore: IgnoreConfig::default(),
@@ -550,11 +546,10 @@ mod tests {
                 patterns: vec!["!*.log".to_string()],
                 case_insensitive: false,
             },
-            ..CandidateFilterConfig::default()
+            ..FileFilterConfig::default()
         };
         let filter = make_filter(&config);
-        let log =
-            crate::Candidate::new(PathBuf::from("debug.log"), PathBuf::from("/root/debug.log"));
+        let log = crate::File::new(PathBuf::from("debug.log"), PathBuf::from("/root/debug.log"));
         assert!(!log.matches(&filter, FilterAdmission::Indexed));
     }
 }

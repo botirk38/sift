@@ -2,10 +2,10 @@ use std::path::Path;
 
 use ignore::overrides::{Override, OverrideBuilder};
 
-use super::config::{CandidateFilterConfig, TypeFilterRule};
+use super::config::{FileFilterConfig, TypeFilterRule};
 use super::error::FilterError;
 
-impl CandidateFilterConfig {
+impl FileFilterConfig {
     /// Build a type-filter override matcher when `-t` / `-T` flags are present.
     ///
     /// # Errors

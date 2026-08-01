@@ -2,122 +2,130 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::corpus::Candidate;
+use crate::corpus::{File, PathDisplay};
 
-/// Shared path identity for inputs, listing rows, and search events.
+/// Shared identity for inputs, listing rows, and search events.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FileIdentity {
-    Candidate(Arc<Candidate>),
-    Stream { name: Arc<Path> },
+pub enum Origin {
+    File(Arc<File>),
+    Stream { label: Arc<str> },
 }
 
-impl FileIdentity {
+impl Origin {
     #[must_use]
-    pub fn candidate(candidate: Candidate) -> Arc<Self> {
-        Arc::new(Self::Candidate(Arc::new(candidate)))
+    pub fn file(file: File) -> Self {
+        Self::File(Arc::new(file))
     }
 
     #[must_use]
-    pub fn stream(name: &str) -> Arc<Self> {
-        Arc::new(Self::Stream {
-            name: Arc::from(Path::new(name)),
-        })
+    pub fn stream(label: impl Into<Arc<str>>) -> Self {
+        Self::Stream {
+            label: label.into(),
+        }
     }
 
     /// Corpus-relative path for daemon / lazy index enqueue, if any.
     #[must_use]
     pub fn corpus_path(&self) -> Option<&Path> {
         match self {
-            Self::Candidate(candidate) => Some(candidate.rel_path()),
+            Self::File(file) => Some(file.rel_path()),
             Self::Stream { .. } => None,
         }
     }
 
-    /// Absolute filesystem path when this identity is a candidate.
+    /// Absolute filesystem path when this origin is a corpus file.
     #[must_use]
     pub fn abs_path(&self) -> Option<&Path> {
         match self {
-            Self::Candidate(candidate) => Some(candidate.abs_path()),
+            Self::File(file) => Some(file.abs_path()),
             Self::Stream { .. } => None,
         }
     }
 
-    /// Stable key for printer sets (abs path or stream name).
+    /// Stable key for printer sets (abs path or stream label).
     #[must_use]
-    pub fn key_path(&self) -> &Path {
+    pub fn key(&self) -> Cow<'_, str> {
         match self {
-            Self::Candidate(candidate) => candidate.abs_path(),
-            Self::Stream { name } => name.as_ref(),
+            Self::File(file) => file.abs_path().to_string_lossy(),
+            Self::Stream { label } => Cow::Borrowed(label),
         }
     }
 
-    /// Path shown to the user for this identity.
+    /// Text shown to the user for this origin.
     #[must_use]
-    pub fn display_path(&self, mode: crate::corpus::candidate::PathDisplay) -> &Path {
-        use crate::corpus::candidate::PathDisplay;
+    pub fn display(&self, mode: PathDisplay) -> Cow<'_, str> {
         match (self, mode) {
-            (Self::Candidate(c), PathDisplay::Relative) => c.rel_path(),
-            (Self::Candidate(c), PathDisplay::Absolute) => c.abs_path(),
-            (Self::Stream { name }, _) => name.as_ref(),
+            (Self::File(file), PathDisplay::Relative) => file.rel_path().to_string_lossy(),
+            (Self::File(file), PathDisplay::Absolute) => file.abs_path().to_string_lossy(),
+            (Self::Stream { label }, _) => Cow::Borrowed(label),
         }
     }
 
     #[must_use]
     pub fn cached_size(&self) -> Option<u64> {
         match self {
-            Self::Candidate(candidate) => candidate.cached_size(),
+            Self::File(file) => file.cached_size(),
             Self::Stream { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn is_explicit(&self, explicit: &[PathBuf]) -> bool {
+        match self {
+            Self::File(file) => file.is_explicit(explicit),
+            Self::Stream { .. } => true,
         }
     }
 }
 
 pub enum Input<'a> {
     Path {
-        path: Cow<'a, Path>,
-        file: Arc<FileIdentity>,
+        origin: Origin,
         explicit: bool,
     },
     Bytes {
-        path: Cow<'a, str>,
+        origin: Origin,
         bytes: Cow<'a, [u8]>,
-        file: Arc<FileIdentity>,
         explicit: bool,
     },
 }
 
 impl Input<'_> {
     #[must_use]
-    pub const fn file(&self) -> &Arc<FileIdentity> {
+    pub const fn origin(&self) -> &Origin {
         match self {
-            Self::Path { file, .. } | Self::Bytes { file, .. } => file,
+            Self::Path { origin, .. } | Self::Bytes { origin, .. } => origin,
         }
     }
 
     #[must_use]
     pub fn byte_len(&self) -> u64 {
         match self {
-            Self::Path { path, file, .. } => file
-                .cached_size()
-                .unwrap_or_else(|| std::fs::metadata(path).map_or(0, |m| m.len())),
+            Self::Path { origin, .. } => origin.cached_size().unwrap_or_else(|| {
+                origin
+                    .abs_path()
+                    .and_then(|path| std::fs::metadata(path).ok())
+                    .map_or(0, |m| m.len())
+            }),
             Self::Bytes { bytes, .. } => u64::try_from(bytes.len()).unwrap_or(u64::MAX),
         }
     }
 }
 
-impl<'c> Input<'c> {
-    /// Open a corpus candidate as a path input for search.
+impl Input<'_> {
+    /// Open a corpus file as a path input for search.
     #[must_use]
-    pub fn from_candidate(candidate: &'c Candidate, explicit: &[PathBuf]) -> Self {
+    pub fn from_file(file: File, explicit: &[PathBuf]) -> Self {
+        let explicit = file.is_explicit(explicit);
         Self::Path {
-            path: Cow::Borrowed(candidate.abs_path()),
-            file: FileIdentity::candidate(candidate.clone()),
-            explicit: candidate.is_explicit(explicit),
+            origin: Origin::file(file),
+            explicit,
         }
     }
 }
 
 pub struct ByteInput<'a> {
-    pub path: Cow<'a, str>,
+    pub label: Cow<'a, str>,
     pub bytes: Cow<'a, [u8]>,
     pub explicit: bool,
 }
@@ -141,58 +149,22 @@ impl<'a> Inputs<'a> {
 
     #[must_use]
     pub fn with_stream(mut self, stream: ByteInput<'a>) -> Self {
-        let file = FileIdentity::stream(stream.path.as_ref());
-        if stream.explicit {
-            self.push_explicit_bytes(stream.path, stream.bytes, file);
-        } else {
-            self.push_bytes(stream.path, stream.bytes, file);
-        }
+        self.items.push(Input::Bytes {
+            origin: Origin::stream(stream.label.as_ref()),
+            bytes: stream.bytes,
+            explicit: stream.explicit,
+        });
         self
     }
 
-    pub fn push_path(&mut self, path: Cow<'a, Path>, file: Arc<FileIdentity>, explicit: bool) {
-        self.items.push(Input::Path {
-            path,
-            file,
-            explicit,
-        });
+    pub fn push_path(&mut self, origin: Origin, explicit: bool) {
+        self.items.push(Input::Path { origin, explicit });
     }
 
-    pub fn push_bytes(
-        &mut self,
-        path: Cow<'a, str>,
-        bytes: Cow<'a, [u8]>,
-        file: Arc<FileIdentity>,
-    ) {
-        self.push_bytes_input(path, bytes, file, false);
-    }
-
-    pub fn push_explicit_bytes(
-        &mut self,
-        path: Cow<'a, str>,
-        bytes: Cow<'a, [u8]>,
-        file: Arc<FileIdentity>,
-    ) {
-        self.push_bytes_input(path, bytes, file, true);
-    }
-
-    pub fn push_candidate_bytes(&mut self, candidate: Candidate, bytes: Vec<u8>, explicit: bool) {
-        let path = Cow::Owned(candidate.abs_path().display().to_string());
-        let file = FileIdentity::candidate(candidate);
-        self.push_bytes_input(path, Cow::Owned(bytes), file, explicit);
-    }
-
-    fn push_bytes_input(
-        &mut self,
-        path: Cow<'a, str>,
-        bytes: Cow<'a, [u8]>,
-        file: Arc<FileIdentity>,
-        explicit: bool,
-    ) {
+    pub fn push_file_bytes(&mut self, file: File, bytes: Vec<u8>, explicit: bool) {
         self.items.push(Input::Bytes {
-            path,
-            bytes,
-            file,
+            origin: Origin::file(file),
+            bytes: Cow::Owned(bytes),
             explicit,
         });
     }

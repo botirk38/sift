@@ -5,7 +5,7 @@ use std::process::Command;
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use grep_cli::DecompressionReaderBuilder;
-use sift_core::Candidate;
+use sift_core::File;
 
 #[derive(Debug, Clone, Default)]
 pub struct ContentTransformConfig {
@@ -53,7 +53,7 @@ impl ContentTransform {
     /// # Errors
     ///
     /// Returns an error if transformed content cannot be read.
-    pub fn read_candidate(&self, candidate: &Candidate) -> sift_core::Result<Vec<u8>> {
+    pub fn read_candidate(&self, candidate: &File) -> sift_core::Result<Vec<u8>> {
         if let Some(pre) = &self.pre
             && pre.matches(candidate)
         {
@@ -177,7 +177,7 @@ impl InputSources {
         let mut streams = sift_core::Inputs::empty();
         for bytes in &self.stdin_bytes {
             streams = streams.with_stream(sift_core::ByteInput {
-                path: Cow::Borrowed("<stdin>"),
+                label: Cow::Borrowed("<stdin>"),
                 bytes: Cow::Borrowed(bytes.as_slice()),
                 explicit: true,
             });
@@ -198,7 +198,7 @@ struct Preprocessor {
 }
 
 impl Preprocessor {
-    fn matches(&self, candidate: &Candidate) -> bool {
+    fn matches(&self, candidate: &File) -> bool {
         self.globs.matches(candidate.rel_path())
     }
 

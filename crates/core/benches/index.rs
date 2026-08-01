@@ -9,10 +9,10 @@ use std::hint::black_box;
 use std::path::{Path, PathBuf};
 
 use sift_core::{
-    CandidateFilter, CandidateFilterConfig, CandidateOrder, CandidateSource, CaseMode, CorpusKind,
-    CorpusMeta, CorpusSpec, FilterMeta, GramNorm, GramWidth, IndexConfig, IndexDestination,
-    IndexRecord, IndexWalkConfig, Indexes, NGramIndex, Plan, Query, ScanScope, SearchMode,
-    SearchOptions, Searcher, SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta,
+    CaseMode, CorpusKind, CorpusMeta, CorpusSpec, FileFilter, FileFilterConfig, FileOrder,
+    FilterMeta, GramNorm, GramWidth, IndexConfig, IndexDestination, IndexRecord, IndexWalkConfig,
+    Indexes, NGramIndex, Plan, Query, Scan, ScanScope, SearchMode, SearchOptions, Searcher,
+    SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta,
 };
 
 mod common;
@@ -65,16 +65,16 @@ fn open_large_index() -> (tempfile::TempDir, NGramIndex) {
 
 fn index_candidate_vec(
     indexes: &Indexes,
-    filter: &CandidateFilter,
+    filter: &FileFilter,
     patterns: &[String],
     options: SearchOptions,
-) -> Vec<sift_core::Candidate> {
-    let source = CandidateSource::new(
+) -> Vec<sift_core::File> {
+    let source = Scan::new(
         Some(indexes),
         filter,
         None,
         ScanScope::Index {
-            order: CandidateOrder::default(),
+            order: FileOrder::default(),
             freshness: SnapshotFreshness::Current,
         },
     );
@@ -589,13 +589,13 @@ fn bench_trigram_index_methods(c: &mut Criterion) {
     g.finish();
 }
 
-// ─── Candidate benches ───────────────────────────────────────────────────────
+// ─── File benches ───────────────────────────────────────────────────────
 
 fn bench_candidates(c: &mut Criterion) {
     let fixture = common::open_large_indexes();
     let indexes = fixture.1;
     let root = indexes.corpus_root().to_path_buf();
-    let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &root).unwrap();
+    let filter = FileFilter::new(&FileFilterConfig::default(), &root).unwrap();
 
     let mut g = c.benchmark_group("index_candidates");
 

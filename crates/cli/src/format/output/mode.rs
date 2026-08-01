@@ -1,26 +1,3 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PrintMode {
-    #[default]
-    Standard,
-    OnlyMatching,
-    Count,
-    CountMatches,
-    FilesWithMatches,
-    FilesWithoutMatch,
-}
-
-impl PrintMode {
-    /// Summary modes render from the search report and do not need streamed
-    /// match events.
-    #[must_use]
-    pub const fn is_summary(self) -> bool {
-        matches!(
-            self,
-            Self::Count | Self::CountMatches | Self::FilesWithMatches | Self::FilesWithoutMatch
-        )
-    }
-}
-
 /// How search results reach stdout.
 ///
 /// - [`Normal`](Self::Normal) — stream begin/match/end events through the printer.
@@ -34,15 +11,24 @@ pub enum OutputEmission {
     Quiet,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ZeroCountMode {
-    #[default]
-    Omit,
-    Include,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatchEmissionMode {
     Lines,
     OnlyMatching,
+}
+
+/// Whether `-q` / `--quiet` was selected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Quiet {
+    #[default]
+    Off,
+    On,
+}
+
+/// Whether match polarity is inverted (`--invert-match`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InvertMatch {
+    #[default]
+    Off,
+    On,
 }

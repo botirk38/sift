@@ -25,7 +25,7 @@ Search (re-exported from `lib.rs`):
 - `Grep`, `GrepRequest`, `Grep::resolve_candidates`, `Searcher`, `Report`
 - `Indexes`, `IndexedCorpus`, `SnapshotId`
 - `Index`, `IndexRecord`, `IndexConfig`, `IndexDestination`, `ngram::Index`, `GramWidth`
-- `Candidates`, `CandidateSource`, `ScanScope`, `SnapshotFreshness`
+- `Candidates`, `Scan`, `ScanScope`, `SnapshotFreshness`
 
 Internal: `Plan`.
 
@@ -41,7 +41,7 @@ Internal: `Plan`.
 | `grep/` | Public search API |
 | `candidates/plan.rs` | `Plan` (plan + resolve) |
 | `candidates/candidates.rs` | `Candidates` collection |
-| `corpus/` | `Candidate`, filters, walk |
+| `corpus/` | `File`, filters, walk |
 
 ## Search flow
 

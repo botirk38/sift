@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::corpus::Candidate;
+use crate::corpus::File;
 use crate::index::FileId;
 use crate::index::ngram::files::FileTable;
 
@@ -25,13 +25,13 @@ impl Files {
         Ok(Self { root, table })
     }
 
-    /// One indexed row as a [`Candidate`]. Missing id → `None`.
+    /// One indexed row as a [`File`]. Missing id → `None`.
     #[must_use]
-    pub fn candidate(&self, id: FileId) -> Option<Candidate> {
+    pub fn file(&self, id: FileId) -> Option<File> {
         let row = self.table.row(id.get()).ok()?;
         let rel = PathBuf::from(row.path);
         let abs = self.root.join(&rel);
-        Some(Candidate::with_metadata(rel, abs, Some(row.size), None))
+        Some(File::with_metadata(rel, abs, Some(row.size), None))
     }
 
     /// Every file id in this table.
