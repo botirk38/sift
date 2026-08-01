@@ -1,6 +1,6 @@
 //! Catalog [`IndexRecord`] and opened [`Index`].
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
@@ -85,17 +85,17 @@ impl IndexRecord {
         Ok(Self::Ngram { width, norm })
     }
 
-    /// Create artifacts at `write.dest`.
+    /// Create artifacts at `dest` from a full corpus scan under `config`.
     ///
     /// # Errors
     ///
     /// Returns an error if walking, extraction, or encoding fails.
-    pub fn build(self, write: IndexWrite<'_>) -> crate::Result<()> {
+    pub fn build(self, dest: IndexDestination<'_>, config: &IndexConfig<'_>) -> crate::Result<()> {
         match self {
             Self::Ngram { width, norm } => super::ngram::Index::new()
                 .width(width)
                 .norm(norm)
-                .build(write),
+                .build(dest, config),
         }
     }
 
@@ -130,13 +130,6 @@ impl FromStr for IndexRecord {
     }
 }
 
-/// Write artifacts from a corpus scan (create or refresh).
-pub struct IndexWrite<'a> {
-    pub dest: IndexDestination<'a>,
-    pub config: &'a IndexConfig<'a>,
-    pub paths: &'a [PathBuf],
-}
-
 /// Opened index: query and incremental update only.
 pub trait Index: Send + Sync {
     /// File ids that may match. May over-return; must not under-return.
@@ -148,10 +141,10 @@ pub trait Index: Send + Sync {
     /// Enumerate every indexed file id known to this opened index.
     fn all_file_ids(&self) -> Vec<FileId>;
 
-    /// Incremental rewrite into `write.dest`. `true` if artifacts were written.
+    /// Incremental rewrite into `dest`. `true` if artifacts were written.
     ///
     /// # Errors
     ///
     /// Returns an error if walking, extraction, or encoding fails.
-    fn update(&self, write: IndexWrite<'_>) -> crate::Result<bool>;
+    fn update(&self, dest: IndexDestination<'_>, config: &IndexConfig<'_>) -> crate::Result<bool>;
 }

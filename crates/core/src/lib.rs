@@ -33,8 +33,8 @@ pub use index::ngram::{
 };
 pub use index::{
     CorpusKind, CorpusMeta, CorpusSpec, FileId, Files, FilterMeta, Index, IndexConfig,
-    IndexCoverage, IndexDestination, IndexError, IndexId, IndexRecord, IndexWrite, IndexedCorpus,
-    Indexes, PlanMode, QueryPlanOutput, SnapshotId, WalkMeta,
+    IndexCoverage, IndexDestination, IndexError, IndexId, IndexRecord, IndexedCorpus, Indexes,
+    PlanMode, QueryPlanOutput, SnapshotId, WalkMeta,
 };
 
 use thiserror::Error;

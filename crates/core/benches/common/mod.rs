@@ -115,7 +115,7 @@ fn build_index_store(corpus: &Path, sift_dir: &Path) {
         visibility: VisibilityConfig::default(),
     };
     let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
-    indexes.build(&catalog, &config, &[]).unwrap();
+    indexes.build(&catalog, &config).unwrap();
 }
 
 pub fn open_large_indexes() -> (tempfile::TempDir, Indexes) {

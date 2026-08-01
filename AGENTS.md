@@ -85,7 +85,7 @@ Use short, descriptive kebab-case with a type prefix:
 | `Index` trait | Opened kind only: `query` / `coverage` / `all_file_ids` / `update` |
 | `IndexRecord` | Typed catalog knobs; `build` / `open` |
 | `IndexConfig` | Corpus/walk/visibility for a write |
-| `IndexWrite` | `{ dest, config, paths }` for create and refresh |
+| `IndexDestination` | Directory or snapshot write target |
 | `Indexes` | Build/update + query/hydrate orchestrator |
 | `Files` | Snapshot-owned `FileId → Candidate` map |
 | `StoreMeta` | Store metadata |
@@ -249,25 +249,23 @@ Examples of **good** names that describe the domain action:
 - `posting_ids` with a `GramMatch` (or similar) argument
 
 When a lifecycle function needs to write to either a directory or a
-snapshot store, use a domain enum instead of `*_to_dir` / `*_into` variants:
+snapshot store, use a destination enum instead of `*_to_dir` / `*_into` variants:
 
 ```rust
 // Do this:
-fn build(&self, write: IndexWrite<'_>) -> Result<()>;
+fn build(&self, dest: IndexDestination<'_>, config: &IndexConfig<'_>) -> Result<()>;
 
 // NOT this (parallel variants):
 fn build(config, output_dir) -> Result;     // directory
 fn build_into(config, writer, ns) -> Result; // snapshot
 ```
 
-## IndexDestination / IndexWrite
+## IndexDestination
 
-Index writes use a destination domain type and a single write request:
+Index writes take a destination and corpus config:
 
-- `IndexDestination` — where index data is written to:
- `Directory(&Path)` or `Snapshot { writer, namespace }`.
-- `IndexWrite` — `{ dest, config, paths }` for both `build` and `update`
- (update differs only because `&self` already holds prior index data).
+- `IndexDestination` — `Directory(&Path)` or `Snapshot { writer, namespace }`.
+- `build(dest, config)` / `update(dest, config)` — full corpus from `config`.
 - Open is path-only: `IndexRecord::open(dir, root, corpus_kind)`.
 
 See `crates/core/src/index/artifacts.rs`, `record.rs`, and `ngram/`.
@@ -326,3 +324,9 @@ Clap parses `*Decl` flag groups; **`Argv` resolves effective runtime values**
   - Point `--sift-dir` at a writable index dir, e.g.:
     `target/debug/sift --sift-dir /tmp/demo/.sift index build --wait /tmp/demo`
     then `target/debug/sift --sift-dir /tmp/demo/.sift "pattern" /tmp/demo`.
+
+## Learned User Preferences
+
+- When work is split across multiple PRs, stop after each PR and pull from master before starting the next.
+- Prefer unifying types across layers over adapter or translation layers between near-duplicates.
+- Treat narrowly crate-restricted `pub(in crate::...)` wrapper enums as a smell; prefer domain types with clear ownership.

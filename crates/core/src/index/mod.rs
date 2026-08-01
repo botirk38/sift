@@ -19,7 +19,7 @@ pub use indexes::Indexes;
 pub use kinds::{FileId, IndexId, PlanMode, QueryPlanOutput};
 pub use meta::{CorpusMeta, FilterMeta, IndexCoverage, StoreMeta, WalkMeta};
 pub use paths::IndexedCorpus;
-pub use record::{Index, IndexRecord, IndexWrite};
+pub use record::{Index, IndexRecord};
 pub use snapshot::SnapshotId;
 
 #[cfg(test)]

@@ -24,7 +24,7 @@ Search (re-exported from `lib.rs`):
 
 - `Grep`, `GrepRequest`, `Grep::resolve_candidates`, `Searcher`, `Report`
 - `Indexes`, `IndexedCorpus`, `SnapshotId`
-- `Index`, `IndexRecord`, `IndexConfig`, `IndexWrite`, `ngram::Index`, `GramWidth`
+- `Index`, `IndexRecord`, `IndexConfig`, `IndexDestination`, `ngram::Index`, `GramWidth`
 - `Candidates`, `CandidateSource`, `ScanScope`, `SnapshotFreshness`
 
 Internal: `Plan`.
@@ -34,7 +34,7 @@ Internal: `Plan`.
 | Module | Responsibility |
 |--------|----------------|
 | `index/indexes.rs` | `Indexes` build/update + query/hydrate |
-| `index/record.rs` | `IndexRecord`, `IndexWrite`, opened `Index` |
+| `index/record.rs` | `IndexRecord`, opened `Index` |
 | `index/files.rs` | Snapshot-owned `Files` |
 | `index/snapshot/` | `Snapshot`, persistence |
 | `index/ngram/` | N-gram implementation |

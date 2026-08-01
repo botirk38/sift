@@ -219,7 +219,7 @@ fn dual_indexes_intersect_identity_all_with_ascii_lower_matched() {
     indexes.refresh_meta(&meta).expect("refresh meta");
     let config = standard_build_config(&corpus, &[]);
     indexes
-        .build(&records, &config, &[])
+        .build(&records, &config)
         .expect("build dual indexes");
 
     let indexes = open_indexes(&sift_dir);

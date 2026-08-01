@@ -60,7 +60,7 @@ fn empty_ignore_sources_indexes_gitignored_paths() {
     indexes.refresh_meta(&meta).expect("refresh meta");
     let config = no_ignore_build_config(tmp.path(), &[]);
     let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
-    indexes.build(&catalog, &config, &[]).expect("build");
+    indexes.build(&catalog, &config).expect("build");
     drop(indexes);
 
     let indexes = open_indexes(&sift_dir);
@@ -114,7 +114,6 @@ fn build_respects_hidden_files_by_default() {
         .build(
             &catalog,
             &super::common::standard_build_config(corpus.path(), &[]),
-            &[],
         )
         .expect("build");
     drop(indexes);

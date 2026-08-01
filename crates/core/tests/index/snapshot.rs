@@ -20,7 +20,7 @@ fn build_writes_current_snapshot() {
     let mut indexes = Indexes::open(&sift_dir, &meta).expect("open");
     indexes.refresh_meta(&meta).expect("refresh meta");
     let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
-    indexes.build(&catalog, &config, &[]).expect("build");
+    indexes.build(&catalog, &config).expect("build");
 
     let id = indexes.current_id().expect("snapshot id");
     assert!(!id.is_empty());

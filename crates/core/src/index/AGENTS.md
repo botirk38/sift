@@ -9,7 +9,7 @@ Uniform index kinds, snapshot persistence, and search orchestration via
 
 | Layer | Types | Owns |
 |-------|-------|------|
-| Record | `IndexRecord`, `IndexWrite`, `Index` trait | Catalog knobs + opened query/update |
+| Record | `IndexRecord`, `Index` trait | Catalog knobs + opened query/update |
 | Orchestrator | `Indexes`, `StoreMeta` | `open` / `build` / `update` + query/hydrate |
 | Snapshot | `Snapshot`, `Files`, `SnapshotId` | Shared `Files`, opened indexes, artifact I/O |
 | Kind impl | `ngram::Index` | Knobs + storage + trait impl |
@@ -23,11 +23,10 @@ not expose `reconcile`, `unindexed_hit_paths`, or walk-merge helpers on
 - `Index` — opened trait only: `query` / `coverage` / `all_file_ids` / `update`
 - `IndexRecord` — typed catalog entry; `build` / `open` → `Box<dyn Index>`
 - `IndexConfig` — corpus/walk/visibility inputs for a write
-- `IndexWrite` — `{ dest, config, paths }` for `build` and `update`
+- `IndexDestination` — directory or snapshot write target
 - `Indexes` — store orchestrator over one `.sift` directory
 - `Files` — snapshot-owned `FileId → Candidate` hydration
 - `IndexedCorpus` — covered rel-paths; `retain_unindexed` filters paths
-- `IndexDestination` — directory vs snapshot write target
 
 ## Conventions
 

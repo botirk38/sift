@@ -15,8 +15,8 @@ use sift_core::search::{
 use sift_core::{Candidate, CandidateOrder, CandidateSource, ScanScope, SnapshotFreshness};
 use sift_core::{
     CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramNorm, GramWidth, IndexConfig,
-    IndexCoverage, IndexDestination, IndexRecord, IndexWalkConfig, IndexWrite, Indexes, Inputs,
-    NGramIndex, StoreMeta, WalkMeta,
+    IndexCoverage, IndexDestination, IndexRecord, IndexWalkConfig, Indexes, Inputs, NGramIndex,
+    StoreMeta, WalkMeta,
 };
 
 pub fn sample_store_meta(root: PathBuf, indexes: Vec<IndexRecord>) -> StoreMeta {
@@ -110,7 +110,7 @@ pub fn build_indexes(corpus: &Path, sift_dir: &Path) -> Indexes {
     indexes.refresh_meta(&meta).expect("refresh meta");
     let config = standard_build_config(corpus, &[]);
     let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
-    indexes.build(&catalog, &config, &[]).expect("build index");
+    indexes.build(&catalog, &config).expect("build index");
     indexes
 }
 
@@ -188,11 +188,7 @@ pub fn build_trigram_in_dir(corpus: &Path, trigram_dir: &Path) -> NGramIndex {
     };
     let knobs = NGramIndex::new().width(GramWidth::TRIGRAM);
     knobs
-        .build(IndexWrite {
-            dest: IndexDestination::Directory(trigram_dir),
-            config: &config,
-            paths: &[],
-        })
+        .build(IndexDestination::Directory(trigram_dir), &config)
         .expect("build trigram index");
     let abs_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     NGramIndex::open(

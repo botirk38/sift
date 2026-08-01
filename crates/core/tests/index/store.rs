@@ -47,10 +47,10 @@ fn update_skips_rebuild_when_unchanged() {
     let mut indexes = Indexes::open(&sift_dir, &meta).expect("open");
     indexes.refresh_meta(&meta).expect("refresh meta");
     let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
-    indexes.build(&catalog, &config, &[]).expect("build");
+    indexes.build(&catalog, &config).expect("build");
     let id = indexes.current_id().expect("id").to_string();
 
-    let changed = indexes.update(&catalog, &[]).expect("update");
+    let changed = indexes.update(&catalog).expect("update");
     assert_eq!(changed, None, "expected no rebuild when corpus unchanged");
     assert_eq!(indexes.current_id().unwrap(), id);
 }

@@ -19,7 +19,7 @@ knobs (default width-3) and optional opened storage; it implements
 - Filesystem discovery uses `walk::FileWalk`; do not add N-gram-specific walk visitors.
 - Gram extraction is parallelized via Rayon.
 - Lifecycle goes through the `Index` trait (`build` / `open` / `update` with
-  `IndexWrite`); no parallel `*_into` / `*_from` variants.
+  `IndexDestination` + config); no parallel `*_into` / `*_from` variants.
 - Generic behavior is runtime-width. Do not add specialization layers until a
   measured hot path justifies them.
 - The only `unsafe` in the index crate lives in `index/mmap.rs`.

@@ -33,20 +33,16 @@ All integers are little-endian. Width-bearing files reject mismatched gram width
 
 ```rust
 use sift_core::{
-    GramNorm, GramWidth, IndexDestination, IndexRecord, IndexWrite, Indexes, NGramIndex,
+    GramNorm, GramWidth, IndexDestination, IndexRecord, Indexes, NGramIndex,
 };
 
 // Preferred: build through Indexes + IndexRecord.
-indexes.build(&[IndexRecord::ngram(GramWidth::TRIGRAM)], &config, &paths)?;
+indexes.build(&[IndexRecord::ngram(GramWidth::TRIGRAM)], &config)?;
 
-// Lower-level IndexWrite into a directory (tests/benches).
+// Lower-level directory write (tests/benches).
 NGramIndex::new()
     .width(GramWidth::TRIGRAM)
-    .build(IndexWrite {
-        dest: IndexDestination::Directory(&index_dir),
-        config: &config,
-        paths: &paths,
-    })?;
+    .build(IndexDestination::Directory(&index_dir), &config)?;
 let reopened = NGramIndex::open(
     GramWidth::TRIGRAM,
     GramNorm::Identity,

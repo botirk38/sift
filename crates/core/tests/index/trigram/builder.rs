@@ -3,7 +3,7 @@ use std::fs;
 use sift_core::grep::VisibilityConfig;
 use sift_core::{
     CorpusKind, CorpusSpec, FileId, GramNorm, GramWidth, IndexConfig, IndexDestination,
-    IndexWalkConfig, IndexWrite, NGramIndex,
+    IndexWalkConfig, NGramIndex,
 };
 use tempfile::TempDir;
 
@@ -30,11 +30,7 @@ fn persisted_index_reopens_with_same_files() {
     };
     let index_config = NGramIndex::new().width(GramWidth::TRIGRAM);
     index_config
-        .build(IndexWrite {
-            dest: IndexDestination::Directory(&trigram_dir),
-            config: &config,
-            paths: &[],
-        })
+        .build(IndexDestination::Directory(&trigram_dir), &config)
         .expect("build");
 
     let reopened = NGramIndex::open(

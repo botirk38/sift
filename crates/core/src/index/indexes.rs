@@ -6,7 +6,7 @@ use super::error::IndexError;
 use super::kinds::FileId;
 use super::meta::StoreMeta;
 use super::paths::IndexedCorpus;
-use super::record::{IndexRecord, IndexWrite};
+use super::record::IndexRecord;
 use super::snapshot::store::SnapshotWrite;
 use super::snapshot::{DiskSnapshotStore, Snapshot, SnapshotId, SnapshotManifest, SnapshotRead};
 
@@ -158,21 +158,19 @@ impl Indexes {
         &mut self,
         records: &[IndexRecord],
         config: &IndexConfig<'_>,
-        paths: &[PathBuf],
     ) -> crate::Result<String> {
         let mut writer = self.snapshots.writer()?;
         let mut txn = writer.begin()?;
 
         for record in records {
             let namespace = record.name();
-            record.build(IndexWrite {
-                dest: IndexDestination::Snapshot {
+            record.build(
+                IndexDestination::Snapshot {
                     writer: &mut txn,
                     namespace: &namespace,
                 },
                 config,
-                paths,
-            })?;
+            )?;
         }
 
         let manifest = SnapshotManifest {
@@ -192,11 +190,7 @@ impl Indexes {
     ///
     /// Returns an error if there is no current snapshot, the writer session
     /// cannot be acquired, the update fails, or publishing fails.
-    pub fn update(
-        &mut self,
-        records: &[IndexRecord],
-        paths: &[PathBuf],
-    ) -> crate::Result<Option<String>> {
+    pub fn update(&mut self, records: &[IndexRecord]) -> crate::Result<Option<String>> {
         let config = self.meta.write_config();
         let mut writer = self.snapshots.writer()?;
 
@@ -223,26 +217,24 @@ impl Indexes {
                     .iter()
                     .any(|existing| existing.name() == namespace);
                 if !is_present {
-                    record.build(IndexWrite {
-                        dest: IndexDestination::Snapshot {
+                    record.build(
+                        IndexDestination::Snapshot {
                             writer: &mut txn,
                             namespace: &namespace,
                         },
-                        config: &config,
-                        paths,
-                    })?;
+                        &config,
+                    )?;
                     return Ok(true);
                 }
                 let index_dir = current.dir().join(&namespace);
                 let opened = record.open(&index_dir, config.corpus.root, config.corpus.kind)?;
-                opened.update(IndexWrite {
-                    dest: IndexDestination::Snapshot {
+                opened.update(
+                    IndexDestination::Snapshot {
                         writer: &mut txn,
                         namespace: &namespace,
                     },
-                    config: &config,
-                    paths,
-                })
+                    &config,
+                )
             })
             .collect::<crate::Result<_>>()?;
 

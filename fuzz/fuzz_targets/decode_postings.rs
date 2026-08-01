@@ -52,11 +52,7 @@ fn harness() -> &'static Harness {
         };
         NGramIndex::new()
             .width(GramWidth::TRIGRAM)
-            .build(sift_core::IndexWrite {
-                dest: sift_core::IndexDestination::Directory(&trigram_dir),
-                config: &config,
-                paths: &[],
-            })
+            .build(sift_core::IndexDestination::Directory(&trigram_dir), &config)
             .expect("build_index");
         let postings = trigram_dir.join("postings.bin");
         let magic = fs::read(&postings).expect("read postings")[..8].to_vec();

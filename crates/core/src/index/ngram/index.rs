@@ -6,9 +6,7 @@ use crate::corpus::Candidate;
 use crate::corpus::walk::LinkTraversal;
 use crate::corpus::walk::{FileWalk, WalkFile};
 use crate::index::snapshot::ArtifactData;
-use crate::index::{
-    CorpusKind, FileId, IndexConfig, IndexDestination, IndexRecord, IndexWrite, IndexedCorpus,
-};
+use crate::index::{CorpusKind, FileId, IndexConfig, IndexDestination, IndexRecord, IndexedCorpus};
 use crate::search::{Case, SearchQuery};
 
 use super::build::{FingerprintCollector, IndexTables, PostingTables};
@@ -424,37 +422,6 @@ impl Index {
         )
     }
 
-    pub(crate) fn merge_partial_fingerprints(
-        existing: &[FileFingerprint],
-        root: &Path,
-        paths: &[PathBuf],
-    ) -> crate::Result<Vec<FileFingerprint>> {
-        use std::collections::HashMap;
-
-        let mut by_path: HashMap<PathBuf, FileFingerprint> = existing
-            .iter()
-            .map(|fp| (fp.path.clone(), fp.clone()))
-            .collect();
-        for rel in paths {
-            let abs = root.join(rel);
-            let meta = std::fs::metadata(&abs).map_err(crate::Error::Io)?;
-            let mtime_secs = meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
-            let fp = FileFingerprint {
-                path: rel.clone(),
-                mtime_secs,
-                size: meta.len(),
-            };
-            by_path.insert(rel.clone(), fp);
-        }
-        let mut merged: Vec<_> = by_path.into_values().collect();
-        merged.sort_by(|a, b| a.path.cmp(&b.path));
-        Ok(merged)
-    }
-
     pub(crate) fn validate_lexicon_postings(
         lexicon: &Lexicon,
         postings: &Postings,
@@ -523,15 +490,15 @@ impl Index {
     }
 }
 impl Index {
-    /// Build N-gram artifacts into `write.dest`.
+    /// Build N-gram artifacts into `dest` from a full corpus scan under `config`.
     ///
     /// # Errors
     ///
     /// Returns an error if corpus walking, extraction, or encoding fails.
-    pub fn build(&self, write: IndexWrite<'_>) -> crate::Result<()> {
-        let tables = IndexTables::build(self.width, self.norm, write.config, write.paths)?;
-        let root = write.config.corpus.root.canonicalize()?;
-        self.persist_tables(&tables, &root, write.config.corpus.kind, write.dest)
+    pub fn build(&self, dest: IndexDestination<'_>, config: &IndexConfig<'_>) -> crate::Result<()> {
+        let tables = IndexTables::build(self.width, self.norm, config, &[])?;
+        let root = config.corpus.root.canonicalize()?;
+        self.persist_tables(&tables, &root, config.corpus.kind, dest)
             .map(|_| ())
     }
 
@@ -539,9 +506,8 @@ impl Index {
         &self,
         config: &IndexConfig<'_>,
         dest: IndexDestination<'_>,
-        paths: &[PathBuf],
     ) -> crate::Result<Self> {
-        let tables = IndexTables::build(self.width, self.norm, config, paths)?;
+        let tables = IndexTables::build(self.width, self.norm, config, &[])?;
         let root = config.corpus.root.canonicalize()?;
         self.persist_tables(&tables, &root, config.corpus.kind, dest)
     }
@@ -719,52 +685,51 @@ impl Index {
         )))
     }
 
-    /// Rebuild index tables for changed files and persist to `write.dest`.
+    /// Rebuild index tables for changed files and persist to `dest`.
     ///
     /// Returns `Ok(true)` if artifacts were written, or `Ok(false)` if unchanged.
     ///
     /// # Errors
     ///
     /// Returns an error if corpus walking, extraction, or encoding fails.
-    pub fn update(&self, write: IndexWrite<'_>) -> crate::Result<bool> {
-        self.rebuild(write.config, write.dest, write.paths)
-            .map(|updated| updated.is_some())
+    pub fn update(
+        &self,
+        dest: IndexDestination<'_>,
+        config: &IndexConfig<'_>,
+    ) -> crate::Result<bool> {
+        self.rebuild(config, dest).map(|updated| updated.is_some())
     }
 
     fn rebuild(
         &self,
         config: &IndexConfig<'_>,
         dest: IndexDestination<'_>,
-        paths: &[PathBuf],
     ) -> crate::Result<Option<Self>> {
         use rayon::prelude::*;
         use std::collections::HashMap;
 
         let Some(storage) = self.storage() else {
-            return self.build_into(config, dest, paths).map(Some);
+            return self.build_into(config, dest).map(Some);
         };
 
-        let fingerprints = if paths.is_empty() {
-            let corpus_paths: Vec<PathBuf> = FileWalk::new(config.corpus.root)
-                .scopes(config.corpus.include_paths)
-                .excludes(config.corpus.exclude_paths)
-                .visibility(config.visibility.clone())
-                .links(if config.corpus.follow_links {
-                    LinkTraversal::Follow
-                } else {
-                    LinkTraversal::DoNotFollow
-                })
-                .one_file_system(config.walk.one_file_system)
-                .max_depth(config.walk.max_depth)
-                .max_filesize(config.walk.max_filesize)
-                .files()?
-                .into_iter()
-                .map(WalkFile::into_rel_path)
-                .collect();
-            FingerprintCollector::new(config.corpus.root, &corpus_paths).collect()?
-        } else {
-            Self::merge_partial_fingerprints(storage.files.as_slice(), config.corpus.root, paths)?
-        };
+        let corpus_paths: Vec<PathBuf> = FileWalk::new(config.corpus.root)
+            .scopes(config.corpus.include_paths)
+            .excludes(config.corpus.exclude_paths)
+            .visibility(config.visibility.clone())
+            .links(if config.corpus.follow_links {
+                LinkTraversal::Follow
+            } else {
+                LinkTraversal::DoNotFollow
+            })
+            .one_file_system(config.walk.one_file_system)
+            .max_depth(config.walk.max_depth)
+            .max_filesize(config.walk.max_filesize)
+            .files()?
+            .into_iter()
+            .map(WalkFile::into_rel_path)
+            .collect();
+        let fingerprints =
+            FingerprintCollector::new(config.corpus.root, &corpus_paths).collect()?;
 
         if fingerprints == storage.files.as_slice() {
             return Ok(None);
@@ -821,7 +786,7 @@ impl crate::index::Index for Index {
         Self::all_file_ids(self)
     }
 
-    fn update(&self, write: IndexWrite<'_>) -> crate::Result<bool> {
-        Self::update(self, write)
+    fn update(&self, dest: IndexDestination<'_>, config: &IndexConfig<'_>) -> crate::Result<bool> {
+        Self::update(self, dest, config)
     }
 }

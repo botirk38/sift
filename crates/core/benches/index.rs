@@ -15,8 +15,8 @@ use sift_core::search::{
 };
 use sift_core::{
     CaseMode, CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramNorm, GramWidth, IndexConfig,
-    IndexDestination, IndexRecord, IndexWalkConfig, IndexWrite, Indexes, Inputs, NGramIndex,
-    StoreMeta, WalkMeta,
+    IndexDestination, IndexRecord, IndexWalkConfig, Indexes, Inputs, NGramIndex, StoreMeta,
+    WalkMeta,
 };
 
 mod common;
@@ -42,11 +42,7 @@ fn build_index(corpus: &Path, idx_dir: &Path) -> NGramIndex {
     };
     let config_index = NGramIndex::new().width(GramWidth::TRIGRAM);
     config_index
-        .build(IndexWrite {
-            dest: IndexDestination::Directory(idx_dir),
-            config: &config,
-            paths: &[],
-        })
+        .build(IndexDestination::Directory(idx_dir), &config)
         .unwrap();
     NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, root, kind).unwrap()
 }
@@ -241,7 +237,7 @@ fn build_index_via_store(corpus: &Path, sift_dir: &Path) {
     indexes.refresh_meta(&meta).unwrap();
     let config = standard_build_config(corpus, &[]);
     let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
-    indexes.build(&catalog, &config, &[]).unwrap();
+    indexes.build(&catalog, &config).unwrap();
 }
 
 // ─── Build benchmarks ────────────────────────────────────────────────────────
@@ -370,16 +366,11 @@ fn bench_index_update(c: &mut Criterion) {
         let fx = build_update_fixture(FILES, LINES, FANOUT);
         let rel = corpus_rel_path(0, FANOUT);
         fs::write(fx.corpus.join(&rel), changed_file_body(0)).unwrap();
-        let paths = [rel];
         let config = standard_build_config(&fx.corpus, &[]);
         b.iter(|| {
             black_box(
                 fx.index
-                    .update(IndexWrite {
-                        dest: IndexDestination::Directory(&fx.out_dir),
-                        config: &config,
-                        paths: &paths,
-                    })
+                    .update(IndexDestination::Directory(&fx.out_dir), &config)
                     .unwrap(),
             );
         });
@@ -392,16 +383,11 @@ fn bench_index_update(c: &mut Criterion) {
             .join("src")
             .join("added.rs");
         fs::write(fx.corpus.join(&rel), changed_file_body(99_999)).unwrap();
-        let paths = [rel];
         let config = standard_build_config(&fx.corpus, &[]);
         b.iter(|| {
             black_box(
                 fx.index
-                    .update(IndexWrite {
-                        dest: IndexDestination::Directory(&fx.out_dir),
-                        config: &config,
-                        paths: &paths,
-                    })
+                    .update(IndexDestination::Directory(&fx.out_dir), &config)
                     .unwrap(),
             );
         });
@@ -410,16 +396,12 @@ fn bench_index_update(c: &mut Criterion) {
     g.bench_function("deleted_file", |b| {
         let fx = build_update_fixture(FILES, LINES, FANOUT);
         fs::remove_file(fx.corpus.join(corpus_rel_path(1, FANOUT))).unwrap();
-        // Deletion is detected only by a full rescan (empty `paths`).
+        // Deletion is detected by a full corpus rescan.
         let config = standard_build_config(&fx.corpus, &[]);
         b.iter(|| {
             black_box(
                 fx.index
-                    .update(IndexWrite {
-                        dest: IndexDestination::Directory(&fx.out_dir),
-                        config: &config,
-                        paths: &[],
-                    })
+                    .update(IndexDestination::Directory(&fx.out_dir), &config)
                     .unwrap(),
             );
         });
@@ -427,22 +409,15 @@ fn bench_index_update(c: &mut Criterion) {
 
     g.bench_function("many_small_changes", |b| {
         let fx = build_update_fixture(FILES, LINES, FANOUT);
-        let paths: Vec<PathBuf> = (0..50)
-            .map(|i| {
-                let rel = corpus_rel_path(i, FANOUT);
-                fs::write(fx.corpus.join(&rel), changed_file_body(i)).unwrap();
-                rel
-            })
-            .collect();
+        for i in 0..50 {
+            let rel = corpus_rel_path(i, FANOUT);
+            fs::write(fx.corpus.join(&rel), changed_file_body(i)).unwrap();
+        }
         let config = standard_build_config(&fx.corpus, &[]);
         b.iter(|| {
             black_box(
                 fx.index
-                    .update(IndexWrite {
-                        dest: IndexDestination::Directory(&fx.out_dir),
-                        config: &config,
-                        paths: &paths,
-                    })
+                    .update(IndexDestination::Directory(&fx.out_dir), &config)
                     .unwrap(),
             );
         });
@@ -566,7 +541,6 @@ fn bench_indexes_open(c: &mut Criterion) {
                         walk: IndexWalkConfig::new(false),
                         visibility: VisibilityConfig::default(),
                     },
-                    &[],
                 )
                 .expect("build");
             drop(indexes);

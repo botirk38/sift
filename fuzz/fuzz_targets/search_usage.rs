@@ -67,7 +67,7 @@ fn indexed() -> &'static IndexHolder {
             visibility: VisibilityConfig::default(),
         };
         indexes
-            .build(&[IndexRecord::ngram(GramWidth::TRIGRAM)], &config, &[])
+            .build(&[IndexRecord::ngram(GramWidth::TRIGRAM)], &config)
             .expect("build_index");
         let root = indexes.corpus_root().to_path_buf();
         IndexHolder {
