@@ -6,15 +6,11 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use std::path::Path;
 
-use sift_core::candidates::{CandidateSource, ScanScope, SnapshotFreshness};
-use sift_core::grep::{
-    CandidateFilter, CandidateFilterConfig, CandidateOrder, Grep, GrepRequest, PathDisplay,
+use sift_core::{
+    CandidateFilter, CandidateFilterConfig, CandidateOrder, CandidateSource, CaseMode, Events,
+    Indexes, Inputs, Plan, Query, ScanScope, SearchFlags, SearchInputs, SearchMode, SearchOptions,
+    Searcher, SnapshotFreshness, StatsMode,
 };
-use sift_core::search::{
-    Events, InputConversion, SearchFlags, SearchInputs, SearchMode, SearchOptions,
-    SearchQueryBuilder, Searcher, StatsMode,
-};
-use sift_core::{Indexes, Inputs};
 
 mod common;
 
@@ -51,27 +47,23 @@ fn run_grep(
             freshness: SnapshotFreshness::Current,
         },
     );
-    let query = SearchQueryBuilder::new(query.0.clone())
-        .options(query.1.clone())
-        .build()
-        .unwrap();
-    let request = GrepRequest {
-        query: query.clone(),
-        streams: Inputs::empty(),
-        conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-        mode: sift_core::search::SearchMode::Lines,
-        stats: StatsMode::Off,
-    };
-    let grep = Grep::new(source);
-    let candidates = grep.resolve_candidates(&request).unwrap();
+    let query = Query::new(query.0.clone(), query.1.clone()).unwrap();
     let searcher = Searcher::new(query).unwrap();
-    let inputs = SearchInputs {
-        candidates,
-        streams: Inputs::empty(),
-        conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-    };
+    let mode = SearchMode::Lines;
+    let candidates = Plan::new(&source, searcher.query(), mode.coverage())
+        .resolve(&source)
+        .unwrap();
     searcher
-        .execute(inputs, StatsMode::Off, SearchMode::Lines, Events::Discard)
+        .execute(
+            SearchInputs {
+                candidates,
+                streams: Inputs::empty(),
+                explicit: &[],
+            },
+            StatsMode::Off,
+            mode,
+            Events::Discard,
+        )
         .unwrap()
         .found()
 }
@@ -106,7 +98,7 @@ fn bench_indexed_search(c: &mut Criterion) {
         let query = make_search(
             &["beta"],
             SearchOptions {
-                case_mode: sift_core::search::CaseMode::Insensitive,
+                case_mode: CaseMode::Insensitive,
                 ..Default::default()
             },
         );
@@ -117,7 +109,7 @@ fn bench_indexed_search(c: &mut Criterion) {
         let query = make_search(
             &["ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT"],
             SearchOptions {
-                case_mode: sift_core::search::CaseMode::Insensitive,
+                case_mode: CaseMode::Insensitive,
                 ..Default::default()
             },
         );

@@ -12,7 +12,7 @@ use super::snapshot::{DiskSnapshotStore, Snapshot, SnapshotId, SnapshotManifest,
 
 use crate::corpus::Candidate;
 use crate::corpus::filter::{CandidateFilter, FilterAdmission};
-use crate::search::SearchQuery;
+use crate::search::Query;
 
 /// Composable snapshot store and query registry.
 ///
@@ -275,7 +275,7 @@ impl Indexes {
     }
 
     #[must_use]
-    pub(crate) fn query(&self, query: &SearchQuery) -> Vec<FileId> {
+    pub(crate) fn query(&self, query: &Query) -> Vec<FileId> {
         let indexes = self.snapshot.indexes();
         if indexes.is_empty() {
             return Vec::new();

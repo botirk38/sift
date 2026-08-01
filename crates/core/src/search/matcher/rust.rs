@@ -1,10 +1,10 @@
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 
-use crate::GrepError;
+use crate::SearchError;
 use crate::search::options::CaseMode;
-use crate::search::query::SearchQuery;
+use crate::search::query::Query;
 
-pub(super) fn build(query: &SearchQuery) -> Result<RegexMatcher, GrepError> {
+pub(super) fn build(query: &Query) -> Result<RegexMatcher, SearchError> {
     let opts = &query.options;
     let mut builder = RegexMatcherBuilder::new();
     builder.multi_line(true);
@@ -44,5 +44,5 @@ pub(super) fn build(query: &SearchQuery) -> Result<RegexMatcher, GrepError> {
     builder.ban_byte(None);
     builder
         .build_many(&query.patterns)
-        .map_err(|e| GrepError::RegexBuild(e.to_string()))
+        .map_err(|e| SearchError::RegexBuild(e.to_string()))
 }

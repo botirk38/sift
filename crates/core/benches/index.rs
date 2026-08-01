@@ -8,15 +8,11 @@ use std::fs;
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
 
-use sift_core::candidates::{CandidateSource, ScanScope, SnapshotFreshness};
-use sift_core::grep::{CandidateOrder, Grep, GrepRequest, PathDisplay, VisibilityConfig};
-use sift_core::search::{
-    InputConversion, SearchMode, SearchOptions, SearchQueryBuilder, StatsMode,
-};
 use sift_core::{
-    CaseMode, CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramNorm, GramWidth, IndexConfig,
-    IndexDestination, IndexRecord, IndexWalkConfig, Indexes, Inputs, NGramIndex, StoreMeta,
-    WalkMeta,
+    CandidateFilter, CandidateFilterConfig, CandidateOrder, CandidateSource, CaseMode, CorpusKind,
+    CorpusMeta, CorpusSpec, FilterMeta, GramNorm, GramWidth, IndexConfig, IndexDestination,
+    IndexRecord, IndexWalkConfig, Indexes, NGramIndex, Plan, Query, ScanScope, SearchMode,
+    SearchOptions, Searcher, SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta,
 };
 
 mod common;
@@ -69,7 +65,7 @@ fn open_large_index() -> (tempfile::TempDir, NGramIndex) {
 
 fn index_candidate_vec(
     indexes: &Indexes,
-    filter: &sift_core::grep::CandidateFilter,
+    filter: &CandidateFilter,
     patterns: &[String],
     options: SearchOptions,
 ) -> Vec<sift_core::Candidate> {
@@ -82,19 +78,10 @@ fn index_candidate_vec(
             freshness: SnapshotFreshness::Current,
         },
     );
-    let query = SearchQueryBuilder::new(patterns.to_vec())
-        .options(options)
-        .build()
-        .unwrap();
-    let request = GrepRequest {
-        query,
-        streams: Inputs::empty(),
-        conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-        mode: SearchMode::Lines,
-        stats: StatsMode::Off,
-    };
-    Grep::new(source)
-        .resolve_candidates(&request)
+    let query = Query::new(patterns.to_vec(), options).unwrap();
+    let searcher = Searcher::new(query).unwrap();
+    Plan::new(&source, searcher.query(), SearchMode::Lines.coverage())
+        .resolve(&source)
         .unwrap()
         .into_vec()
 }
@@ -608,11 +595,7 @@ fn bench_candidates(c: &mut Criterion) {
     let fixture = common::open_large_indexes();
     let indexes = fixture.1;
     let root = indexes.corpus_root().to_path_buf();
-    let filter = sift_core::grep::CandidateFilter::new(
-        &sift_core::grep::CandidateFilterConfig::default(),
-        &root,
-    )
-    .unwrap();
+    let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &root).unwrap();
 
     let mut g = c.benchmark_group("index_candidates");
 
@@ -708,19 +691,16 @@ fn bench_explain(c: &mut Criterion) {
     let mut g = c.benchmark_group("index_explain");
 
     g.bench_function("indexed_mode", |b| {
-        let query = SearchQueryBuilder::new(vec!["beta".to_string()])
-            .options(SearchOptions::default())
-            .build()
-            .unwrap();
+        let query = Query::new(vec!["beta".to_string()], SearchOptions::default()).unwrap();
         b.iter(|| black_box(index.explain(&query)));
     });
 
     g.bench_function("full_scan_mode", |b| {
-        let query =
-            SearchQueryBuilder::new(vec![r"\w{5}\s+\w{5}\s+\w{5}\s+\w{5}\s+\w{5}".to_string()])
-                .options(SearchOptions::default())
-                .build()
-                .unwrap();
+        let query = Query::new(
+            vec![r"\w{5}\s+\w{5}\s+\w{5}\s+\w{5}\s+\w{5}".to_string()],
+            SearchOptions::default(),
+        )
+        .unwrap();
         b.iter(|| black_box(index.explain(&query)));
     });
 

@@ -3,7 +3,7 @@ use crate::corpus::CandidateOrder;
 /// Whether candidate resolution should cover every corpus file or only
 /// index-narrowed potential matches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Coverage {
+pub enum Coverage {
     /// Index may narrow to potential matches only.
     PotentialMatches,
     /// Every corpus file must be considered (`-L`, `--include-zero`).
@@ -33,22 +33,6 @@ pub enum SnapshotFreshness {
     Stale,
 }
 
-impl Coverage {
-    pub(crate) const fn from_mode(mode: crate::search::SearchMode) -> Self {
-        use crate::search::{SearchMode, ZeroCounts};
-        match mode {
-            SearchMode::FilesWithoutMatch => Self::Complete,
-            SearchMode::CountLines { zeros } | SearchMode::CountMatches { zeros } => match zeros {
-                ZeroCounts::Include => Self::Complete,
-                ZeroCounts::Omit => Self::PotentialMatches,
-            },
-            SearchMode::Lines | SearchMode::Matches | SearchMode::FilesWithMatches => {
-                Self::PotentialMatches
-            }
-        }
-    }
-}
-
 impl ScanScope {
     pub(crate) fn order(self) -> CandidateOrder {
         match self {
@@ -62,5 +46,49 @@ impl ScanScope {
             Self::Index { freshness, .. } => Some(freshness),
             Self::StreamsOnly | Self::Walk { .. } => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::search::{SearchMode, ZeroCounts};
+
+    #[test]
+    fn count_lines_omit_uses_potential_matches() {
+        assert_eq!(
+            SearchMode::CountLines {
+                zeros: ZeroCounts::Omit
+            }
+            .coverage(),
+            Coverage::PotentialMatches
+        );
+    }
+
+    #[test]
+    fn count_lines_include_uses_complete() {
+        assert_eq!(
+            SearchMode::CountLines {
+                zeros: ZeroCounts::Include
+            }
+            .coverage(),
+            Coverage::Complete
+        );
+    }
+
+    #[test]
+    fn count_matches_omit_uses_potential_matches() {
+        assert_eq!(
+            SearchMode::CountMatches {
+                zeros: ZeroCounts::Omit
+            }
+            .coverage(),
+            Coverage::PotentialMatches
+        );
+    }
+
+    #[test]
+    fn files_without_match_uses_complete() {
+        assert_eq!(SearchMode::FilesWithoutMatch.coverage(), Coverage::Complete);
     }
 }

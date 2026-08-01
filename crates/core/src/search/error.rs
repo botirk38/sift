@@ -13,9 +13,6 @@ pub enum Error {
     #[error("invalid max-count: 0 matches requested")]
     InvalidMaxCount,
 
-    #[error("grep request is missing a search query")]
-    MissingSearchQuery,
-
     #[error("JSON output is only supported for standard search (not count or file-list modes)")]
     JsonOutputIncompatibleMode,
 

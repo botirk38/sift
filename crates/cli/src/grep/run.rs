@@ -1,11 +1,10 @@
 use std::path::PathBuf;
 
 use sift_core::candidates::{CandidateSource, ScanScope, SnapshotFreshness};
-use sift_core::grep::{Grep, Inputs, PathDisplay};
-use sift_core::search::{
-    InputConversion, SearchMode, SearchOptions, SearchQueryBuilder, ZeroCounts,
+use sift_core::search::{Query, SearchInputs, SearchMode, SearchOptions, Searcher, ZeroCounts};
+use sift_core::{
+    CandidateFilter, CandidateOrder, Candidates, CorpusKind, IndexCoverage, Narrowing, Plan,
 };
-use sift_core::{CorpusKind, GrepRequest, IndexCoverage};
 
 use crate::format::output::mode::ZeroCountMode;
 use crate::format::{PrintExtras, PrintMode, SearchPrinter};
@@ -36,7 +35,7 @@ pub struct RunConfig {
     pub threads: Option<usize>,
     pub mode: RunMode,
     pub content: ContentTransformConfig,
-    pub candidate_order: sift_core::grep::CandidateOrder,
+    pub candidate_order: CandidateOrder,
 }
 
 impl RunConfig {
@@ -65,7 +64,7 @@ pub enum RunResult {
 struct SearchSession {
     indexes: Option<sift_core::Indexes>,
     scope: CorpusScope,
-    search_filter: sift_core::grep::CandidateFilter,
+    search_filter: CandidateFilter,
     store_meta: Option<sift_core::StoreMeta>,
 }
 
@@ -127,8 +126,7 @@ impl Run {
             scope.prefixes.clone(),
             scope.exclude_paths.clone(),
         )?;
-        let search_filter =
-            sift_core::grep::CandidateFilter::new(&filter_config, &scope.filter_root)?;
+        let search_filter = CandidateFilter::new(&filter_config, &scope.filter_root)?;
         Ok(SearchSession {
             indexes,
             scope,
@@ -153,21 +151,12 @@ impl Run {
             order: self.config.candidate_order,
         };
         let source = Self::candidate_source(&session, scope);
-        let query = SearchQueryBuilder::new(vec![".".to_string()])
-            .options(SearchOptions::default())
-            .build()
+        let query = Query::new(vec![".".to_string()], SearchOptions::default())
             .map_err(|e| anyhow::anyhow!("{e}"))?
-            .with_narrowing(sift_core::Narrowing::Disabled);
-        let request = GrepRequest {
-            query,
-            streams: Inputs::empty(),
-            conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-            mode: SearchMode::Lines,
-            stats: sift_core::StatsMode::Off,
-        };
-        let grep = Grep::new(source);
-        let candidates = grep
-            .resolve_candidates(&request)
+            .with_narrowing(Narrowing::Disabled);
+        let searcher = Searcher::new(query).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let candidates = Plan::new(&source, searcher.query(), SearchMode::Lines.coverage())
+            .resolve(&source)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         let all_paths: Vec<_> = candidates
             .into_vec()
@@ -230,17 +219,13 @@ impl Run {
         let mut query = self
             .config
             .pattern
-            .search_query(patterns.patterns, &pattern_argv)
+            .query(patterns.patterns, &pattern_argv)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         if transform.is_some() {
-            query = query.with_narrowing(sift_core::Narrowing::Disabled);
+            query = query.with_narrowing(Narrowing::Disabled);
         }
         let explicit_files = Self::explicit_files(&session);
-        let (streams, conversion) = sources.search_inputs(
-            &explicit_files,
-            print_spec.lines.path_display,
-            transform.as_ref(),
-        );
+        let mut streams = sources.stdin_streams();
         let print_stats = OutputDecl::print_stats(&output_argv, effective_mode);
         let extras = PrintExtras::hits().with_stats(print_stats);
         let mode = Self::search_mode(effective_mode, print_spec.include_zero);
@@ -249,16 +234,39 @@ impl Run {
         } else {
             sift_core::StatsMode::Off
         };
-        let grep = Grep::new(candidate_source);
-        let request = GrepRequest {
-            query,
-            streams,
-            conversion,
+        let searcher = Searcher::new(query).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let resolved = Plan::new(&candidate_source, searcher.query(), mode.coverage())
+            .resolve(&candidate_source)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let (candidates, streams) = match transform.as_ref() {
+            Some(transform) => {
+                for candidate in resolved.into_vec() {
+                    let bytes = transform
+                        .read_candidate(&candidate)
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    let is_explicit = explicit_files
+                        .iter()
+                        .any(|path| path == candidate.rel_path() || path == candidate.abs_path());
+                    streams.push_candidate_bytes(candidate, bytes, is_explicit);
+                }
+                (Candidates::empty(), streams)
+            }
+            None => (resolved, streams),
+        };
+        let report = SearchPrinter::print(
+            &searcher,
+            SearchInputs {
+                candidates,
+                streams,
+                explicit: &explicit_files,
+            },
             mode,
             stats,
-        };
-        let report = SearchPrinter::print_grep(&grep, request, print_spec, &separators, extras)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            print_spec,
+            &separators,
+            extras,
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         if let Some(s) = report.stats.as_ref() {
             OutputDecl::write_stats(s);

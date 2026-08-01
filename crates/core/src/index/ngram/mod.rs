@@ -15,9 +15,7 @@ mod candidate_tests {
     use std::path::Path;
 
     use crate::index::ngram::storage::postings::Postings;
-    use crate::search::{
-        CaseMode, InputEncoding, SearchFlags, SearchOptions, SearchQuery, SearchQueryBuilder,
-    };
+    use crate::search::{CaseMode, InputEncoding, Query, SearchFlags, SearchOptions};
 
     use super::*;
 
@@ -51,11 +49,8 @@ mod candidate_tests {
         }
     }
 
-    fn built_query(patterns: &[String], options: SearchOptions) -> SearchQuery {
-        SearchQueryBuilder::new(patterns.to_vec())
-            .options(options)
-            .build()
-            .expect("query")
+    fn built_query(patterns: &[String], options: SearchOptions) -> Query {
+        Query::new(patterns.to_vec(), options).expect("query")
     }
 
     fn extracts_literals(

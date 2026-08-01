@@ -1,9 +1,8 @@
 use std::fs;
 
-use sift_core::grep::VisibilityConfig;
 use sift_core::{
     CorpusKind, CorpusSpec, FileId, GramNorm, GramWidth, IndexConfig, IndexDestination,
-    IndexWalkConfig, NGramIndex,
+    IndexWalkConfig, NGramIndex, VisibilityConfig,
 };
 use tempfile::TempDir;
 

@@ -44,7 +44,8 @@ pub enum IntoIter<'a> {
 }
 
 impl<'a> Candidates<'a> {
-    pub(crate) const fn empty() -> Self {
+    #[must_use]
+    pub const fn empty() -> Self {
         Self(Inner::Resolved(Vec::new()))
     }
 

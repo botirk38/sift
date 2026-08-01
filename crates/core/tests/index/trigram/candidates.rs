@@ -1,9 +1,8 @@
 use std::{fs, path::Path};
 
-use sift_core::grep::FilterAdmission;
 use sift_core::search::CaseMode;
 use sift_core::search::SearchOptions;
-use sift_core::{GramNorm, GramWidth, IndexRecord, Indexes};
+use sift_core::{FilterAdmission, GramNorm, GramWidth, IndexRecord, Indexes};
 use tempfile::TempDir;
 
 use super::super::common::{

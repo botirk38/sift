@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::search::input::HitPath;
+use crate::search::input::FileIdentity;
 
 /// One match hit (line text or span text); path lives on the enclosing listed file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10,11 +10,10 @@ pub struct Match {
     pub text: String,
 }
 
-/// Display path + corpus identity for a listed search file.
+/// File identity for a listed search result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedFile {
-    pub path: Arc<Path>,
-    pub corpus: HitPath,
+    pub identity: Arc<FileIdentity>,
     pub binary_byte_offset: Option<u64>,
 }
 
@@ -22,11 +21,13 @@ impl ListedFile {
     /// Corpus-relative path for daemon / lazy index enqueue, if any.
     #[must_use]
     pub fn corpus_path(&self) -> Option<&Path> {
-        match &self.corpus {
-            HitPath::Absent => None,
-            HitPath::Display => Some(self.path.as_ref()),
-            HitPath::Owned(path) => Some(path.as_path()),
-        }
+        self.identity.corpus_path()
+    }
+
+    /// Path shown to the user for this identity.
+    #[must_use]
+    pub fn display_path(&self, mode: crate::corpus::candidate::PathDisplay) -> &Path {
+        self.identity.display_path(mode)
     }
 }
 
@@ -82,14 +83,16 @@ impl Listing {
         }
     }
 
+    #[must_use]
     pub(crate) const fn empty(mode: crate::search::SearchMode) -> Self {
+        use crate::search::SearchMode;
         match mode {
-            crate::search::SearchMode::FilesWithMatches => Self::MatchingPaths(Vec::new()),
-            crate::search::SearchMode::FilesWithoutMatch => Self::NonMatchingPaths(Vec::new()),
-            crate::search::SearchMode::CountLines { .. } => Self::LineCounts(Vec::new()),
-            crate::search::SearchMode::CountMatches { .. } => Self::SpanCounts(Vec::new()),
-            crate::search::SearchMode::Lines => Self::Lines(Vec::new()),
-            crate::search::SearchMode::Matches => Self::Spans(Vec::new()),
+            SearchMode::FilesWithMatches => Self::MatchingPaths(Vec::new()),
+            SearchMode::FilesWithoutMatch => Self::NonMatchingPaths(Vec::new()),
+            SearchMode::CountLines { .. } => Self::LineCounts(Vec::new()),
+            SearchMode::CountMatches { .. } => Self::SpanCounts(Vec::new()),
+            SearchMode::Lines => Self::Lines(Vec::new()),
+            SearchMode::Matches => Self::Spans(Vec::new()),
         }
     }
 

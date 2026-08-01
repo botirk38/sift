@@ -3,10 +3,10 @@ use std::str::FromStr;
 
 use clap::{Arg, ArgAction, ArgMatches, Args, Command, FromArgMatches};
 use ignore::types::TypesBuilder;
-use sift_core::grep::{
+use sift_core::{
     CandidateFilterConfig, GlobConfig, IgnoreConfig, TypeFilterRule, VisibilityConfig,
 };
-use sift_core::grep::{CandidateOrder, CandidateOrderDirection, CandidateOrderKey};
+use sift_core::{CandidateOrder, CandidateOrderDirection, CandidateOrderKey};
 
 use super::argv::Argv;
 use super::ignore::{IgnoreResolution, MessageFlags};
@@ -598,7 +598,7 @@ mod tests {
     #[test]
     fn filter_resolution_hidden_mode_include() {
         use crate::grep::ignore::IgnoreResolution;
-        use sift_core::grep::IgnoreSources;
+        use sift_core::IgnoreSources;
         let ctx = FilterResolution {
             ignore: IgnoreResolution {
                 hidden: true,
@@ -609,14 +609,14 @@ mod tests {
         };
         assert!(matches!(
             ctx.ignore.hidden_mode(),
-            sift_core::grep::HiddenMode::Include
+            sift_core::HiddenMode::Include
         ));
     }
 
     #[test]
     fn filter_resolution_hidden_mode_respect() {
         use crate::grep::ignore::IgnoreResolution;
-        use sift_core::grep::IgnoreSources;
+        use sift_core::IgnoreSources;
         let ctx = FilterResolution {
             ignore: IgnoreResolution {
                 sources: IgnoreSources::empty(),
@@ -626,7 +626,7 @@ mod tests {
         };
         assert!(matches!(
             ctx.ignore.hidden_mode(),
-            sift_core::grep::HiddenMode::Respect
+            sift_core::HiddenMode::Respect
         ));
     }
 

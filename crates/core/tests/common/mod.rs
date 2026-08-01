@@ -5,18 +5,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use sift_core::grep::{
-    CandidateFilter, CandidateFilterConfig, FilterAdmission, Grep, GrepRequest, IgnoreConfig,
-    PathDisplay, VisibilityConfig,
-};
-use sift_core::search::{
-    InputConversion, SearchMode, SearchOptions, SearchQueryBuilder, StatsMode,
-};
-use sift_core::{Candidate, CandidateOrder, CandidateSource, ScanScope, SnapshotFreshness};
 use sift_core::{
-    CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramNorm, GramWidth, IndexConfig,
-    IndexCoverage, IndexDestination, IndexRecord, IndexWalkConfig, Indexes, Inputs, NGramIndex,
-    StoreMeta, WalkMeta,
+    Candidate, CandidateFilter, CandidateFilterConfig, CandidateOrder, CandidateSource, CorpusKind,
+    CorpusMeta, CorpusSpec, FilterAdmission, FilterMeta, GramNorm, GramWidth, IgnoreConfig,
+    IndexConfig, IndexCoverage, IndexDestination, IndexRecord, IndexWalkConfig, Indexes,
+    NGramIndex, Plan, Query, ScanScope, SearchOptions, SnapshotFreshness, StoreMeta,
+    VisibilityConfig, WalkMeta,
 };
 
 pub fn sample_store_meta(root: PathBuf, indexes: Vec<IndexRecord>) -> StoreMeta {
@@ -150,21 +144,16 @@ pub fn index_candidates(
             freshness: SnapshotFreshness::Current,
         },
     );
-    let query = SearchQueryBuilder::new(patterns.to_vec())
-        .options(options)
-        .build()
-        .expect("query");
-    let request = GrepRequest {
-        query,
-        streams: Inputs::empty(),
-        conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-        mode: SearchMode::Lines,
-        stats: StatsMode::Off,
-    };
-    Grep::new(source)
-        .resolve_candidates(&request)
-        .expect("candidates")
-        .into_vec()
+    let query = Query::new(patterns.to_vec(), options).expect("query");
+    let searcher = sift_core::Searcher::new(query).expect("searcher");
+    Plan::new(
+        &source,
+        searcher.query(),
+        sift_core::SearchMode::Lines.coverage(),
+    )
+    .resolve(&source)
+    .expect("candidates")
+    .into_vec()
 }
 
 pub fn build_trigram_in_dir(corpus: &Path, trigram_dir: &Path) -> NGramIndex {

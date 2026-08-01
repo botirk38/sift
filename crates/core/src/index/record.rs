@@ -11,7 +11,7 @@ use super::kinds::FileId;
 use super::ngram::{GramNorm, GramWidth};
 use super::paths::IndexedCorpus;
 
-use crate::search::SearchQuery;
+use crate::search::Query;
 
 /// Persisted catalog entry (meta + snapshot manifest).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -131,7 +131,7 @@ impl FromStr for IndexRecord {
 pub trait Index: Send + Sync {
     /// File ids that may match. May over-return; must not under-return.
     /// Cannot narrow → every covered id.
-    fn query(&self, query: &SearchQuery) -> Vec<FileId>;
+    fn query(&self, query: &Query) -> Vec<FileId>;
 
     fn coverage(&self) -> IndexedCorpus;
 

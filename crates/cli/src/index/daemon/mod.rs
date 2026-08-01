@@ -476,7 +476,7 @@ impl DaemonOrchestrator {
                         max_filesize: None,
                     },
                     FilterMeta {
-                        visibility: sift_core::grep::VisibilityConfig::default(),
+                        visibility: sift_core::VisibilityConfig::default(),
                     },
                     IndexRecord::default_catalog(),
                 ))
@@ -1166,7 +1166,7 @@ impl IndexRefresh<'_> {
 mod tests {
     use super::*;
     use sift_core::GramWidth;
-    use sift_core::grep::VisibilityConfig;
+    use sift_core::VisibilityConfig;
     use std::sync::atomic::Ordering;
     use tempfile::TempDir;
 

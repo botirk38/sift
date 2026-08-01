@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use error::FilterError;
 
-use crate::grep::Error as GrepError;
+use crate::search::Error as SearchError;
 
 use ::ignore::gitignore::Gitignore;
 use ::ignore::overrides::{Override, OverrideBuilder};
@@ -110,8 +110,8 @@ impl CandidateFilter {
     ///
     /// # Errors
     ///
-    /// Returns `GrepError` if glob patterns are invalid or type definitions are unknown.
-    pub fn new(config: &CandidateFilterConfig, index_root: &Path) -> Result<Self, GrepError> {
+    /// Returns `SearchError` if glob patterns are invalid or type definitions are unknown.
+    pub fn new(config: &CandidateFilterConfig, index_root: &Path) -> Result<Self, SearchError> {
         let scopes = if config.scopes.is_empty() {
             vec![PathBuf::from("")]
         } else {
@@ -130,7 +130,7 @@ impl CandidateFilter {
             }
             for g in &config.glob.patterns {
                 builder.add(g).map_err(|e| {
-                    GrepError::RegexBuild(format!("invalid glob pattern '{g}': {e}"))
+                    SearchError::RegexBuild(format!("invalid glob pattern '{g}': {e}"))
                 })?;
             }
             Some(

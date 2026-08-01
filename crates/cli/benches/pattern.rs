@@ -69,7 +69,7 @@ pub fn bench(c: &mut Criterion) {
             black_box(
                 cli_default
                     .pattern_config()
-                    .search_query(vec!["pattern".to_string()], black_box(&pattern_argv))
+                    .query(vec!["pattern".to_string()], black_box(&pattern_argv))
                     .and_then(Searcher::new)
                     .unwrap(),
             )

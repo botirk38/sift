@@ -23,7 +23,7 @@ Two-layer flag model:
 | `grep/output.rs` | `LineNumberDecl`, … | `OutputDecl`, `OutputArgv` | `OutputArgv::resolve`, `OutputDecl::print_spec` |
 | `grep/filter.rs` | `FilterDecl`, … | `FilterConfig`, `TypeCatalog` | `FilterConfig::candidate_config` |
 | `grep/paths.rs` | `PathArgs` | `CorpusScope` | `CorpusScope::resolve` |
-| `grep/input.rs` | — | `InputSources`, `ContentTransform` | `InputSources::resolve`, `search_inputs` |
+| `grep/input.rs` | — | `InputSources`, `ContentTransform` | `InputSources::resolve`, `stdin_streams` |
 | `grep/run.rs` | — | `RunConfig`, `Run`, `RunResult` | `Run::execute` |
 | `format/printer.rs` | — | `SearchPrinter`, `PrintSpec` | `SearchPrinter::print` → `Report` |
 | `index/mod.rs` | — | `IndexRequest`, `IndexJob`, `SnapshotRefresh` | `IndexJob::resolve`, `IndexJob::run`, `SnapshotRefresh::run` |
@@ -34,9 +34,9 @@ Two-layer flag model:
 
 ```text
 RunConfig → Run::execute
-InputSources → search_inputs → Inputs
-CandidateSource + GrepRequest → Grep::resolve_candidates
-SearchPrinter::print → Report
+InputSources → stdin_streams → Inputs
+CandidateSource + Plan::resolve → Candidates
+Searcher::execute → SearchPrinter::print → Report
 ```
 
 Index lifecycle: `IndexJob::run` → `SnapshotRefresh::run` (build/update snapshot). Daemon debouncing and IPC stay in `index/daemon/`.

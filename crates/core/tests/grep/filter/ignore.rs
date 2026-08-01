@@ -1,4 +1,4 @@
-use sift_core::grep::{CandidateFilter, CandidateFilterConfig, IgnoreConfig, VisibilityConfig};
+use sift_core::{CandidateFilter, CandidateFilterConfig, IgnoreConfig, VisibilityConfig};
 use tempfile::TempDir;
 
 use crate::common::make_filter_corpus;

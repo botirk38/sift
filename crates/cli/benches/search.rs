@@ -20,7 +20,7 @@ fn bench_binary_mode(g: &mut criterion::BenchmarkGroup<'_, criterion::measuremen
         b.iter(|| {
             black_box(
                 config
-                    .search_query(vec!["pattern".to_string()], black_box(&pat_default))
+                    .query(vec!["pattern".to_string()], black_box(&pat_default))
                     .and_then(Searcher::new)
                     .unwrap()
                     .options()
@@ -33,7 +33,7 @@ fn bench_binary_mode(g: &mut criterion::BenchmarkGroup<'_, criterion::measuremen
         b.iter(|| {
             black_box(
                 config
-                    .search_query(vec!["pattern".to_string()], black_box(&pat_text))
+                    .query(vec!["pattern".to_string()], black_box(&pat_text))
                     .and_then(Searcher::new)
                     .unwrap()
                     .options()

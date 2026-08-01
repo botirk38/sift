@@ -11,7 +11,7 @@
 //! over-allocate, or read out of bounds.
 
 use libfuzzer_sys::fuzz_target;
-use sift_core::grep::VisibilityConfig;
+use sift_core::VisibilityConfig;
 use sift_core::{
     CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramWidth, IndexConfig, IndexCoverage,
     IndexRecord, IndexWalkConfig, Indexes, NGramIndex, StoreMeta, WalkMeta,

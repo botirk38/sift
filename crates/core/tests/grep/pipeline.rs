@@ -1,14 +1,12 @@
 use std::borrow::Cow;
 use std::fs;
+use std::sync::Arc;
 
-use sift_core::candidates::{CandidateSource, ScanScope, SnapshotFreshness};
-use sift_core::grep::{
+use sift_core::{
     ByteInput, CandidateFilter, CandidateFilterConfig, CandidateOrder, CandidateOrderDirection,
-    CandidateOrderKey, Grep, GrepRequest, PathDisplay,
-};
-use sift_core::search::{
-    Events, InputConversion, Inputs, Listing, SearchEvent, SearchMode, SearchOptions,
-    SearchQueryBuilder, SearchSink, Searcher, StatsMode,
+    CandidateOrderKey, CandidateSource, Events, FileIdentity, Inputs, Listing, Narrowing,
+    PathDisplay, Plan, Query, ScanScope, SearchEvent, SearchInputs, SearchMode, SearchOptions,
+    SearchSink, Searcher, SnapshotFreshness, StatsMode, ZeroCounts,
 };
 use tempfile::TempDir;
 
@@ -32,34 +30,29 @@ fn grep_finds_match_in_indexed_corpus() {
 
     let indexes = open_indexes(&sift_dir);
     let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
-    let query = SearchQueryBuilder::new(vec!["beta".to_string()])
-        .options(SearchOptions::default())
-        .build()
-        .expect("query");
+    let query = Query::new(vec!["beta".to_string()], SearchOptions::default()).expect("query");
+    let searcher = Searcher::new(query).expect("searcher");
     let source = CandidateSource::new(
         Some(&indexes),
         &filter,
         None,
         index_scope(CandidateOrder::default()),
     );
-    let request = GrepRequest {
-        query: query.clone(),
-        streams: Inputs::empty(),
-        conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-        mode: SearchMode::Lines,
-        stats: StatsMode::Off,
-    };
-    let grep = Grep::new(source);
-    let candidates = grep.resolve_candidates(&request).expect("candidates");
-    let searcher = Searcher::new(query).expect("searcher");
-    let inputs = sift_core::search::SearchInputs {
-        candidates,
-        streams: Inputs::empty(),
-        conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-    };
+    let candidates = Plan::new(&source, searcher.query(), SearchMode::Lines.coverage())
+        .resolve(&source)
+        .expect("candidates");
 
     let report = searcher
-        .execute(inputs, StatsMode::Off, SearchMode::Lines, Events::Discard)
+        .execute(
+            SearchInputs {
+                candidates,
+                streams: Inputs::empty(),
+                explicit: &[],
+            },
+            StatsMode::Off,
+            SearchMode::Lines,
+            Events::Discard,
+        )
         .expect("grep run");
     assert!(report.found());
 }
@@ -75,26 +68,22 @@ fn candidate_planner_all_indexed_uses_index_when_metadata_missing() {
 
     let indexes = open_indexes(&sift_dir);
     let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
-    let query = SearchQueryBuilder::new(vec!["alpha|beta|gamma|delta".to_string()])
-        .options(SearchOptions::default())
-        .build()
-        .expect("query");
+    let query = Query::new(
+        vec!["alpha|beta|gamma|delta".to_string()],
+        SearchOptions::default(),
+    )
+    .expect("query");
+    let searcher = Searcher::new(query).expect("searcher");
     let source = CandidateSource::new(
         Some(&indexes),
         &filter,
         None,
         index_scope(CandidateOrder::default()),
     );
-    let request = GrepRequest {
-        query,
-        streams: Inputs::empty(),
-        conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-        mode: SearchMode::Lines,
-        stats: StatsMode::Off,
-    };
 
-    let grep = Grep::new(source);
-    let candidates = grep.resolve_candidates(&request).expect("candidates");
+    let candidates = Plan::new(&source, searcher.query(), SearchMode::Lines.coverage())
+        .resolve(&source)
+        .expect("candidates");
 
     assert_eq!(candidates.into_vec().len(), 2);
 }
@@ -117,17 +106,24 @@ fn high_level_grep_search_resolves_candidates_and_reports_matches() {
         index_scope(CandidateOrder::default()),
     );
 
-    let report = Grep::new(source)
-        .search(GrepRequest {
-            query: SearchQueryBuilder::new(vec!["beta".to_string()])
-                .options(SearchOptions::default())
-                .build()
-                .expect("query"),
-            streams: Inputs::empty(),
-            conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-            mode: SearchMode::Lines,
-            stats: StatsMode::On,
-        })
+    let query = Query::new(vec!["beta".to_string()], SearchOptions::default()).expect("query");
+    let searcher = Searcher::new(query).expect("searcher");
+    let mode = SearchMode::Lines;
+    let candidates = Plan::new(&source, searcher.query(), mode.coverage())
+        .resolve(&source)
+        .expect("candidates");
+
+    let report = searcher
+        .execute(
+            SearchInputs {
+                candidates,
+                streams: Inputs::empty(),
+                explicit: &[],
+            },
+            StatsMode::On,
+            mode,
+            Events::Discard,
+        )
         .expect("grep search");
 
     assert!(report.found());
@@ -159,19 +155,23 @@ fn high_level_grep_stream_emits_events_without_collecting_matches() {
     );
     let mut sink = EventRecorder::default();
 
-    let report = Grep::new(source)
-        .stream(
-            GrepRequest {
-                query: SearchQueryBuilder::new(vec!["beta".to_string()])
-                    .options(SearchOptions::default())
-                    .build()
-                    .expect("query"),
+    let query = Query::new(vec!["beta".to_string()], SearchOptions::default()).expect("query");
+    let searcher = Searcher::new(query).expect("searcher");
+    let mode = SearchMode::Lines;
+    let candidates = Plan::new(&source, searcher.query(), mode.coverage())
+        .resolve(&source)
+        .expect("candidates");
+
+    let report = searcher
+        .execute(
+            SearchInputs {
+                candidates,
                 streams: Inputs::empty(),
-                conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-                mode: SearchMode::Lines,
-                stats: StatsMode::Off,
+                explicit: &[],
             },
-            &mut sink,
+            StatsMode::Off,
+            mode,
+            Events::Emit(&mut sink),
         )
         .expect("grep stream");
 
@@ -203,17 +203,24 @@ fn high_level_grep_files_without_match_selects_nonmatching_files() {
         },
     );
 
-    let report = Grep::new(source)
-        .search(GrepRequest {
-            query: SearchQueryBuilder::new(vec!["beta".to_string()])
-                .options(SearchOptions::default())
-                .build()
-                .expect("query"),
-            streams: Inputs::empty(),
-            conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-            mode: SearchMode::FilesWithoutMatch,
-            stats: StatsMode::Off,
-        })
+    let query = Query::new(vec!["beta".to_string()], SearchOptions::default()).expect("query");
+    let searcher = Searcher::new(query).expect("searcher");
+    let mode = SearchMode::FilesWithoutMatch;
+    let candidates = Plan::new(&source, searcher.query(), mode.coverage())
+        .resolve(&source)
+        .expect("candidates");
+
+    let report = searcher
+        .execute(
+            SearchInputs {
+                candidates,
+                streams: Inputs::empty(),
+                explicit: &[],
+            },
+            StatsMode::Off,
+            mode,
+            Events::Discard,
+        )
         .expect("grep search");
 
     assert!(report.found());
@@ -243,17 +250,24 @@ fn high_level_grep_files_without_match_uses_full_corpus_with_index() {
         index_scope(CandidateOrder::default()),
     );
 
-    let report = Grep::new(source)
-        .search(GrepRequest {
-            query: SearchQueryBuilder::new(vec!["hello".to_string()])
-                .options(SearchOptions::default())
-                .build()
-                .expect("query"),
-            streams: Inputs::empty(),
-            conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-            mode: SearchMode::FilesWithoutMatch,
-            stats: StatsMode::Off,
-        })
+    let query = Query::new(vec!["hello".to_string()], SearchOptions::default()).expect("query");
+    let searcher = Searcher::new(query).expect("searcher");
+    let mode = SearchMode::FilesWithoutMatch;
+    let candidates = Plan::new(&source, searcher.query(), mode.coverage())
+        .resolve(&source)
+        .expect("candidates");
+
+    let report = searcher
+        .execute(
+            SearchInputs {
+                candidates,
+                streams: Inputs::empty(),
+                explicit: &[],
+            },
+            StatsMode::Off,
+            mode,
+            Events::Discard,
+        )
         .expect("grep search");
 
     assert!(report.found());
@@ -261,7 +275,11 @@ fn high_level_grep_files_without_match_uses_full_corpus_with_index() {
         panic!("expected NonMatchingPaths");
     };
     assert_eq!(files.len(), 1);
-    assert!(files[0].path.ends_with("b.txt"));
+    assert!(
+        files[0]
+            .display_path(PathDisplay::Relative)
+            .ends_with("b.txt")
+    );
 }
 
 #[test]
@@ -282,17 +300,28 @@ fn high_level_grep_files_without_match_is_not_selected_when_all_files_match() {
         index_scope(CandidateOrder::default()),
     );
 
-    let report = Grep::new(source)
-        .search(GrepRequest {
-            query: SearchQueryBuilder::new(vec!["alpha|beta|gamma|delta".to_string()])
-                .options(SearchOptions::default())
-                .build()
-                .expect("query"),
-            streams: Inputs::empty(),
-            conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-            mode: SearchMode::FilesWithoutMatch,
-            stats: StatsMode::Off,
-        })
+    let query = Query::new(
+        vec!["alpha|beta|gamma|delta".to_string()],
+        SearchOptions::default(),
+    )
+    .expect("query");
+    let searcher = Searcher::new(query).expect("searcher");
+    let mode = SearchMode::FilesWithoutMatch;
+    let candidates = Plan::new(&source, searcher.query(), mode.coverage())
+        .resolve(&source)
+        .expect("candidates");
+
+    let report = searcher
+        .execute(
+            SearchInputs {
+                candidates,
+                streams: Inputs::empty(),
+                explicit: &[],
+            },
+            StatsMode::Off,
+            mode,
+            Events::Discard,
+        )
         .expect("grep search");
 
     assert!(!report.found());
@@ -324,38 +353,33 @@ fn grep_finds_match_in_stdin_stream() {
     let corpus = tmp.path().join("corpus");
     fs::create_dir_all(&corpus).expect("mkdir");
 
-    let query = SearchQueryBuilder::new(vec!["needle".to_string()])
-        .options(SearchOptions::default())
-        .build()
-        .expect("query");
+    let query = Query::new(vec!["needle".to_string()], SearchOptions::default()).expect("query");
+    let searcher = Searcher::new(query).expect("searcher");
 
     let indexes = open_indexes(&tmp.path().join(".sift"));
     let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
     let source = CandidateSource::new(Some(&indexes), &filter, None, ScanScope::StreamsOnly);
-    let request = GrepRequest {
-        query: query.clone(),
-        streams: Inputs::empty(),
-        conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-        mode: SearchMode::Lines,
-        stats: StatsMode::Off,
-    };
-    let grep = Grep::new(source);
-    let candidates = grep.resolve_candidates(&request).expect("candidates");
-    let searcher = Searcher::new(query).expect("searcher");
+    let candidates = Plan::new(&source, searcher.query(), SearchMode::Lines.coverage())
+        .resolve(&source)
+        .expect("candidates");
 
     let streams = Inputs::empty().with_stream(ByteInput {
         path: Cow::Borrowed("<stdin>"),
         bytes: Cow::Borrowed(b"hello needle world\n"),
         explicit: false,
     });
-    let inputs = sift_core::search::SearchInputs {
-        candidates,
-        streams,
-        conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-    };
 
     let report = searcher
-        .execute(inputs, StatsMode::Off, SearchMode::Lines, Events::Discard)
+        .execute(
+            SearchInputs {
+                candidates,
+                streams,
+                explicit: &[],
+            },
+            StatsMode::Off,
+            SearchMode::Lines,
+            Events::Discard,
+        )
         .expect("grep run");
     assert!(report.found());
     let Listing::Lines(files) = &report.listed else {
@@ -388,19 +412,26 @@ fn count_include_zero_lists_zeros_but_found_requires_hits() {
         },
     );
 
-    let report = Grep::new(source)
-        .search(GrepRequest {
-            query: SearchQueryBuilder::new(vec!["nomatch".to_string()])
-                .options(SearchOptions::default())
-                .build()
-                .expect("query"),
-            streams: Inputs::empty(),
-            conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-            mode: SearchMode::CountLines {
-                zeros: sift_core::ZeroCounts::Include,
+    let query = Query::new(vec!["nomatch".to_string()], SearchOptions::default()).expect("query");
+    let searcher = Searcher::new(query).expect("searcher");
+    let mode = SearchMode::CountLines {
+        zeros: ZeroCounts::Include,
+    };
+    let candidates = Plan::new(&source, searcher.query(), mode.coverage())
+        .resolve(&source)
+        .expect("candidates");
+
+    let report = searcher
+        .execute(
+            SearchInputs {
+                candidates,
+                streams: Inputs::empty(),
+                explicit: &[],
             },
-            stats: StatsMode::Off,
-        })
+            StatsMode::Off,
+            mode,
+            Events::Discard,
+        )
         .expect("grep search");
 
     assert!(!report.found());
@@ -430,19 +461,23 @@ fn stream_begin_path_shares_arc_with_listed_file() {
     );
     let mut sink = PathRecorder::default();
 
-    let report = Grep::new(source)
-        .stream(
-            GrepRequest {
-                query: SearchQueryBuilder::new(vec!["beta".to_string()])
-                    .options(SearchOptions::default())
-                    .build()
-                    .expect("query"),
+    let query = Query::new(vec!["beta".to_string()], SearchOptions::default()).expect("query");
+    let searcher = Searcher::new(query).expect("searcher");
+    let mode = SearchMode::Lines;
+    let candidates = Plan::new(&source, searcher.query(), mode.coverage())
+        .resolve(&source)
+        .expect("candidates");
+
+    let report = searcher
+        .execute(
+            SearchInputs {
+                candidates,
                 streams: Inputs::empty(),
-                conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-                mode: SearchMode::Lines,
-                stats: StatsMode::Off,
+                explicit: &[],
             },
-            &mut sink,
+            StatsMode::Off,
+            mode,
+            Events::Emit(&mut sink),
         )
         .expect("grep stream");
 
@@ -450,23 +485,23 @@ fn stream_begin_path_shares_arc_with_listed_file() {
         panic!("expected Lines");
     };
     assert!(!files.is_empty());
-    assert!(!sink.begin_paths.is_empty());
-    assert!(sink.begin_paths.iter().any(|begin| {
-        files
+    assert!(!sink.begin_identities.is_empty());
+    assert!(
+        sink.begin_identities
             .iter()
-            .any(|f| std::sync::Arc::ptr_eq(begin, &f.file.path))
-    }));
+            .any(|begin| { files.iter().any(|f| Arc::ptr_eq(begin, &f.file.identity)) })
+    );
 }
 
 #[derive(Default)]
 struct PathRecorder {
-    begin_paths: Vec<std::sync::Arc<std::path::Path>>,
+    begin_identities: Vec<Arc<FileIdentity>>,
 }
 
 impl SearchSink for PathRecorder {
     fn event(&mut self, event: SearchEvent) -> sift_core::Result<()> {
         if let SearchEvent::Begin(event) = event {
-            self.begin_paths.push(event.path);
+            self.begin_identities.push(event.file);
         }
         Ok(())
     }
@@ -500,20 +535,28 @@ fn first_match_settles_on_pattern_hit_not_include_zero() {
         ..SearchOptions::default()
     };
 
-    let report = Grep::new(source)
-        .search(GrepRequest {
-            query: SearchQueryBuilder::new(vec!["needle".to_string()])
-                .options(options)
-                .build()
-                .expect("query")
-                .with_narrowing(sift_core::Narrowing::Disabled),
-            streams: Inputs::empty(),
-            conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-            mode: SearchMode::CountLines {
-                zeros: sift_core::ZeroCounts::Include,
+    let query = Query::new(vec!["needle".to_string()], options)
+        .expect("query")
+        .with_narrowing(Narrowing::Disabled);
+    let searcher = Searcher::new(query).expect("searcher");
+    let mode = SearchMode::CountLines {
+        zeros: ZeroCounts::Include,
+    };
+    let candidates = Plan::new(&source, searcher.query(), mode.coverage())
+        .resolve(&source)
+        .expect("candidates");
+
+    let report = searcher
+        .execute(
+            SearchInputs {
+                candidates,
+                streams: Inputs::empty(),
+                explicit: &[],
             },
-            stats: StatsMode::On,
-        })
+            StatsMode::On,
+            mode,
+            Events::Discard,
+        )
         .expect("grep search");
 
     assert!(report.found());
@@ -522,7 +565,12 @@ fn first_match_settles_on_pattern_hit_not_include_zero() {
     };
     assert_eq!(counts.len(), 1);
     assert!(counts[0].lines > 0);
-    assert!(counts[0].file.path.ends_with("c.txt"));
+    assert!(
+        counts[0]
+            .file
+            .display_path(PathDisplay::Relative)
+            .ends_with("c.txt")
+    );
     let stats = report.stats.as_ref().expect("stats");
     assert!(stats.files_searched >= 1);
     assert!(stats.files_searched <= 3);

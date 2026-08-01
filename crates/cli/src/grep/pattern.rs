@@ -3,8 +3,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Arg, ArgAction, ArgMatches, Args, Command, FromArgMatches, value_parser};
 use sift_core::search::{
-    BinaryMode, CaseMode, RegexEngine, SearchBound, SearchFlags, SearchOptions, SearchQuery,
-    SearchQueryBuilder,
+    BinaryMode, CaseMode, Query, RegexEngine, SearchBound, SearchFlags, SearchOptions,
 };
 
 use crate::format::PrintMode;
@@ -78,19 +77,17 @@ impl PatternDecl {
         }
     }
 
-    /// Build inert search query data for the high-level grep API.
+    /// Build search query from resolved patterns and argv.
     ///
     /// # Errors
     ///
     /// Returns an error if no patterns were provided.
-    pub fn search_query(
+    pub fn query(
         &self,
         patterns: Vec<String>,
         pattern_argv: &PatternArgv,
-    ) -> Result<SearchQuery, sift_core::GrepError> {
-        SearchQueryBuilder::new(patterns)
-            .options(self.options(pattern_argv))
-            .build()
+    ) -> Result<Query, sift_core::SearchError> {
+        Query::new(patterns, self.options(pattern_argv))
     }
 
     #[must_use]
