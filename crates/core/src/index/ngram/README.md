@@ -6,13 +6,11 @@ Runtime-width N-gram index implementation. The default configured index is `ngra
 
 An N-gram index is an inverted index mapping each fixed-width byte sequence found in the corpus to the set of files that contain it. At query time, the planner extracts required literal sequences from the regex pattern, looks up their grams in the index, and intersects the resulting file sets to produce a narrow candidate list. Only those candidate files are scanned with the full regex engine.
 
-`Config` records the configured gram width. `Index` is the opened runtime handle backed by memory-mapped storage.
-
 ## Modules
 
 | File | Description |
 |------|-------------|
-| [`mod.rs`](mod.rs) | `Config`, `Index`, candidate narrowing, build/open/update lifecycle, error type, and module exports |
+| [`index.rs`](index.rs) | Opened `Index` (required storage); build/open/update |
 | [`gram.rs`](gram.rs) | `GramWidth`, `Gram`, runtime-width gram window iteration |
 | [`build.rs`](build.rs) | `IndexTables`: shared `FileWalk` usage, gram extraction, incremental table construction |
 | [`files.rs`](files.rs) | File ID to relative path + fingerprint mapping |
@@ -34,14 +32,25 @@ All integers are little-endian. Width-bearing files reject mismatched gram width
 ## API
 
 ```rust
-use sift_core::{GramWidth, IndexBuildConfig, IndexConfig, IndexStore, NGramConfig};
+use sift_core::{
+    GramNorm, GramWidth, IndexDestination, IndexRecord, Indexes, NGramIndex,
+};
 
-// Build through IndexStore when working with stores or snapshots.
-let mut store = IndexStore::open_or_create(&sift_dir, &meta)?;
-store.build(&[IndexConfig::ngram(GramWidth::TRIGRAM)], &config, &paths)?;
+// Preferred: build through Indexes + IndexRecord.
+indexes.build(&[IndexRecord::ngram(GramWidth::TRIGRAM)], &config)?;
 
-// Build/open the concrete N-gram family directly in tests or lower-level code.
-let ngram = NGramConfig::new(GramWidth::TRIGRAM);
-let index = ngram.build(&config, &index_dir, &paths)?;
-let reopened = NGramConfig::open(GramWidth::TRIGRAM, &index_dir, &root, corpus_kind)?;
+// Lower-level directory write (tests/benches).
+NGramIndex::build(
+    GramWidth::TRIGRAM,
+    GramNorm::Identity,
+    IndexDestination::Directory(&index_dir),
+    &config,
+)?;
+let reopened = NGramIndex::open(
+    GramWidth::TRIGRAM,
+    GramNorm::Identity,
+    &index_dir,
+    &root,
+    corpus_kind,
+)?;
 ```

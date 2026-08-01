@@ -405,9 +405,10 @@ impl DaemonOrchestrator {
 
         let idle_timeout = config.idle_timeout;
         let mut phase = Phase::idle(idle_timeout);
-        let mut ingest = IngestTracker::from_reconcile(Indexes::open(&sift_dir, &meta).and_then(
-            |mut indexes| SnapshotRefresh::new(&sift_dir, &meta, &[]).run(&mut indexes),
-        )?);
+        let mut ingest = IngestTracker::from_reconcile(
+            Indexes::open(&sift_dir, &meta)
+                .and_then(|mut indexes| SnapshotRefresh::new(&sift_dir, &meta).run(&mut indexes))?,
+        );
 
         let ipc_tx = tx.clone();
         let ipc_daemon = Daemon::new(sift_dir.clone());
@@ -840,7 +841,7 @@ impl PendingIndex {
     fn reconcile(&mut self, sift_dir: &Path, meta: &StoreMeta) -> Option<ReconcileOutcome> {
         let paths = self.take()?;
         let result = Indexes::open(sift_dir, meta)
-            .and_then(|mut indexes| SnapshotRefresh::new(sift_dir, meta, &paths).run(&mut indexes));
+            .and_then(|mut indexes| SnapshotRefresh::new(sift_dir, meta).run(&mut indexes));
         match result {
             Ok(outcome) => Some(outcome),
             Err(e) => {
@@ -1135,7 +1136,7 @@ impl IndexRefresh<'_> {
             let mut outcome = None;
             if matches!(scope, RefreshScope::CorpusAndPending) {
                 let result = Indexes::open(&sift_dir, &meta).and_then(|mut indexes| {
-                    SnapshotRefresh::new(&sift_dir, &meta, &[]).run(&mut indexes)
+                    SnapshotRefresh::new(&sift_dir, &meta).run(&mut indexes)
                 });
                 match result {
                     Ok(committed) => outcome = Some(committed),
@@ -1289,7 +1290,7 @@ mod tests {
         let mut pending = PendingIndex::Paths(vec![PathBuf::from("missing.rs")]);
         let meta = StoreMeta::new(
             CorpusMeta {
-                root: dir.path().to_path_buf(),
+                root: dir.path().join("does-not-exist"),
                 kind: CorpusKind::Directory,
                 include_paths: Vec::new(),
                 exclude_paths: Vec::new(),

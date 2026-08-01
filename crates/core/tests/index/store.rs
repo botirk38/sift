@@ -2,7 +2,7 @@ use std::fs;
 
 use sift_core::grep::FilterAdmission;
 use sift_core::search::SearchOptions;
-use sift_core::{GramWidth, Index, IndexRecord, Indexes, NGramIndex};
+use sift_core::{GramWidth, IndexRecord, Indexes};
 use tempfile::TempDir;
 
 use super::common::{
@@ -46,11 +46,11 @@ fn update_skips_rebuild_when_unchanged() {
     let meta = sample_store_meta(root, vec![IndexRecord::ngram(GramWidth::TRIGRAM)]);
     let mut indexes = Indexes::open(&sift_dir, &meta).expect("open");
     indexes.refresh_meta(&meta).expect("refresh meta");
-    let catalog: Vec<Box<dyn Index>> = vec![Box::new(NGramIndex::new().width(GramWidth::TRIGRAM))];
-    indexes.build(&catalog, &config, &[]).expect("build");
+    let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
+    indexes.build(&catalog, &config).expect("build");
     let id = indexes.current_id().expect("id").to_string();
 
-    let changed = indexes.update(&catalog, &[]).expect("update");
+    let changed = indexes.update(&catalog).expect("update");
     assert_eq!(changed, None, "expected no rebuild when corpus unchanged");
     assert_eq!(indexes.current_id().unwrap(), id);
 }

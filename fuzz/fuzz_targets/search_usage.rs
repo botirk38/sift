@@ -6,12 +6,12 @@ use sift_core::grep::{
     CandidateFilter, CandidateFilterConfig, Grep, GrepRequest, PathDisplay, VisibilityConfig,
 };
 use sift_core::search::{
-    EventEmission, InputConversion, SearchFlags, SearchInputs, SearchMode, SearchOptions,
+    Events, InputConversion, SearchFlags, SearchInputs, SearchMode, SearchOptions,
     SearchQueryBuilder, Searcher, StatsMode,
 };
 use sift_core::{
     CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramWidth, IndexConfig, IndexCoverage,
-    IndexRecord, IndexWalkConfig, Indexes, Inputs, NGramIndex, StoreMeta, WalkMeta,
+    IndexRecord, IndexWalkConfig, Indexes, Inputs, StoreMeta, WalkMeta,
 };
 use std::fs;
 use std::sync::OnceLock;
@@ -34,22 +34,6 @@ fn indexed() -> &'static IndexHolder {
         fs::write(corpus.join("a.txt"), b"hello world\nfoo bar\n").expect("a.txt");
         fs::write(corpus.join("b.txt"), b"baz\nquux line\n").expect("b.txt");
         let sift_dir = tmp.path().join(".sift");
-        let trigram_dir = sift_dir.join("trigram");
-        let config = IndexConfig {
-            corpus: CorpusSpec {
-                root: &corpus,
-                kind: CorpusKind::Directory,
-                follow_links: false,
-                include_paths: &[],
-                exclude_paths: &[],
-            },
-            walk: IndexWalkConfig::new(false),
-            visibility: VisibilityConfig::default(),
-        };
-        NGramIndex::new()
-            .width(GramWidth::TRIGRAM)
-            .build(&config, &trigram_dir, &[])
-            .expect("build_index");
         let meta = StoreMeta::new(
             CorpusMeta {
                 root: corpus.clone(),
@@ -69,7 +53,22 @@ fn indexed() -> &'static IndexHolder {
             },
             vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
         );
-        let indexes = Indexes::open(&sift_dir, &meta).expect("open_index");
+        let mut indexes = Indexes::open(&sift_dir, &meta).expect("open_index");
+        indexes.refresh_meta(&meta).expect("refresh_meta");
+        let config = IndexConfig {
+            corpus: CorpusSpec {
+                root: &corpus,
+                kind: CorpusKind::Directory,
+                follow_links: false,
+                include_paths: &[],
+                exclude_paths: &[],
+            },
+            walk: IndexWalkConfig::new(false),
+            visibility: VisibilityConfig::default(),
+        };
+        indexes
+            .build(&[IndexRecord::ngram(GramWidth::TRIGRAM)], &config)
+            .expect("build_index");
         let root = indexes.corpus_root().to_path_buf();
         IndexHolder {
             _temp: tmp,
@@ -134,7 +133,7 @@ fn run_search(holder: &IndexHolder, patterns: &[String], opts: &SearchOptions) {
         streams: Inputs::empty(),
         conversion: InputConversion::new(&[], PathDisplay::Relative, None),
     };
-    let _ = searcher.execute(inputs, StatsMode::Off, SearchMode::Lines, EventEmission::Discard);
+    let _ = searcher.execute(inputs, StatsMode::Off, SearchMode::Lines, Events::Discard);
 }
 
 fuzz_target!(|data: &[u8]| {

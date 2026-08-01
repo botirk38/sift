@@ -4,7 +4,7 @@ use super::super::artifact::ArtifactData;
 use super::super::identity::SnapshotId;
 use super::super::lease::SnapshotLease;
 use super::super::manifest::SnapshotManifest;
-use super::{SnapshotRead, SnapshotStore, SnapshotWrite, SnapshotWriterSession};
+use super::{SnapshotRead, SnapshotWrite};
 
 const SNAPSHOTS_DIR: &str = "snapshots";
 const CURRENT_FILE: &str = "CURRENT";
@@ -165,11 +165,13 @@ impl Drop for DiskSnapshotWriterSession<'_> {
     }
 }
 
-impl SnapshotWriterSession for DiskSnapshotWriterSession<'_> {
-    type Read = DiskSnapshotReader;
-    type Write = DiskSnapshotWriter;
-
-    fn current(&self) -> crate::Result<Option<Self::Read>> {
+impl DiskSnapshotWriterSession<'_> {
+    /// Open the current snapshot for reading within this writer session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the current snapshot cannot be opened or leased.
+    pub fn current(&self) -> crate::Result<Option<DiskSnapshotReader>> {
         let Some(ref current_id) = self.store.current_id else {
             return Ok(None);
         };
@@ -198,7 +200,12 @@ impl SnapshotWriterSession for DiskSnapshotWriterSession<'_> {
         }))
     }
 
-    fn begin(&mut self) -> crate::Result<Self::Write> {
+    /// Begin a new in-progress snapshot write.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the write transaction cannot be started.
+    pub fn begin(&mut self) -> crate::Result<DiskSnapshotWriter> {
         let snapshots_dir = self.store.snapshots_dir();
         std::fs::create_dir_all(&snapshots_dir)?;
         let id_str = DiskSnapshotStore::generate_id();
@@ -212,10 +219,15 @@ impl SnapshotWriterSession for DiskSnapshotWriterSession<'_> {
         })
     }
 
-    fn publish(
+    /// Commit `write` and make it the current snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if publishing the manifest or updating `CURRENT` fails.
+    pub fn publish(
         &mut self,
-        mut write: Self::Write,
-        manifest: SnapshotManifest,
+        mut write: DiskSnapshotWriter,
+        manifest: &SnapshotManifest,
     ) -> crate::Result<SnapshotId> {
         let snapshots_dir = self.store.snapshots_dir();
 
@@ -289,6 +301,14 @@ pub struct DiskSnapshotReader {
     lease: SnapshotLease,
 }
 
+impl DiskSnapshotReader {
+    /// On-disk directory for this snapshot.
+    #[must_use]
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+}
+
 impl Drop for DiskSnapshotReader {
     fn drop(&mut self) {
         let _ = &mut self.lease;
@@ -339,16 +359,18 @@ impl SnapshotRead for DiskSnapshotReader {
 // SnapshotStore impl
 // ---------------------------------------------------------------------------
 
-impl SnapshotStore for DiskSnapshotStore {
-    type Read = DiskSnapshotReader;
-    type Write = DiskSnapshotWriter;
-    type Writer<'a> = DiskSnapshotWriterSession<'a>;
-
-    fn current_id(&self) -> Option<&SnapshotId> {
+impl DiskSnapshotStore {
+    #[must_use]
+    pub const fn current_id(&self) -> Option<&SnapshotId> {
         self.current_id.as_ref()
     }
 
-    fn current(&self) -> crate::Result<Option<Self::Read>> {
+    /// Open the current snapshot for reading.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the current snapshot cannot be opened or leased.
+    pub fn current(&self) -> crate::Result<Option<DiskSnapshotReader>> {
         let Some(ref current_id) = self.current_id else {
             return Ok(None);
         };
@@ -377,7 +399,12 @@ impl SnapshotStore for DiskSnapshotStore {
         }))
     }
 
-    fn writer(&mut self) -> crate::Result<Self::Writer<'_>> {
+    /// Acquire exclusive write access to the store.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the write lock cannot be acquired.
+    pub fn writer(&mut self) -> crate::Result<DiskSnapshotWriterSession<'_>> {
         let lock_path = self.dir.join(WRITE_LOCK);
         let mut lock = fslock::LockFile::open(&lock_path)?;
         lock.lock()?;

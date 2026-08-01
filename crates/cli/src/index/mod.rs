@@ -159,7 +159,7 @@ impl IndexJob {
             return ExitCode::from(2);
         }
 
-        if let Err(e) = SnapshotRefresh::new(&self.sift_dir, &meta, &[]).run(&mut indexes) {
+        if let Err(e) = SnapshotRefresh::new(&self.sift_dir, &meta).run(&mut indexes) {
             eprintln!("sift: {e}");
             return ExitCode::from(2);
         }
@@ -290,45 +290,26 @@ impl IndexJob {
 pub struct SnapshotRefresh<'a> {
     sift_dir: &'a Path,
     meta: &'a StoreMeta,
-    paths: &'a [PathBuf],
 }
 
 impl<'a> SnapshotRefresh<'a> {
     #[must_use]
-    pub const fn new(sift_dir: &'a Path, meta: &'a StoreMeta, paths: &'a [PathBuf]) -> Self {
-        Self {
-            sift_dir,
-            meta,
-            paths,
-        }
+    pub const fn new(sift_dir: &'a Path, meta: &'a StoreMeta) -> Self {
+        Self { sift_dir, meta }
     }
 
-    /// Rebuild or update index files.
-    ///
-    /// Empty `paths` → full corpus. Non-empty → partial rel-paths only.
+    /// Rebuild or update index files for the full configured corpus.
     ///
     /// # Errors
     ///
     /// Propagates build/update failures from the underlying index kinds.
     pub fn run(self, indexes: &mut Indexes) -> sift_core::Result<ReconcileOutcome> {
         let build = self.meta.write_config();
-        let catalog = self.meta.catalog()?;
-        let (snapshot_id, changed) = if self.paths.is_empty() {
-            if indexes.current_id().is_none() {
-                (SnapshotId::new(indexes.build(&catalog, &build, &[])?), true)
-            } else {
-                match indexes.update(&catalog, &[])? {
-                    Some(id) => (SnapshotId::new(id), true),
-                    None => (Self::current_snapshot_id(indexes, self.sift_dir)?, false),
-                }
-            }
-        } else if indexes.current_id().is_none() {
-            (
-                SnapshotId::new(indexes.build(&catalog, &build, self.paths)?),
-                true,
-            )
+        let catalog = self.meta.catalog();
+        let (snapshot_id, changed) = if indexes.current_id().is_none() {
+            (SnapshotId::new(indexes.build(catalog, &build)?), true)
         } else {
-            match indexes.update(&catalog, self.paths)? {
+            match indexes.update(catalog)? {
                 Some(id) => (SnapshotId::new(id), true),
                 None => (Self::current_snapshot_id(indexes, self.sift_dir)?, false),
             }

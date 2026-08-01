@@ -6,7 +6,7 @@ use crate::corpus::filter::{CandidateFilter, VisibilityConfig};
 
 use super::IndexError;
 use super::config::{CorpusKind, CorpusSpec, IndexConfig, IndexWalkConfig};
-use super::contract::IndexRecord;
+use super::record::IndexRecord;
 
 const META_FILE: &str = "meta.json";
 const STORE_VERSION: u32 = 1;
@@ -148,8 +148,9 @@ impl StoreMeta {
     /// # Errors
     ///
     /// Returns an error if any record's kind or params are invalid.
-    pub fn catalog(&self) -> crate::Result<Vec<Box<dyn super::contract::Index>>> {
-        self.indexes.iter().map(IndexRecord::to_index).collect()
+    #[must_use]
+    pub fn catalog(&self) -> &[IndexRecord] {
+        &self.indexes
     }
 
     /// Whether this index metadata covers the search-time candidate universe.

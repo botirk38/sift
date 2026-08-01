@@ -14,8 +14,8 @@ use std::path::Path;
 
 use sift_core::grep::VisibilityConfig;
 use sift_core::{
-    CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramWidth, Index, IndexConfig, IndexCoverage,
-    IndexRecord, IndexWalkConfig, Indexes, NGramIndex, StoreMeta, WalkMeta,
+    CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramWidth, IndexConfig, IndexCoverage,
+    IndexRecord, IndexWalkConfig, Indexes, StoreMeta, WalkMeta,
 };
 
 // ─── Corpus materializers ────────────────────────────────────────────────────
@@ -114,8 +114,8 @@ fn build_index_store(corpus: &Path, sift_dir: &Path) {
         walk: IndexWalkConfig::new(false),
         visibility: VisibilityConfig::default(),
     };
-    let catalog: Vec<Box<dyn Index>> = vec![Box::new(NGramIndex::new().width(GramWidth::TRIGRAM))];
-    indexes.build(&catalog, &config, &[]).unwrap();
+    let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
+    indexes.build(&catalog, &config).unwrap();
 }
 
 pub fn open_large_indexes() -> (tempfile::TempDir, Indexes) {

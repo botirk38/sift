@@ -12,7 +12,7 @@ Plan::new (pure) → Plan::resolve (query I/O) → Grep::search
 ```
 
 - `Indexes` — build/update/publish and query/hydrate over one store (`load` is `None` when absent)
-- `Snapshot` — opened `Box<dyn Index>` vec for a committed snapshot
+- `Snapshot` — shared `Files` + opened `Box<dyn Index>` vec for a committed snapshot
 - `Plan` — pure discovery decision; `resolve` owns index query I/O
 - `Grep` — public entry for resolve + search
 
@@ -24,7 +24,7 @@ Search (re-exported from `lib.rs`):
 
 - `Grep`, `GrepRequest`, `Grep::resolve_candidates`, `Searcher`, `Report`
 - `Indexes`, `IndexedCorpus`, `SnapshotId`
-- `Index`, `IndexRecord`, `IndexConfig`, `IndexWrite`, `ngram::Index`, `GramWidth`
+- `Index`, `IndexRecord`, `IndexConfig`, `IndexDestination`, `ngram::Index`, `GramWidth`
 - `Candidates`, `CandidateSource`, `ScanScope`, `SnapshotFreshness`
 
 Internal: `Plan`.
@@ -33,8 +33,9 @@ Internal: `Plan`.
 
 | Module | Responsibility |
 |--------|----------------|
-| `index/search.rs` | `Indexes` lifecycle + search |
-| `index/contract.rs` | `Index` trait, `IndexWrite`, `IndexRecord` |
+| `index/indexes.rs` | `Indexes` build/update + query/hydrate |
+| `index/record.rs` | `IndexRecord`, opened `Index` |
+| `index/files.rs` | Snapshot-owned `Files` |
 | `index/snapshot/` | `Snapshot`, persistence |
 | `index/ngram/` | N-gram implementation |
 | `grep/` | Public search API |

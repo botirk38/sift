@@ -1,17 +1,14 @@
 use std::path::{Path, PathBuf};
 
+use super::IndexDestination;
 use super::config::{CorpusKind, IndexConfig};
-use super::contract::{Index, IndexWrite};
 use super::error::IndexError;
 use super::kinds::FileId;
 use super::meta::StoreMeta;
 use super::paths::IndexedCorpus;
+use super::record::IndexRecord;
 use super::snapshot::store::SnapshotWrite;
-use super::snapshot::{
-    DiskSnapshotStore, Snapshot, SnapshotId, SnapshotManifest, SnapshotRead, SnapshotStore,
-    SnapshotWriterSession,
-};
-use super::{IndexDestination, IndexSource};
+use super::snapshot::{DiskSnapshotStore, Snapshot, SnapshotId, SnapshotManifest, SnapshotRead};
 
 use crate::corpus::Candidate;
 use crate::corpus::filter::{CandidateFilter, FilterAdmission};
@@ -151,7 +148,7 @@ impl Indexes {
         IndexedCorpus::intersection(self.snapshot.indexes().iter().map(|idx| idx.coverage()))
     }
 
-    /// Build a new snapshot using the given configured indexes.
+    /// Build a new snapshot using the given catalog records.
     ///
     /// # Errors
     ///
@@ -159,30 +156,28 @@ impl Indexes {
     /// fails, or publishing fails.
     pub fn build(
         &mut self,
-        indexes: &[Box<dyn Index>],
+        records: &[IndexRecord],
         config: &IndexConfig<'_>,
-        paths: &[PathBuf],
     ) -> crate::Result<String> {
         let mut writer = self.snapshots.writer()?;
         let mut txn = writer.begin()?;
 
-        for index in indexes {
-            let namespace = index.name();
-            index.build(IndexWrite {
-                dest: IndexDestination::Snapshot {
+        for record in records {
+            let namespace = record.name();
+            record.build(
+                IndexDestination::Snapshot {
                     writer: &mut txn,
                     namespace: &namespace,
                 },
                 config,
-                paths,
-            })?;
+            )?;
         }
 
         let manifest = SnapshotManifest {
             id: txn.id().clone(),
-            indexes: indexes.iter().map(|idx| idx.to_record()).collect(),
+            indexes: records.to_vec(),
         };
-        let id = writer.publish(txn, manifest)?;
+        let id = writer.publish(txn, &manifest)?;
         drop(writer);
         self.reload_snapshot()?;
         Ok(id.to_string())
@@ -195,11 +190,7 @@ impl Indexes {
     ///
     /// Returns an error if there is no current snapshot, the writer session
     /// cannot be acquired, the update fails, or publishing fails.
-    pub fn update(
-        &mut self,
-        indexes: &[Box<dyn Index>],
-        paths: &[PathBuf],
-    ) -> crate::Result<Option<String>> {
+    pub fn update(&mut self, records: &[IndexRecord]) -> crate::Result<Option<String>> {
         let config = self.meta.write_config();
         let mut writer = self.snapshots.writer()?;
 
@@ -215,39 +206,35 @@ impl Indexes {
 
         let mut txn = writer.begin()?;
 
-        let changed: Vec<bool> = indexes
+        let changed: Vec<bool> = records
             .iter()
-            .map(|index| {
-                let namespace = index.name();
+            .copied()
+            .map(|record| {
+                let namespace = record.name();
                 let is_present = current
                     .manifest()
                     .indexes
                     .iter()
-                    .any(|record| record.name() == namespace);
+                    .any(|existing| existing.name() == namespace);
                 if !is_present {
-                    index.build(IndexWrite {
-                        dest: IndexDestination::Snapshot {
+                    record.build(
+                        IndexDestination::Snapshot {
                             writer: &mut txn,
                             namespace: &namespace,
                         },
-                        config: &config,
-                        paths,
-                    })?;
+                        &config,
+                    )?;
                     return Ok(true);
                 }
-                let opened_source = IndexSource::Snapshot {
-                    reader: &current as &dyn SnapshotRead,
-                    namespace: &namespace,
-                };
-                let opened = index.open(opened_source, config.corpus.root, config.corpus.kind)?;
-                opened.update(IndexWrite {
-                    dest: IndexDestination::Snapshot {
+                let index_dir = current.dir().join(&namespace);
+                let opened = record.open(&index_dir, config.corpus.root, config.corpus.kind)?;
+                opened.update(
+                    IndexDestination::Snapshot {
                         writer: &mut txn,
                         namespace: &namespace,
                     },
-                    config: &config,
-                    paths,
-                })
+                    &config,
+                )
             })
             .collect::<crate::Result<_>>()?;
 
@@ -255,9 +242,9 @@ impl Indexes {
             return Ok(None);
         }
 
-        for (index, did_change) in indexes.iter().zip(&changed) {
+        for (record, did_change) in records.iter().zip(&changed) {
             if !did_change {
-                let namespace = index.name();
+                let namespace = record.name();
                 for artifact_name in current.artifacts(&namespace)? {
                     let data = current.artifact(&namespace, &artifact_name)?;
                     let bytes = data.as_ref().to_vec();
@@ -268,9 +255,9 @@ impl Indexes {
 
         let manifest = SnapshotManifest {
             id: txn.id().clone(),
-            indexes: indexes.iter().map(|idx| idx.to_record()).collect(),
+            indexes: records.to_vec(),
         };
-        let id = writer.publish(txn, manifest)?;
+        let id = writer.publish(txn, &manifest)?;
         drop(writer);
         drop(current);
         self.reload_snapshot()?;
@@ -331,8 +318,7 @@ impl Indexes {
         filter: &CandidateFilter,
         admission: FilterAdmission,
     ) -> Option<Candidate> {
-        let lead = self.lead_index()?;
-        let candidate = lead.candidate(id)?;
+        let candidate = self.snapshot.files()?.candidate(id)?;
         candidate.matches(filter, admission).then_some(candidate)
     }
 
@@ -343,36 +329,34 @@ impl Indexes {
         admission: FilterAdmission,
     ) -> Vec<Candidate> {
         use rayon::prelude::*;
-        let Some(lead) = self.lead_index() else {
+        let Some(files) = self.snapshot.files() else {
             return Vec::new();
         };
         file_ids
             .par_iter()
             .filter_map(|id| {
-                let candidate = lead.candidate(*id)?;
+                let candidate = files.candidate(*id)?;
                 candidate.matches(filter, admission).then_some(candidate)
             })
             .collect()
     }
 
     pub(crate) fn all_indexed_file_ids(&self, corpus: &IndexedCorpus) -> Vec<FileId> {
-        let Some(lead) = self.lead_index() else {
+        let Some(files) = self.snapshot.files() else {
             return Vec::new();
         };
         if self.snapshot.indexes().len() == 1 {
-            return lead.all_file_ids();
+            return files.all_file_ids();
         }
-        lead.all_file_ids()
+        files
+            .all_file_ids()
             .into_iter()
             .filter(|id| {
-                lead.candidate(*id)
+                files
+                    .candidate(*id)
                     .is_some_and(|c| corpus.contains(c.rel_path()))
             })
             .collect()
-    }
-
-    fn lead_index(&self) -> Option<&dyn Index> {
-        self.snapshot.indexes().first().map(AsRef::as_ref)
     }
 }
 

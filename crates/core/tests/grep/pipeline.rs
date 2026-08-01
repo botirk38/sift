@@ -7,7 +7,7 @@ use sift_core::grep::{
     CandidateOrderKey, Grep, GrepRequest, PathDisplay,
 };
 use sift_core::search::{
-    EventEmission, InputConversion, Inputs, Listing, SearchEvent, SearchMode, SearchOptions,
+    Events, InputConversion, Inputs, Listing, SearchEvent, SearchMode, SearchOptions,
     SearchQueryBuilder, SearchSink, Searcher, StatsMode,
 };
 use tempfile::TempDir;
@@ -59,12 +59,7 @@ fn grep_finds_match_in_indexed_corpus() {
     };
 
     let report = searcher
-        .execute(
-            inputs,
-            StatsMode::Off,
-            SearchMode::Lines,
-            EventEmission::Discard,
-        )
+        .execute(inputs, StatsMode::Off, SearchMode::Lines, Events::Discard)
         .expect("grep run");
     assert!(report.found());
 }
@@ -360,12 +355,7 @@ fn grep_finds_match_in_stdin_stream() {
     };
 
     let report = searcher
-        .execute(
-            inputs,
-            StatsMode::Off,
-            SearchMode::Lines,
-            EventEmission::Discard,
-        )
+        .execute(inputs, StatsMode::Off, SearchMode::Lines, Events::Discard)
         .expect("grep run");
     assert!(report.found());
     let Listing::Lines(files) = &report.listed else {

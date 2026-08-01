@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::identity::SnapshotId;
-use crate::index::contract::IndexRecord;
+use crate::index::record::IndexRecord;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotManifest {

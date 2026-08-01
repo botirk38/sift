@@ -1,16 +1,4 @@
-use crate::index::snapshot::{SnapshotRead, SnapshotWrite};
-
-/// Where index artifacts are read from.
-#[derive(Clone, Copy)]
-pub enum IndexSource<'a> {
-    /// Read from a directory on disk.
-    Directory(&'a std::path::Path),
-    /// Read from a snapshot transaction.
-    Snapshot {
-        reader: &'a dyn SnapshotRead,
-        namespace: &'a str,
-    },
-}
+use crate::index::snapshot::SnapshotWrite;
 
 /// Where index artifacts are written to.
 pub enum IndexDestination<'a> {
