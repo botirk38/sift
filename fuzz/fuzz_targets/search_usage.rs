@@ -6,8 +6,8 @@ use sift_core::grep::{
     CandidateFilter, CandidateFilterConfig, Grep, GrepRequest, PathDisplay, VisibilityConfig,
 };
 use sift_core::search::{
-    InputConversion, SearchFlags, SearchInputs, SearchOptions, SearchQueryBuilder, Searcher,
-    StatsMode,
+    EventEmission, InputConversion, SearchFlags, SearchInputs, SearchMode, SearchOptions,
+    SearchQueryBuilder, Searcher, StatsMode,
 };
 use sift_core::{
     CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramWidth, IndexConfig, IndexCoverage,
@@ -70,10 +70,7 @@ fn indexed() -> &'static IndexHolder {
             vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
         );
         let indexes = Indexes::open(&sift_dir, &meta).expect("open_index");
-        let root = indexes
-            .corpus_root()
-            .expect("indexed corpus")
-            .to_path_buf();
+        let root = indexes.corpus_root().to_path_buf();
         IndexHolder {
             _temp: tmp,
             indexes,
@@ -114,7 +111,7 @@ fn run_search(holder: &IndexHolder, patterns: &[String], opts: &SearchOptions) {
     };
     let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &holder.root).unwrap();
     let source = CandidateSource::new(
-        &holder.indexes,
+        Some(&holder.indexes),
         &filter,
         None,
         ScanScope::Index {
@@ -137,7 +134,7 @@ fn run_search(holder: &IndexHolder, patterns: &[String], opts: &SearchOptions) {
         streams: Inputs::empty(),
         conversion: InputConversion::new(&[], PathDisplay::Relative, None),
     };
-    let _ = searcher.search(inputs, StatsMode::Off);
+    let _ = searcher.execute(inputs, StatsMode::Off, SearchMode::Lines, EventEmission::Discard);
 }
 
 fuzz_target!(|data: &[u8]| {

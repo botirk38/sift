@@ -4,8 +4,8 @@ pub mod error;
 pub mod input;
 
 use crate::candidates::CandidateSource;
-use crate::candidates::planner::CandidatePlanner;
-use crate::candidates::scope::CandidateCoverage;
+use crate::candidates::plan::Plan;
+use crate::candidates::scope::Coverage;
 use crate::search::{
     EventEmission, Report, SearchInputs, SearchMode, SearchQuery, SearchSink, Searcher, StatsMode,
 };
@@ -76,8 +76,8 @@ impl<'a> Grep<'a> {
         request: &GrepRequest<'_>,
     ) -> crate::Result<crate::Candidates<'a>> {
         let searcher = Searcher::new(request.query.clone())?;
-        let coverage = CandidateCoverage::from_mode(request.mode);
-        CandidatePlanner::plan(&self.source, &searcher.query, coverage).resolve(&self.source)
+        let coverage = Coverage::from_mode(request.mode);
+        Plan::new(&self.source, &searcher.query, coverage).resolve(&self.source)
     }
 
     fn execute(
@@ -93,9 +93,9 @@ impl<'a> Grep<'a> {
             stats,
         } = request;
         let searcher = Searcher::new(query)?;
-        let coverage = CandidateCoverage::from_mode(mode);
-        let candidates = CandidatePlanner::plan(&self.source, &searcher.query, coverage)
-            .resolve(&self.source)?;
+        let coverage = Coverage::from_mode(mode);
+        let candidates =
+            Plan::new(&self.source, &searcher.query, coverage).resolve(&self.source)?;
         let inputs = SearchInputs {
             candidates,
             streams,
@@ -113,38 +113,38 @@ mod candidate_coverage_tests {
     #[test]
     fn count_lines_omit_uses_potential_matches() {
         assert_eq!(
-            CandidateCoverage::from_mode(SearchMode::CountLines {
+            Coverage::from_mode(SearchMode::CountLines {
                 zeros: ZeroCounts::Omit
             }),
-            CandidateCoverage::PotentialMatches
+            Coverage::PotentialMatches
         );
     }
 
     #[test]
     fn count_lines_include_uses_complete() {
         assert_eq!(
-            CandidateCoverage::from_mode(SearchMode::CountLines {
+            Coverage::from_mode(SearchMode::CountLines {
                 zeros: ZeroCounts::Include
             }),
-            CandidateCoverage::Complete
+            Coverage::Complete
         );
     }
 
     #[test]
     fn count_matches_omit_uses_potential_matches() {
         assert_eq!(
-            CandidateCoverage::from_mode(SearchMode::CountMatches {
+            Coverage::from_mode(SearchMode::CountMatches {
                 zeros: ZeroCounts::Omit
             }),
-            CandidateCoverage::PotentialMatches
+            Coverage::PotentialMatches
         );
     }
 
     #[test]
     fn files_without_match_uses_complete() {
         assert_eq!(
-            CandidateCoverage::from_mode(SearchMode::FilesWithoutMatch),
-            CandidateCoverage::Complete
+            Coverage::from_mode(SearchMode::FilesWithoutMatch),
+            Coverage::Complete
         );
     }
 }

@@ -29,7 +29,7 @@ builds the same dimensions as grep/candidates.
 | `query` | `query_compile/*` | `Searcher` construction |
 | `index` | build / open / update / candidates / explain | named lifecycle op |
 | `grep` | `grep_search/*`, `grep_pipeline/*`, `grep_walk_tiny/*` | search-only, plan+search, tiny walk |
-| `candidates` | `candidate_planner/*`, `candidate_planner_tiny/*` | `CandidatePlanner::resolve` |
+| `candidates` | `candidate_planner/*`, `candidate_planner_tiny/*` | `Plan::resolve` |
 
 ### Stable `grep` ids
 

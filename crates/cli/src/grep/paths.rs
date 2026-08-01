@@ -37,13 +37,13 @@ impl CorpusScope {
     ///
     /// Returns an error if path resolution fails.
     pub fn resolve(
-        indexes: &Indexes,
+        indexes: Option<&Indexes>,
         meta: Option<&StoreMeta>,
         cwd: &Path,
         search_paths: &[PathBuf],
         sift_dir: &Path,
     ) -> anyhow::Result<Self> {
-        match indexes.corpus_root() {
+        match indexes.filter(|indexes| indexes.queryable()) {
             None => {
                 let root = meta.map_or_else(
                     || cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf()),
@@ -55,11 +55,14 @@ impl CorpusScope {
                     exclude_paths: Self::excluded_paths(&root, sift_dir),
                 })
             }
-            Some(root) => Ok(Self {
-                filter_root: root.to_path_buf(),
-                prefixes: Self::indexed_prefixes(root, cwd, search_paths)?,
-                exclude_paths: Self::excluded_paths(root, sift_dir),
-            }),
+            Some(indexes) => {
+                let root = indexes.corpus_root();
+                Ok(Self {
+                    filter_root: root.to_path_buf(),
+                    prefixes: Self::indexed_prefixes(root, cwd, search_paths)?,
+                    exclude_paths: Self::excluded_paths(root, sift_dir),
+                })
+            }
         }
     }
 

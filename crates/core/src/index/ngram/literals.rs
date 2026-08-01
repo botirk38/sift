@@ -2,7 +2,7 @@ use regex_syntax::ast::parse::Parser as AstParser;
 use regex_syntax::hir::literal::{ExtractKind, Extractor};
 use regex_syntax::hir::{self, Hir};
 
-use crate::search::SearchQuery;
+use crate::search::{Case, SearchQuery};
 
 use super::gram::{GramWidth, LiteralNarrowing};
 use super::index::Index;
@@ -21,7 +21,7 @@ impl Index {
             return None;
         }
         let width = self.gram_width();
-        let case_insensitive = query.case_insensitive_for_index();
+        let case = query.case();
         let mut literal_arms: Vec<Vec<u8>> = Vec::new();
         for p in query.patterns() {
             let arms = if query.fixed_strings() {
@@ -44,7 +44,7 @@ impl Index {
                 ) {
                     return None;
                 }
-                if case_insensitive && !lit.is_ascii() {
+                if matches!(case, Case::Insensitive) && !lit.is_ascii() {
                     return None;
                 }
                 literal_arms.push(lit);

@@ -15,15 +15,14 @@ pub use event::{
 };
 pub use hit::{LineCount, ListedFile, Listing, Match, MatchedFile, SpanCount};
 pub use input::{
-    CandidateTransform, HitPath, Input, InputConversion, InputIdentity, Inputs, SearchFile,
-    SearchInputs,
+    CandidateTransform, HitPath, Input, InputConversion, InputIdentity, Inputs, SearchInputs,
 };
 pub use mode::{SearchMode, ZeroCounts};
 pub use options::{
-    BinaryMode, CaseMode, InputEncoding, RegexEngine, SearchBound, SearchFlags, SearchOptions,
+    BinaryMode, Case, CaseMode, InputEncoding, Narrowing, RegexEngine, SearchBound, SearchFlags,
+    SearchOptions,
 };
 pub use query::{SearchQuery, SearchQueryBuilder};
 pub use report::Report;
-pub(crate) use searcher::EventEmission;
-pub use searcher::Searcher;
+pub use searcher::{EventEmission, Searcher};
 pub use stats::{MatchTotals, Stats, StatsMode};

@@ -15,7 +15,7 @@ IndexRecord / Box<dyn Index> ──Indexes::build──> snapshot on disk
                                       │
                                  Indexes
                                       │
-                CandidatePlanner → CandidatePlan::resolve
+                Plan::new → Plan::resolve
                                       │
                                  Grep::search
 ```

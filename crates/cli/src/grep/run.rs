@@ -63,7 +63,7 @@ pub enum RunResult {
 }
 
 struct SearchSession {
-    indexes: sift_core::Indexes,
+    indexes: Option<sift_core::Indexes>,
     scope: CorpusScope,
     search_filter: sift_core::grep::CandidateFilter,
     store_meta: Option<sift_core::StoreMeta>,
@@ -116,7 +116,7 @@ impl Run {
         let store_meta = sift_core::StoreMeta::read(&self.config.sift_dir).ok();
         let indexes = sift_core::Indexes::load(&self.config.sift_dir)?;
         let scope = CorpusScope::resolve(
-            &indexes,
+            indexes.as_ref(),
             store_meta.as_ref(),
             &cwd,
             search_paths,
@@ -139,7 +139,7 @@ impl Run {
 
     const fn candidate_source(session: &SearchSession, scope: ScanScope) -> CandidateSource<'_> {
         CandidateSource::new(
-            &session.indexes,
+            session.indexes.as_ref(),
             &session.search_filter,
             session.store_meta.as_ref(),
             scope,
@@ -157,7 +157,7 @@ impl Run {
             .options(SearchOptions::default())
             .build()
             .map_err(|e| anyhow::anyhow!("{e}"))?
-            .without_index_narrowing();
+            .with_narrowing(sift_core::Narrowing::Disabled);
         let request = GrepRequest {
             query,
             streams: Inputs::empty(),
@@ -203,7 +203,11 @@ impl Run {
         let line_number_override = self.line_number_override(&output_argv);
 
         let session = self.prepare_session(argv, &sources.paths)?;
-        let sources = sources.resolve(patterns.input, !session.indexes.usable())?;
+        let indexes_empty = session
+            .indexes
+            .as_ref()
+            .is_none_or(|indexes| !indexes.queryable());
+        let sources = sources.resolve(patterns.input, indexes_empty)?;
         let transform = self.config.content.transform()?;
 
         let filename_ctx = Self::filename_context(effective_mode, &sources, &session);
@@ -229,7 +233,7 @@ impl Run {
             .search_query(patterns.patterns, &pattern_argv)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         if transform.is_some() {
-            query = query.without_index_narrowing();
+            query = query.with_narrowing(sift_core::Narrowing::Disabled);
         }
         let explicit_files = Self::explicit_files(&session);
         let (streams, conversion) = sources.search_inputs(
@@ -324,9 +328,13 @@ impl Run {
         } else if !sources.stdin_bytes.is_empty() && sources.paths.is_empty() {
             FilenameContext::SingleFileCorpus
         } else {
-            match session.indexes.corpus_kind() {
+            match session
+                .indexes
+                .as_ref()
+                .map(sift_core::Indexes::corpus_kind)
+            {
                 Some(CorpusKind::SingleFile) => FilenameContext::SingleFileCorpus,
-                _ => FilenameContext::DirectoryCorpus,
+                Some(_) | None => FilenameContext::DirectoryCorpus,
             }
         }
     }
@@ -336,7 +344,8 @@ impl Run {
             .and_then(|daemon| {
                 session
                     .indexes
-                    .snapshot_id()
+                    .as_ref()
+                    .and_then(sift_core::Indexes::snapshot_id)
                     .map(|id| daemon.validate_snapshot(id))
             })
             .map_or(SnapshotFreshness::Current, |validation| match validation {

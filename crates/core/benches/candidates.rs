@@ -64,7 +64,7 @@ fn store_meta(root: &Path, coverage: IndexCoverage) -> StoreMeta {
 
 fn planner_fixture() -> PlannerFixture {
     let (temp, indexes) = common::open_large_indexes();
-    let root = indexes.corpus_root().expect("indexed corpus").to_path_buf();
+    let root = indexes.corpus_root().to_path_buf();
     let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &root).unwrap();
     PlannerFixture {
         _temp: temp,
@@ -94,7 +94,7 @@ fn resolve(
     mode: SearchMode,
     meta: Option<&StoreMeta>,
 ) -> usize {
-    let source = CandidateSource::new(&fixture.indexes, &fixture.filter, meta, scope);
+    let source = CandidateSource::new(Some(&fixture.indexes), &fixture.filter, meta, scope);
     let query = SearchQueryBuilder::new(patterns.to_vec())
         .options(options)
         .build()
@@ -190,7 +190,7 @@ fn bench_candidate_planner_walk(c: &mut Criterion) {
     let mut g = c.benchmark_group("candidate_planner");
     g.bench_function("walk_fallback_empty_index", |b| {
         b.iter(|| {
-            let source = CandidateSource::new(&indexes, &filter, None, scope);
+            let source = CandidateSource::new(Some(&indexes), &filter, None, scope);
             black_box(
                 Grep::new(source)
                     .resolve_candidates(&request)

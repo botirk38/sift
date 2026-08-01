@@ -1,11 +1,9 @@
+pub mod output;
 pub mod plan;
-pub mod planner;
 pub mod scope;
 pub mod source;
 
-#[path = "candidates.rs"]
-mod collection;
-
-pub use collection::{Candidates, IndexedCandidates};
+pub use output::Candidates;
+pub(crate) use output::Inner as CandidatesInner;
 pub use scope::{ScanScope, SnapshotFreshness};
 pub use source::CandidateSource;

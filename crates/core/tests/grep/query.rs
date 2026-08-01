@@ -37,7 +37,7 @@ fn open_missing_current_returns_empty_registry() {
     let tmp = TempDir::new().expect("tempdir");
     let meta = default_meta();
     let indexes = Indexes::open(tmp.path(), &meta).expect("open");
-    assert!(!indexes.usable());
+    assert!(!indexes.queryable());
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn open_empty_sift_dir_returns_empty_registry() {
     fs::create_dir_all(&sift_dir).expect("mkdir");
     let meta = default_meta();
     let indexes = Indexes::open(&sift_dir, &meta).expect("open");
-    assert!(!indexes.usable());
+    assert!(!indexes.queryable());
 }
 
 #[test]

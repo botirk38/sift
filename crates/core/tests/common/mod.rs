@@ -141,7 +141,7 @@ pub fn index_candidates(
     };
     let store_meta = meta_storage.as_ref();
     let source = CandidateSource::new(
-        indexes,
+        Some(indexes),
         &filter,
         store_meta,
         ScanScope::Index {

@@ -37,8 +37,8 @@ not expose `reconcile`, `unindexed_hit_paths`, or walk-merge helpers on
 - Filtering happens in `Indexes` hydrate (`candidate(id)` then filter), not on
   the trait.
 - `Indexes::open(dir, meta)` writes meta when the store is new — no
-  `open_or_create`. Search uses `Indexes::load(dir)`, which never creates a
-  store.
+  `open_or_create`. Search uses `Indexes::load(dir) -> Result<Option<_>>`,
+  which never creates a store (`None` when absent).
 - Kind knobs live on the kind's `Index` (`Index::new()` + optional setters);
   no separate builder/config types.
 

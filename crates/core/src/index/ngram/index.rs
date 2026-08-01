@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 
 use crate::corpus::Candidate;
 use crate::index::{CorpusKind, FileId, IndexedCorpus};
-use crate::search::SearchQuery;
+use crate::search::{Case, SearchQuery};
 
 use super::files::{FileFingerprint, FileTable};
 use super::gram::{GramMatch, GramNorm, GramWidth};
@@ -361,11 +361,11 @@ impl Index {
         let Some(arms) = self.extract_literal_arms(query) else {
             return all_ids();
         };
-        let (arms, gram_match) = match (self.norm, query.case_insensitive_for_index()) {
-            (GramNorm::Identity, true) => (arms, GramMatch::AsciiCase),
-            (GramNorm::Identity, false) => (arms, GramMatch::Exact),
-            (GramNorm::AsciiLower, false) => return all_ids(),
-            (GramNorm::AsciiLower, true) => {
+        let (arms, gram_match) = match (self.norm, query.case()) {
+            (GramNorm::Identity, Case::Insensitive) => (arms, GramMatch::AsciiCase),
+            (GramNorm::Identity, Case::Sensitive) => (arms, GramMatch::Exact),
+            (GramNorm::AsciiLower, Case::Sensitive) => return all_ids(),
+            (GramNorm::AsciiLower, Case::Insensitive) => {
                 let folded = arms
                     .into_iter()
                     .map(|arm| GramNorm::AsciiLower.normalize_literal(&arm))

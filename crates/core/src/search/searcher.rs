@@ -4,10 +4,12 @@ use rayon::prelude::*;
 
 use crate::Error;
 use crate::GrepError;
-use crate::candidates::{Candidates, IndexedCandidates};
+use crate::candidates::{Candidates, CandidatesInner};
 use crate::corpus::Candidate;
+use crate::corpus::filter::{CandidateFilter, FilterAdmission};
+use crate::index::{FileId, Indexes};
 use crate::search::event::SearchSink;
-use crate::search::input::{Input, InputConversion, Inputs, SearchFile, SearchInputs};
+use crate::search::input::{Input, InputConversion, Inputs, SearchInputs};
 use crate::search::matcher::{Matcher, MatcherBuilder};
 use crate::search::mode::SearchMode;
 use crate::search::options::{SearchBound, SearchOptions};
@@ -27,8 +29,9 @@ pub enum EventEmission<'a> {
     Emit(&'a mut dyn SearchSink),
 }
 
+/// Whether parallel search buffers semantic events for later emission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::search) enum EventCollection {
+pub(in crate::search) enum Events {
     Discard,
     Collect,
 }
@@ -57,31 +60,12 @@ impl Searcher {
         &self.query.options
     }
 
-    /// Search the given inputs and return a report.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if search execution fails.
-    pub fn search(&self, inputs: SearchInputs<'_>, stats: StatsMode) -> crate::Result<Report> {
-        self.execute(inputs, stats, SearchMode::Lines, EventEmission::Discard)
-    }
-
-    /// Search inputs and emit semantic events to a sink.
+    /// Search inputs and optionally emit semantic events.
     ///
     /// # Errors
     ///
     /// Returns an error if search execution or sink handling fails.
-    pub fn stream(
-        &self,
-        inputs: SearchInputs<'_>,
-        mode: SearchMode,
-        stats: StatsMode,
-        sink: &mut impl SearchSink,
-    ) -> crate::Result<Report> {
-        self.execute(inputs, stats, mode, EventEmission::Emit(sink))
-    }
-
-    pub(crate) fn execute(
+    pub fn execute(
         &self,
         inputs: SearchInputs<'_>,
         stats: StatsMode,
@@ -96,11 +80,14 @@ impl Searcher {
         }
 
         let search_start = Instant::now();
-        let event_collection = events.collection();
+        let buffered = match &events {
+            EventEmission::Discard => Events::Discard,
+            EventEmission::Emit(_) => Events::Collect,
+        };
         let options = self.options();
         let (mut searches, inputs_searched, bytes_searched) = match options.search_bound {
-            SearchBound::Exhaustive => self.search_exhaustive(inputs, mode, event_collection)?,
-            SearchBound::FirstMatch => self.search_first_match(inputs, mode, event_collection)?,
+            SearchBound::Exhaustive => self.search_exhaustive(inputs, mode, buffered)?,
+            SearchBound::FirstMatch => self.search_first_match(inputs, mode, buffered)?,
         };
         let summary = SearchSummary {
             mode,
@@ -117,7 +104,7 @@ impl Searcher {
         &self,
         inputs: SearchInputs<'_>,
         mode: SearchMode,
-        event_collection: EventCollection,
+        buffered: Events,
     ) -> crate::Result<(Vec<FileSearch>, usize, u64)> {
         let SearchInputs {
             candidates,
@@ -126,9 +113,9 @@ impl Searcher {
         } = inputs;
 
         let (mut results, mut files_searched, mut bytes) =
-            self.search_candidates(candidates, &conversion, mode, event_collection)?;
+            self.search_candidates(candidates, &conversion, mode, buffered)?;
 
-        let stream_results = self.search_inputs(streams.as_slice(), mode, event_collection);
+        let stream_results = self.search_inputs(streams.as_slice(), mode, buffered);
         files_searched += streams.len();
         bytes = bytes.saturating_add(streams.byte_count());
         results.extend(stream_results);
@@ -141,20 +128,48 @@ impl Searcher {
         candidates: Candidates<'_>,
         conversion: &InputConversion<'_>,
         mode: SearchMode,
-        event_collection: EventCollection,
+        buffered: Events,
     ) -> crate::Result<(Vec<FileSearch>, usize, u64)> {
-        match candidates {
-            Candidates::Resolved(items) => {
-                self.search_resolved(&items, conversion, mode, event_collection)
+        match candidates.0 {
+            CandidatesInner::Resolved(items) => {
+                self.search_resolved(&items, conversion, mode, buffered)
             }
-            Candidates::Indexed(indexed) => {
-                self.search_indexed(&indexed, conversion, mode, event_collection)
-            }
-            Candidates::Mixed { indexed, unindexed } => {
-                let (mut indexed_results, indexed_count, indexed_bytes) =
-                    self.search_indexed(&indexed, conversion, mode, event_collection)?;
+            CandidatesInner::Indexed {
+                indexes,
+                file_ids,
+                filter,
+                admission,
+            } => self.search_indexed(
+                IndexedFiles {
+                    indexes,
+                    file_ids: &file_ids,
+                    filter,
+                    admission,
+                },
+                conversion,
+                mode,
+                buffered,
+            ),
+            CandidatesInner::Mixed {
+                indexes,
+                file_ids,
+                filter,
+                admission,
+                unindexed,
+            } => {
+                let (mut indexed_results, indexed_count, indexed_bytes) = self.search_indexed(
+                    IndexedFiles {
+                        indexes,
+                        file_ids: &file_ids,
+                        filter,
+                        admission,
+                    },
+                    conversion,
+                    mode,
+                    buffered,
+                )?;
                 let (resolved_results, resolved_count, resolved_bytes) =
-                    self.search_resolved(&unindexed, conversion, mode, event_collection)?;
+                    self.search_resolved(&unindexed, conversion, mode, buffered)?;
                 indexed_results.extend(resolved_results);
                 Ok((
                     indexed_results,
@@ -170,11 +185,11 @@ impl Searcher {
         candidates: &[Candidate],
         conversion: &InputConversion<'_>,
         mode: SearchMode,
-        event_collection: EventCollection,
+        buffered: Events,
     ) -> crate::Result<(Vec<FileSearch>, usize, u64)> {
         let mut corpus_inputs = Inputs::with_capacity(candidates.len());
         for candidate in candidates {
-            match conversion.materialize(candidate)? {
+            match conversion.open(candidate)? {
                 Input::Path {
                     path,
                     identity,
@@ -194,7 +209,7 @@ impl Searcher {
                 }
             }
         }
-        let results = self.search_inputs(corpus_inputs.as_slice(), mode, event_collection);
+        let results = self.search_inputs(corpus_inputs.as_slice(), mode, buffered);
         let len = corpus_inputs.len();
         let bytes = corpus_inputs.byte_count();
         Ok((results, len, bytes))
@@ -202,28 +217,26 @@ impl Searcher {
 
     fn search_indexed(
         &self,
-        indexed: &IndexedCandidates<'_>,
+        files: IndexedFiles<'_>,
         conversion: &InputConversion<'_>,
         mode: SearchMode,
-        event_collection: EventCollection,
+        buffered: Events,
     ) -> crate::Result<(Vec<FileSearch>, usize, u64)> {
         let options = self.options();
-        let outcomes: crate::Result<Vec<Option<FileSearch>>> = indexed
-            .file_ids()
+        let outcomes: crate::Result<Vec<Option<FileSearch>>> = files
+            .file_ids
             .par_iter()
             .map_init(
                 || SearchTask::discovered_searcher(options, mode),
                 |grep, &id| {
                     let Some(candidate) =
-                        indexed
-                            .indexes
-                            .hydrate_row(id, indexed.filter, indexed.admission)
+                        files.indexes.candidate(id, files.filter, files.admission)
                     else {
                         return Ok(None);
                     };
-                    let input = conversion.open(SearchFile::Hydrated(candidate))?;
+                    let input = conversion.open(&candidate)?;
                     Ok(Some(
-                        SearchTask::new(&self.matcher, options, mode, event_collection, &input)
+                        SearchTask::new(&self.matcher, options, mode, buffered, &input)
                             .execute(grep),
                     ))
                 },
@@ -241,7 +254,7 @@ impl Searcher {
         &self,
         inputs: &[Input<'_>],
         mode: SearchMode,
-        event_collection: EventCollection,
+        buffered: Events,
     ) -> Vec<FileSearch> {
         let options = self.options();
         inputs
@@ -249,8 +262,7 @@ impl Searcher {
             .map_init(
                 || SearchTask::discovered_searcher(options, mode),
                 |grep, input| {
-                    SearchTask::new(&self.matcher, options, mode, event_collection, input)
-                        .execute(grep)
+                    SearchTask::new(&self.matcher, options, mode, buffered, input).execute(grep)
                 },
             )
             .collect()
@@ -260,7 +272,7 @@ impl Searcher {
         &self,
         inputs: SearchInputs<'_>,
         mode: SearchMode,
-        event_collection: EventCollection,
+        buffered: Events,
     ) -> crate::Result<(Vec<FileSearch>, usize, u64)> {
         let options = self.options();
         let SearchInputs {
@@ -275,9 +287,9 @@ impl Searcher {
 
         for candidate in candidates {
             files_searched += 1;
-            let input = conversion.materialize(&candidate)?;
-            let search = SearchTask::new(&self.matcher, options, mode, event_collection, &input)
-                .execute(&mut grep);
+            let input = conversion.open(&candidate)?;
+            let search =
+                SearchTask::new(&self.matcher, options, mode, buffered, &input).execute(&mut grep);
             bytes = bytes.saturating_add(search.bytes_searched);
             if mode.settles(search.matched) {
                 settled.push(search);
@@ -286,8 +298,8 @@ impl Searcher {
         }
         for input in streams.as_slice() {
             files_searched += 1;
-            let search = SearchTask::new(&self.matcher, options, mode, event_collection, input)
-                .execute(&mut grep);
+            let search =
+                SearchTask::new(&self.matcher, options, mode, buffered, input).execute(&mut grep);
             bytes = bytes.saturating_add(search.bytes_searched);
             if mode.settles(search.matched) {
                 settled.push(search);
@@ -299,14 +311,15 @@ impl Searcher {
     }
 }
 
-impl EventEmission<'_> {
-    const fn collection(&self) -> EventCollection {
-        match self {
-            Self::Discard => EventCollection::Discard,
-            Self::Emit(_) => EventCollection::Collect,
-        }
-    }
+#[derive(Clone, Copy)]
+struct IndexedFiles<'a> {
+    indexes: &'a Indexes,
+    file_ids: &'a [FileId],
+    filter: &'a CandidateFilter,
+    admission: FilterAdmission,
+}
 
+impl EventEmission<'_> {
     fn emit(self, searches: &mut [FileSearch]) -> crate::Result<()> {
         let Self::Emit(sink) = self else {
             return Ok(());
@@ -335,9 +348,12 @@ mod tests {
             },
         )
         .expect("query");
-        assert!(query.narrowing_allowed());
+        assert_eq!(query.narrowing(), crate::search::Narrowing::Allowed);
         let searcher = Searcher::new(query).expect("compile via Auto→PCRE2");
         assert_eq!(searcher.query.options().regex_engine, RegexEngine::Pcre2);
-        assert!(!searcher.query.narrowing_allowed());
+        assert_eq!(
+            searcher.query.narrowing(),
+            crate::search::Narrowing::Disabled
+        );
     }
 }

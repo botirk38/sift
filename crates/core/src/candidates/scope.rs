@@ -3,7 +3,7 @@ use crate::corpus::CandidateOrder;
 /// Whether candidate resolution should cover every corpus file or only
 /// index-narrowed potential matches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CandidateCoverage {
+pub(crate) enum Coverage {
     /// Index may narrow to potential matches only.
     PotentialMatches,
     /// Every corpus file must be considered (`-L`, `--include-zero`).
@@ -17,7 +17,7 @@ pub enum ScanScope {
     StreamsOnly,
     /// Filesystem walk under the filter.
     Walk { order: CandidateOrder },
-    /// Index-backed discovery; planner chooses walk when indexes are unusable.
+    /// Index-backed discovery; plan chooses walk when indexes are absent.
     Index {
         order: CandidateOrder,
         freshness: SnapshotFreshness,
@@ -33,7 +33,7 @@ pub enum SnapshotFreshness {
     Stale,
 }
 
-impl CandidateCoverage {
+impl Coverage {
     pub(crate) const fn from_mode(mode: crate::search::SearchMode) -> Self {
         use crate::search::{SearchMode, ZeroCounts};
         match mode {
