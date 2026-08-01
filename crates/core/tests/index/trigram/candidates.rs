@@ -83,6 +83,41 @@ fn literal_candidates_narrow_to_expected_file() {
 }
 
 #[test]
+fn smart_case_lowercase_narrows_uppercase_corpus() {
+    let tmp = TempDir::new().expect("tempdir");
+    let corpus = tmp.path().join("corpus");
+    fs::create_dir_all(&corpus).expect("create corpus");
+    fs::write(corpus.join("hit.rs"), "let x = ERR_SYS;\n").expect("write hit");
+    fs::write(corpus.join("miss.rs"), "let y = other_symbol;\n").expect("write miss");
+    for i in 0..40 {
+        fs::write(
+            corpus.join(format!("noise{i}.rs")),
+            format!("fn noise_{i}() {{ let v = {i}; }}\n"),
+        )
+        .expect("write noise");
+    }
+
+    let sift_dir = tmp.path().join(".sift");
+    build_indexes(&corpus, &sift_dir);
+
+    let indexes = open_indexes(&sift_dir);
+    let pattern = "err_sys".to_string();
+    let options = SearchOptions {
+        case_mode: CaseMode::Smart,
+        ..SearchOptions::default()
+    };
+    let candidates = index_candidates(
+        &indexes,
+        &corpus,
+        &[pattern],
+        options,
+        FilterAdmission::Full,
+    );
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].rel_path(), Path::new("hit.rs"));
+}
+
+#[test]
 fn case_insensitive_uppercase_corpus_narrows() {
     let tmp = TempDir::new().expect("tempdir");
     let corpus = tmp.path().join("corpus");

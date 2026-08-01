@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use sift_core::candidates::{CandidateSource, IndexNarrowing, ScanScope, SnapshotFreshness};
+use sift_core::candidates::{CandidateSource, ScanScope, SnapshotFreshness};
 use sift_core::grep::{
     CandidateFilter, CandidateFilterConfig, Grep, GrepRequest, PathDisplay, VisibilityConfig,
 };
@@ -121,7 +121,6 @@ fn run_search(holder: &IndexHolder, patterns: &[String], opts: &SearchOptions) {
             order: Default::default(),
             freshness: SnapshotFreshness::Current,
         },
-        IndexNarrowing::Allowed,
     );
     let request = GrepRequest {
         query: query.clone(),

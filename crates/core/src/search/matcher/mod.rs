@@ -18,12 +18,6 @@ pub(super) struct MatcherBuilder<'a> {
     query: &'a SearchQuery,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PrefilterCompatibility {
-    Compatible,
-    Incompatible,
-}
-
 impl<'a> MatcherBuilder<'a> {
     pub(super) const fn new(query: &'a SearchQuery) -> Self {
         Self { query }
@@ -42,10 +36,10 @@ impl<'a> MatcherBuilder<'a> {
 }
 
 impl Matcher {
-    pub(super) const fn prefilter_compatibility(&self) -> PrefilterCompatibility {
+    pub(super) const fn resolved_engine(&self) -> RegexEngine {
         match self {
-            Self::Rust(_) => PrefilterCompatibility::Compatible,
-            Self::Pcre2(_) => PrefilterCompatibility::Incompatible,
+            Self::Rust(_) => RegexEngine::Rust,
+            Self::Pcre2(_) => RegexEngine::Pcre2,
         }
     }
 }

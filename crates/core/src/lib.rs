@@ -10,7 +10,7 @@ pub mod index;
 pub mod search;
 
 pub use candidates::{
-    CandidateSource, Candidates, IndexNarrowing, IndexedCandidates, ScanScope, SnapshotFreshness,
+    CandidateSource, Candidates, IndexedCandidates, ScanScope, SnapshotFreshness,
 };
 pub use corpus::Candidate;
 pub use grep::{

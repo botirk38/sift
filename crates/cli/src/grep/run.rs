@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use sift_core::candidates::{CandidateSource, IndexNarrowing, ScanScope, SnapshotFreshness};
+use sift_core::candidates::{CandidateSource, ScanScope, SnapshotFreshness};
 use sift_core::grep::{Grep, Inputs, PathDisplay};
 use sift_core::search::{
     InputConversion, SearchMode, SearchOptions, SearchQueryBuilder, ZeroCounts,
@@ -137,17 +137,12 @@ impl Run {
         })
     }
 
-    const fn candidate_source(
-        session: &SearchSession,
-        scope: ScanScope,
-        index_narrowing: IndexNarrowing,
-    ) -> CandidateSource<'_> {
+    const fn candidate_source(session: &SearchSession, scope: ScanScope) -> CandidateSource<'_> {
         CandidateSource::new(
             &session.indexes,
             &session.search_filter,
             session.store_meta.as_ref(),
             scope,
-            index_narrowing,
         )
     }
 
@@ -157,11 +152,12 @@ impl Run {
         let scope = ScanScope::Walk {
             order: self.config.candidate_order,
         };
-        let source = Self::candidate_source(&session, scope, IndexNarrowing::Bypassed);
+        let source = Self::candidate_source(&session, scope);
         let query = SearchQueryBuilder::new(vec![".".to_string()])
             .options(SearchOptions::default())
             .build()
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+            .without_index_narrowing();
         let request = GrepRequest {
             query,
             streams: Inputs::empty(),
@@ -225,18 +221,16 @@ impl Run {
         let separators = self.config.output.separators();
         let freshness = Self::snapshot_freshness(&session, daemon);
         let scan_scope = self.scan_scope(freshness, sources.resolve_candidates());
-        let index_narrowing = if transform.is_some() {
-            IndexNarrowing::Bypassed
-        } else {
-            IndexNarrowing::Allowed
-        };
-        let candidate_source = Self::candidate_source(&session, scan_scope, index_narrowing);
+        let candidate_source = Self::candidate_source(&session, scan_scope);
 
-        let query = self
+        let mut query = self
             .config
             .pattern
             .search_query(patterns.patterns, &pattern_argv)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+        if transform.is_some() {
+            query = query.without_index_narrowing();
+        }
         let explicit_files = Self::explicit_files(&session);
         let (streams, conversion) = sources.search_inputs(
             &explicit_files,

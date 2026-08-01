@@ -1,6 +1,5 @@
 pub mod plan;
 pub mod planner;
-pub mod query;
 pub mod scope;
 pub mod source;
 
@@ -8,5 +7,5 @@ pub mod source;
 mod collection;
 
 pub use collection::{Candidates, IndexedCandidates};
-pub use scope::{IndexNarrowing, ScanScope, SnapshotFreshness};
+pub use scope::{ScanScope, SnapshotFreshness};
 pub use source::CandidateSource;

@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::fs;
 
-use sift_core::candidates::{CandidateSource, IndexNarrowing, ScanScope, SnapshotFreshness};
+use sift_core::candidates::{CandidateSource, ScanScope, SnapshotFreshness};
 use sift_core::grep::{
     ByteInput, CandidateFilter, CandidateFilterConfig, CandidateOrder, CandidateOrderDirection,
     CandidateOrderKey, Grep, GrepRequest, PathDisplay,
@@ -41,7 +41,6 @@ fn grep_finds_match_in_indexed_corpus() {
         &filter,
         None,
         index_scope(CandidateOrder::default()),
-        IndexNarrowing::Allowed,
     );
     let request = GrepRequest {
         query: query.clone(),
@@ -83,7 +82,6 @@ fn candidate_planner_all_indexed_uses_index_when_metadata_missing() {
         &filter,
         None,
         index_scope(CandidateOrder::default()),
-        IndexNarrowing::Allowed,
     );
     let request = GrepRequest {
         query,
@@ -115,7 +113,6 @@ fn high_level_grep_search_resolves_candidates_and_reports_matches() {
         &filter,
         None,
         index_scope(CandidateOrder::default()),
-        IndexNarrowing::Allowed,
     );
 
     let report = Grep::new(source)
@@ -157,7 +154,6 @@ fn high_level_grep_stream_emits_events_without_collecting_matches() {
         &filter,
         None,
         index_scope(CandidateOrder::default()),
-        IndexNarrowing::Allowed,
     );
     let mut sink = EventRecorder::default();
 
@@ -203,7 +199,6 @@ fn high_level_grep_files_without_match_selects_nonmatching_files() {
         ScanScope::Walk {
             order: CandidateOrder::default(),
         },
-        IndexNarrowing::Allowed,
     );
 
     let report = Grep::new(source)
@@ -244,7 +239,6 @@ fn high_level_grep_files_without_match_uses_full_corpus_with_index() {
         &filter,
         None,
         index_scope(CandidateOrder::default()),
-        IndexNarrowing::Allowed,
     );
 
     let report = Grep::new(source)
@@ -284,7 +278,6 @@ fn high_level_grep_files_without_match_is_not_selected_when_all_files_match() {
         &filter,
         None,
         index_scope(CandidateOrder::default()),
-        IndexNarrowing::Allowed,
     );
 
     let report = Grep::new(source)
@@ -336,13 +329,7 @@ fn grep_finds_match_in_stdin_stream() {
 
     let indexes = open_indexes(&tmp.path().join(".sift"));
     let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &corpus).expect("filter");
-    let source = CandidateSource::new(
-        &indexes,
-        &filter,
-        None,
-        ScanScope::StreamsOnly,
-        IndexNarrowing::Allowed,
-    );
+    let source = CandidateSource::new(&indexes, &filter, None, ScanScope::StreamsOnly);
     let request = GrepRequest {
         query: query.clone(),
         streams: Inputs::empty(),
@@ -395,7 +382,6 @@ fn count_include_zero_lists_zeros_but_found_requires_hits() {
         ScanScope::Walk {
             order: CandidateOrder::default(),
         },
-        IndexNarrowing::Allowed,
     );
 
     let report = Grep::new(source)
@@ -437,7 +423,6 @@ fn stream_begin_path_shares_arc_with_listed_file() {
         &filter,
         None,
         index_scope(CandidateOrder::default()),
-        IndexNarrowing::Allowed,
     );
     let mut sink = PathRecorder::default();
 
@@ -504,7 +489,6 @@ fn first_match_settles_on_pattern_hit_not_include_zero() {
         ScanScope::Walk {
             order: CandidateOrder::new(CandidateOrderKey::Path, CandidateOrderDirection::Ascending),
         },
-        IndexNarrowing::Bypassed,
     );
 
     let options = SearchOptions {
@@ -517,7 +501,8 @@ fn first_match_settles_on_pattern_hit_not_include_zero() {
             query: SearchQueryBuilder::new(vec!["needle".to_string()])
                 .options(options)
                 .build()
-                .expect("query"),
+                .expect("query")
+                .without_index_narrowing(),
             streams: Inputs::empty(),
             conversion: InputConversion::new(&[], PathDisplay::Relative, None),
             mode: SearchMode::CountLines {

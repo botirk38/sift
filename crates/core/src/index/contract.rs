@@ -10,8 +10,8 @@ use super::kinds::FileId;
 use super::paths::IndexedCorpus;
 use super::{IndexDestination, IndexSource};
 
-use crate::candidates::query::CandidateQuery;
 use crate::corpus::Candidate;
+use crate::search::SearchQuery;
 
 /// Serializable catalog entry for meta and snapshot manifests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,7 +133,7 @@ pub trait Index: Send + Sync {
 
     /// File ids that may match. May over-return; must not under-return.
     /// Cannot narrow → every covered id.
-    fn query(&self, query: &CandidateQuery<'_>) -> Vec<FileId>;
+    fn query(&self, query: &SearchQuery) -> Vec<FileId>;
 
     fn coverage(&self) -> IndexedCorpus;
 

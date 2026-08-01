@@ -376,7 +376,7 @@ impl crate::index::contract::Index for Index {
         Ok(Box::new(self.open_from(source, root, corpus_kind)?))
     }
 
-    fn query(&self, query: &crate::candidates::query::CandidateQuery<'_>) -> Vec<FileId> {
+    fn query(&self, query: &crate::search::SearchQuery) -> Vec<FileId> {
         Self::query_file_ids(self, query)
     }
 

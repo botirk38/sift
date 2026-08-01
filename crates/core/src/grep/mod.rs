@@ -5,11 +5,9 @@ pub mod input;
 
 use crate::candidates::CandidateSource;
 use crate::candidates::planner::CandidatePlanner;
-use crate::candidates::query::CandidateQuery;
 use crate::candidates::scope::CandidateCoverage;
 use crate::search::{
-    EventEmission, PrefilterCompatibility, RegexEngine, Report, SearchInputs, SearchMode,
-    SearchQuery, SearchSink, Searcher, StatsMode,
+    EventEmission, Report, SearchInputs, SearchMode, SearchQuery, SearchSink, Searcher, StatsMode,
 };
 pub use crate::search::{InputConversion, Inputs};
 
@@ -68,34 +66,18 @@ impl<'a> Grep<'a> {
 
     /// Resolve corpus candidates for a search request without running search.
     ///
+    /// Compiles the matcher first so Auto engine resolution affects narrowing.
+    ///
     /// # Errors
     ///
-    /// Returns an error if candidate resolution fails.
+    /// Returns an error if matcher construction or candidate resolution fails.
     pub fn resolve_candidates(
         &'a self,
         request: &GrepRequest<'_>,
     ) -> crate::Result<crate::Candidates<'a>> {
-        let candidate_query = Self::candidate_query(&request.query);
+        let searcher = Searcher::new(request.query.clone())?;
         let coverage = CandidateCoverage::from_mode(request.mode);
-        self.resolve_compiled(&candidate_query, coverage)
-    }
-
-    /// Project a [`SearchQuery`] into index candidate planning without compiling a matcher.
-    fn candidate_query(query: &SearchQuery) -> CandidateQuery<'_> {
-        let prefilter = match query.options.regex_engine {
-            RegexEngine::Pcre2 => PrefilterCompatibility::Incompatible,
-            RegexEngine::Rust | RegexEngine::Auto => PrefilterCompatibility::Compatible,
-        };
-        CandidateQuery::new(query, prefilter)
-    }
-
-    fn resolve_compiled(
-        &'a self,
-        candidate_query: &CandidateQuery<'_>,
-        coverage: CandidateCoverage,
-    ) -> crate::Result<crate::Candidates<'a>> {
-        let plan = CandidatePlanner::plan(&self.source, candidate_query, coverage);
-        plan.resolve(&self.source)
+        CandidatePlanner::plan(&self.source, &searcher.query, coverage).resolve(&self.source)
     }
 
     fn execute(
@@ -111,10 +93,9 @@ impl<'a> Grep<'a> {
             stats,
         } = request;
         let searcher = Searcher::new(query)?;
-        let candidate_query =
-            CandidateQuery::new(&searcher.query, searcher.prefilter_compatibility());
         let coverage = CandidateCoverage::from_mode(mode);
-        let candidates = self.resolve_compiled(&candidate_query, coverage)?;
+        let candidates = CandidatePlanner::plan(&self.source, &searcher.query, coverage)
+            .resolve(&self.source)?;
         let inputs = SearchInputs {
             candidates,
             streams,

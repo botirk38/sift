@@ -7,7 +7,7 @@ use std::hint::black_box;
 use std::path::Path;
 
 use sift_core::Inputs;
-use sift_core::candidates::{CandidateSource, IndexNarrowing, ScanScope, SnapshotFreshness};
+use sift_core::candidates::{CandidateSource, ScanScope, SnapshotFreshness};
 use sift_core::grep::{
     CandidateFilter, CandidateFilterConfig, CandidateOrder, Grep, GrepRequest, PathDisplay,
     VisibilityConfig,
@@ -94,13 +94,7 @@ fn resolve(
     mode: SearchMode,
     meta: Option<&StoreMeta>,
 ) -> usize {
-    let source = CandidateSource::new(
-        &fixture.indexes,
-        &fixture.filter,
-        meta,
-        scope,
-        IndexNarrowing::Allowed,
-    );
+    let source = CandidateSource::new(&fixture.indexes, &fixture.filter, meta, scope);
     let query = SearchQueryBuilder::new(patterns.to_vec())
         .options(options)
         .build()
@@ -196,8 +190,7 @@ fn bench_candidate_planner_walk(c: &mut Criterion) {
     let mut g = c.benchmark_group("candidate_planner");
     g.bench_function("walk_fallback_empty_index", |b| {
         b.iter(|| {
-            let source =
-                CandidateSource::new(&indexes, &filter, None, scope, IndexNarrowing::Allowed);
+            let source = CandidateSource::new(&indexes, &filter, None, scope);
             black_box(
                 Grep::new(source)
                     .resolve_candidates(&request)

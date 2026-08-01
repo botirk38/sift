@@ -6,7 +6,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use std::path::Path;
 
-use sift_core::candidates::{CandidateSource, IndexNarrowing, ScanScope, SnapshotFreshness};
+use sift_core::candidates::{CandidateSource, ScanScope, SnapshotFreshness};
 use sift_core::grep::{
     CandidateFilter, CandidateFilterConfig, CandidateOrder, Grep, GrepRequest, PathDisplay,
 };
@@ -50,7 +50,6 @@ fn run_grep(
             order: CandidateOrder::default(),
             freshness: SnapshotFreshness::Current,
         },
-        IndexNarrowing::Allowed,
     );
     let query = SearchQueryBuilder::new(query.0.clone())
         .options(query.1.clone())

@@ -8,7 +8,7 @@ use std::fs;
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
 
-use sift_core::candidates::{CandidateSource, IndexNarrowing, ScanScope, SnapshotFreshness};
+use sift_core::candidates::{CandidateSource, ScanScope, SnapshotFreshness};
 use sift_core::grep::{CandidateOrder, Grep, GrepRequest, PathDisplay, VisibilityConfig};
 use sift_core::search::{
     InputConversion, SearchMode, SearchOptions, SearchQueryBuilder, StatsMode,
@@ -75,7 +75,6 @@ fn index_candidate_vec(
             order: CandidateOrder::default(),
             freshness: SnapshotFreshness::Current,
         },
-        IndexNarrowing::Allowed,
     );
     let query = SearchQueryBuilder::new(patterns.to_vec())
         .options(options)

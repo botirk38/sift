@@ -14,9 +14,9 @@ use super::snapshot::{
 use super::{IndexDestination, IndexSource};
 
 use crate::candidates::Candidates;
-use crate::candidates::query::CandidateQuery;
 use crate::corpus::Candidate;
 use crate::corpus::filter::{CandidateFilter, FilterAdmission};
+use crate::search::SearchQuery;
 
 /// Composable snapshot store and query registry.
 ///
@@ -295,7 +295,7 @@ impl Indexes {
     }
 
     #[must_use]
-    pub(crate) fn query(&self, query: &CandidateQuery<'_>) -> Vec<FileId> {
+    pub(crate) fn query(&self, query: &SearchQuery) -> Vec<FileId> {
         let indexes = self.snapshot.indexes();
         if indexes.is_empty() {
             return Vec::new();
