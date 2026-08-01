@@ -13,7 +13,7 @@ Search/planner fixtures default to monorepo scale (~32k files / ~5M lines;
 ### YYYY-MM-DD — <criterion id>
 
 - **Tool:** samply | xctrace | Instruments | sample
-- **Command:** `./scripts/profile.sh --bench <name> --profile-time 30 -- <id>`
+- **Command:** `samply record -- cargo bench -p sift-core --bench <name> -- --profile-time 30 <id>`
   (or xctrace equivalent)
 - **Wall-clock context:** <Criterion mean, if any>
 - **Top stacks / attribution:**
