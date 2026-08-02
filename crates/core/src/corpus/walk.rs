@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use ignore::{DirEntry, Error as IgnoreError, WalkBuilder, WalkState};
 
-use crate::corpus::candidate::Candidate;
-use crate::corpus::filter::{CandidateFilter, HiddenMode, IgnoreSources, VisibilityConfig};
+use crate::corpus::file::File;
+use crate::corpus::filter::{FileFilter, HiddenMode, IgnoreSources, VisibilityConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LinkTraversal {
@@ -59,7 +59,7 @@ impl<'a> FileWalk<'a> {
     }
 
     #[must_use]
-    pub fn from_filter(filter: &'a CandidateFilter) -> Self {
+    pub fn from_filter(filter: &'a FileFilter) -> Self {
         Self::new(filter.root())
             .scopes(filter.scopes())
             .excludes(filter.exclude_paths())
@@ -133,12 +133,12 @@ impl<'a> FileWalk<'a> {
 
     /// Discover matching files and convert them into search candidates.
     ///
-    /// Reads filesystem metadata so each [`Candidate`] carries size and depth.
+    /// Reads filesystem metadata so each [`File`] carries size and depth.
     ///
     /// # Errors
     ///
     /// Returns an error if the root cannot be canonicalized or a walk fails.
-    pub fn candidates(self) -> crate::Result<Vec<Candidate>> {
+    pub fn candidates(self) -> crate::Result<Vec<File>> {
         self.candidates_matching(AllFiles)
     }
 
@@ -147,15 +147,12 @@ impl<'a> FileWalk<'a> {
     /// # Errors
     ///
     /// Returns an error if the root cannot be canonicalized or a walk fails.
-    pub fn candidates_matching<S: WalkSelector>(
-        self,
-        selector: S,
-    ) -> crate::Result<Vec<Candidate>> {
+    pub fn candidates_matching<S: WalkSelector>(self, selector: S) -> crate::Result<Vec<File>> {
         Ok(self
             .metadata(WalkMetadata::Read)
             .files_matching(selector)?
             .into_iter()
-            .map(Candidate::from)
+            .map(File::from)
             .collect())
     }
 
@@ -318,7 +315,7 @@ impl WalkFile {
     }
 }
 
-impl From<WalkFile> for Candidate {
+impl From<WalkFile> for File {
     fn from(file: WalkFile) -> Self {
         let size = file.size();
         let abs_path = file.root.join(&file.rel_path);

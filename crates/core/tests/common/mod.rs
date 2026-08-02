@@ -6,11 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use sift_core::{
-    Candidate, CandidateFilter, CandidateFilterConfig, CandidateOrder, CandidateSource, CorpusKind,
-    CorpusMeta, CorpusSpec, FilterAdmission, FilterMeta, GramNorm, GramWidth, IgnoreConfig,
-    IndexConfig, IndexCoverage, IndexDestination, IndexRecord, IndexWalkConfig, Indexes,
-    NGramIndex, Plan, Query, ScanScope, SearchOptions, SnapshotFreshness, StoreMeta,
-    VisibilityConfig, WalkMeta,
+    CorpusKind, CorpusMeta, CorpusSpec, File, FileFilter, FileFilterConfig, FileOrder,
+    FilterAdmission, FilterMeta, GramNorm, GramWidth, IgnoreConfig, IndexConfig, IndexCoverage,
+    IndexDestination, IndexRecord, IndexWalkConfig, Indexes, NGramIndex, Plan, Query, Scan,
+    ScanScope, SearchOptions, SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta,
 };
 
 pub fn sample_store_meta(root: PathBuf, indexes: Vec<IndexRecord>) -> StoreMeta {
@@ -121,8 +120,8 @@ pub fn index_candidates(
     patterns: &[String],
     options: SearchOptions,
     admission: FilterAdmission,
-) -> Vec<Candidate> {
-    let filter = CandidateFilter::new(&CandidateFilterConfig::default(), corpus).expect("filter");
+) -> Vec<File> {
+    let filter = FileFilter::new(&FileFilterConfig::default(), corpus).expect("filter");
     let root = corpus
         .canonicalize()
         .unwrap_or_else(|_| corpus.to_path_buf());
@@ -135,12 +134,12 @@ pub fn index_candidates(
         None
     };
     let store_meta = meta_storage.as_ref();
-    let source = CandidateSource::new(
+    let source = Scan::new(
         Some(indexes),
         &filter,
         store_meta,
         ScanScope::Index {
-            order: CandidateOrder::default(),
+            order: FileOrder::default(),
             freshness: SnapshotFreshness::Current,
         },
     );

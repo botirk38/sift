@@ -1,8 +1,9 @@
 use criterion::{BenchmarkId, Criterion};
 use std::hint::black_box;
 
+use sift_core::SearchMode;
 use sift_grep::Argv;
-use sift_grep::format::{PrintFormat, PrintMode};
+use sift_grep::format::{PrintFormat, Quiet};
 use sift_grep::output::{FilenameContext, OutputArgv, OutputDecl};
 use sift_grep::pattern::PatternArgv;
 
@@ -48,8 +49,8 @@ pub fn bench(c: &mut Criterion) {
             let output_argv = OutputArgv::resolve(&Argv::new(black_box(&argv_default)));
             black_box(output.print_spec(
                 &output_argv,
-                PrintMode::Standard,
-                false,
+                SearchMode::Lines,
+                Quiet::Off,
                 None,
                 FilenameContext::DirectoryCorpus,
             ))
@@ -60,7 +61,7 @@ pub fn bench(c: &mut Criterion) {
         let argv = args(&["sift", "--json", "pattern"]);
         b.iter(|| {
             let output_argv = OutputArgv::resolve(&Argv::new(black_box(&argv)));
-            black_box(OutputDecl::format(&output_argv, PrintMode::Standard) == PrintFormat::Json)
+            black_box(OutputDecl::format(&output_argv, SearchMode::Lines) == PrintFormat::Json)
         });
     });
 

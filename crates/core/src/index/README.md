@@ -15,7 +15,7 @@ Uniform index kinds, snapshot persistence, and search orchestration.
 index/
   record.rs    -- IndexRecord, Index trait
   indexes.rs   -- Indexes: build/update + query/hydrate
-  files.rs     -- Snapshot-owned FileId → Candidate map
+  files.rs     -- Snapshot-owned FileId → File map
   snapshot/    -- atomic persistence, leases, manifests
   ngram/       -- runtime-width N-gram index (default width 3)
 ```

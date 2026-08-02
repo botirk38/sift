@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-/// How to display a candidate path in output.
+/// How to display a corpus file path in output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PathDisplay {
     #[default]
@@ -9,18 +9,18 @@ pub enum PathDisplay {
     Absolute,
 }
 
-use crate::corpus::filter::CandidateFilter;
+use crate::corpus::filter::FileFilter;
 
-/// A candidate file that might match a query.
+/// An on-disk corpus file (relative + absolute path and walk/index metadata).
 ///
-/// Created by index planning or filesystem walk, then processed through
-/// the candidate pipeline for depth, filesize, and metadata constraints.
-/// The normalized string path is computed lazily on first access.
+/// Created by index planning or filesystem walk, then filtered for depth,
+/// filesize, and metadata constraints. The normalized string path is computed
+/// lazily on first access.
 ///
 /// Fields are accessible via accessor methods to guarantee that the lazy
 /// `rel_str` cache remains consistent with `rel_path`.
 #[derive(Debug, Clone)]
-pub struct Candidate {
+pub struct File {
     /// Path relative to the index root or filter root.
     rel_path: PathBuf,
     /// Absolute filesystem path.
@@ -35,7 +35,7 @@ pub struct Candidate {
     cached_depth: Option<usize>,
 }
 
-impl Candidate {
+impl File {
     #[must_use]
     pub const fn new(rel_path: PathBuf, abs_path: PathBuf) -> Self {
         Self {
@@ -129,19 +129,19 @@ impl Candidate {
     #[must_use]
     pub fn matches(
         &self,
-        filter: &CandidateFilter,
+        filter: &FileFilter,
         admission: crate::corpus::filter::FilterAdmission,
     ) -> bool {
         self.within_depth(filter.max_depth())
             && self.within_filesize(filter.max_filesize())
-            && filter.matches_candidate(self, admission)
+            && filter.matches_file(self, admission)
     }
 }
 
-impl PartialEq for Candidate {
+impl PartialEq for File {
     fn eq(&self, other: &Self) -> bool {
         self.rel_path == other.rel_path && self.abs_path == other.abs_path
     }
 }
 
-impl Eq for Candidate {}
+impl Eq for File {}

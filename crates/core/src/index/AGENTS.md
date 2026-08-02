@@ -25,7 +25,7 @@ not expose `reconcile`, `unindexed_hit_paths`, or walk-merge helpers on
 - `IndexConfig` — corpus/walk/visibility inputs for a write
 - `IndexDestination` — directory or snapshot write target
 - `Indexes` — store orchestrator over one `.sift` directory
-- `Files` — snapshot-owned `FileId → Candidate` hydration
+- `Files` — snapshot-owned `FileId → File` hydration
 - `IndexedCorpus` — covered rel-paths; `retain_unindexed` filters paths
 
 ## Conventions

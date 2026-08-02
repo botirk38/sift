@@ -6,7 +6,7 @@ pub mod index;
 pub mod update;
 
 // Stable paths for benchmarks and integration tests that import submodules directly.
-pub use grep::run::{Run, RunConfig, RunMode, RunResult};
+pub use grep::run::{Run, RunConfig, RunResult};
 pub use grep::{Argv, engine, filter, ignore, output, paths, pattern};
 
 use std::process::ExitCode;

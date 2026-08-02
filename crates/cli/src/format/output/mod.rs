@@ -4,8 +4,9 @@ pub mod mode;
 pub mod passthru;
 pub mod style;
 
-use mode::{OutputEmission, PrintMode, ZeroCountMode};
+use mode::OutputEmission;
 use passthru::PassthruMode;
+use sift_core::SearchMode;
 use style::{PrintLineStyle, PrintRecordStyle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -15,15 +16,27 @@ pub enum PrintFormat {
     Json,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrintSpec {
     pub format: PrintFormat,
-    pub mode: PrintMode,
+    pub mode: SearchMode,
     pub emission: OutputEmission,
     pub lines: PrintLineStyle,
     pub records: PrintRecordStyle,
     pub passthru: PassthruMode,
-    pub include_zero: ZeroCountMode,
+}
+
+impl Default for PrintSpec {
+    fn default() -> Self {
+        Self {
+            format: PrintFormat::Text,
+            mode: SearchMode::Lines,
+            emission: OutputEmission::Normal,
+            lines: PrintLineStyle::default(),
+            records: PrintRecordStyle::default(),
+            passthru: PassthruMode::Disabled,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -34,9 +47,8 @@ mod tests {
     fn search_output_defaults() {
         let output = PrintSpec::default();
         assert_eq!(output.format, PrintFormat::Text);
-        assert_eq!(output.mode, PrintMode::Standard);
+        assert_eq!(output.mode, SearchMode::Lines);
         assert_eq!(output.emission, OutputEmission::Normal);
         assert!(matches!(output.passthru, PassthruMode::Disabled));
-        assert!(matches!(output.include_zero, ZeroCountMode::Omit));
     }
 }

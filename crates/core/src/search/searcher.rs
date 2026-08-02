@@ -5,8 +5,8 @@ use rayon::prelude::*;
 
 use crate::Error;
 use crate::candidates::{Candidates, CandidatesInner};
-use crate::corpus::Candidate;
-use crate::corpus::filter::{CandidateFilter, FilterAdmission};
+use crate::corpus::File;
+use crate::corpus::filter::{FileFilter, FilterAdmission};
 use crate::index::{FileId, Indexes};
 use crate::search::error::Error as SearchError;
 use crate::search::event::Events;
@@ -74,9 +74,13 @@ impl Searcher {
         let search_start = Instant::now();
         let buffer = Buffer::from(&events);
         let options = self.options();
-        let (mut searches, inputs_searched, bytes_searched) = match options.search_bound {
-            SearchBound::Exhaustive => self.search_exhaustive(inputs, mode, buffer)?,
-            SearchBound::FirstMatch => self.search_first_match(inputs, mode, buffer),
+        let (mut searches, inputs_searched, bytes_searched) = if matches!(mode, SearchMode::Paths) {
+            Self::list_paths(inputs)
+        } else {
+            match options.search_bound {
+                SearchBound::Exhaustive => self.search_exhaustive(inputs, mode, buffer)?,
+                SearchBound::FirstMatch => self.search_first_match(inputs, mode, buffer),
+            }
         };
         let summary = SearchSummary {
             mode,
@@ -179,25 +183,60 @@ impl Searcher {
         }
     }
 
+    fn list_paths(inputs: SearchInputs<'_>) -> (Vec<FileSearch>, usize, u64) {
+        use crate::search::hit::{ListedFile, ListedRow};
+        use crate::search::input::Origin;
+
+        let SearchInputs {
+            candidates,
+            streams,
+            ..
+        } = inputs;
+        let mut searches = Vec::new();
+        for file in candidates {
+            searches.push(FileSearch {
+                matched: true,
+                row: Some(ListedRow::MatchingPath(ListedFile {
+                    origin: Origin::file(file),
+                    binary_byte_offset: None,
+                })),
+                events: Vec::new(),
+                line_matches: 0,
+                match_spans: 0,
+                bytes_searched: 0,
+            });
+        }
+        for input in streams.as_slice() {
+            searches.push(FileSearch {
+                matched: true,
+                row: Some(ListedRow::MatchingPath(ListedFile {
+                    origin: input.origin().clone(),
+                    binary_byte_offset: None,
+                })),
+                events: Vec::new(),
+                line_matches: 0,
+                match_spans: 0,
+                bytes_searched: 0,
+            });
+        }
+        let len = searches.len();
+        (searches, len, 0)
+    }
+
     fn search_resolved(
         &self,
-        candidates: &[Candidate],
+        candidates: &[File],
         explicit: &[PathBuf],
         mode: SearchMode,
         buffer: Buffer,
     ) -> (Vec<FileSearch>, usize, u64) {
         let mut corpus_inputs = Inputs::with_capacity(candidates.len());
-        for candidate in candidates {
-            let input = Input::from_candidate(candidate, explicit);
-            let Input::Path {
-                path,
-                file,
-                explicit,
-            } = input
-            else {
-                unreachable!("from_candidate always returns Path");
+        for file in candidates {
+            let input = Input::from_file(file.clone(), explicit);
+            let Input::Path { origin, explicit } = input else {
+                unreachable!("from_file always returns Path");
             };
-            corpus_inputs.push_path(path, file, explicit);
+            corpus_inputs.push_path(origin, explicit);
         }
         let results = self.search_inputs(corpus_inputs.as_slice(), mode, buffer);
         let len = corpus_inputs.len();
@@ -219,12 +258,11 @@ impl Searcher {
             .map_init(
                 || SearchTask::discovered_searcher(options, mode),
                 |grep, &id| {
-                    let Some(candidate) =
-                        files.indexes.candidate(id, files.filter, files.admission)
+                    let Some(candidate) = files.indexes.file(id, files.filter, files.admission)
                     else {
                         return Ok(None);
                     };
-                    let input = Input::from_candidate(&candidate, explicit);
+                    let input = Input::from_file(candidate, explicit);
                     Ok(Some(
                         SearchTask::new(&self.matcher, options, mode, buffer, &input).execute(grep),
                     ))
@@ -276,7 +314,7 @@ impl Searcher {
 
         for candidate in candidates {
             files_searched += 1;
-            let input = Input::from_candidate(&candidate, explicit);
+            let input = Input::from_file(candidate, explicit);
             let search =
                 SearchTask::new(&self.matcher, options, mode, buffer, &input).execute(&mut grep);
             bytes = bytes.saturating_add(search.bytes_searched);
@@ -304,7 +342,7 @@ impl Searcher {
 struct IndexedFiles<'a> {
     indexes: &'a Indexes,
     file_ids: &'a [FileId],
-    filter: &'a CandidateFilter,
+    filter: &'a FileFilter,
     admission: FilterAdmission,
 }
 

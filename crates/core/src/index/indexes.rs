@@ -10,8 +10,8 @@ use super::record::IndexRecord;
 use super::snapshot::store::SnapshotWrite;
 use super::snapshot::{DiskSnapshotStore, Snapshot, SnapshotId, SnapshotManifest, SnapshotRead};
 
-use crate::corpus::Candidate;
-use crate::corpus::filter::{CandidateFilter, FilterAdmission};
+use crate::corpus::File;
+use crate::corpus::filter::{FileFilter, FilterAdmission};
 use crate::search::Query;
 
 /// Composable snapshot store and query registry.
@@ -312,22 +312,22 @@ impl Indexes {
         out
     }
 
-    pub(crate) fn candidate(
+    pub(crate) fn file(
         &self,
         id: FileId,
-        filter: &CandidateFilter,
+        filter: &FileFilter,
         admission: FilterAdmission,
-    ) -> Option<Candidate> {
-        let candidate = self.snapshot.files()?.candidate(id)?;
+    ) -> Option<File> {
+        let candidate = self.snapshot.files()?.file(id)?;
         candidate.matches(filter, admission).then_some(candidate)
     }
 
     pub(crate) fn candidates(
         &self,
         file_ids: &[FileId],
-        filter: &CandidateFilter,
+        filter: &FileFilter,
         admission: FilterAdmission,
-    ) -> Vec<Candidate> {
+    ) -> Vec<File> {
         use rayon::prelude::*;
         let Some(files) = self.snapshot.files() else {
             return Vec::new();
@@ -335,7 +335,7 @@ impl Indexes {
         file_ids
             .par_iter()
             .filter_map(|id| {
-                let candidate = files.candidate(*id)?;
+                let candidate = files.file(*id)?;
                 candidate.matches(filter, admission).then_some(candidate)
             })
             .collect()
@@ -353,7 +353,7 @@ impl Indexes {
             .into_iter()
             .filter(|id| {
                 files
-                    .candidate(*id)
+                    .file(*id)
                     .is_some_and(|c| corpus.contains(c.rel_path()))
             })
             .collect()

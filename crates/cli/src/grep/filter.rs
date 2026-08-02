@@ -3,10 +3,8 @@ use std::str::FromStr;
 
 use clap::{Arg, ArgAction, ArgMatches, Args, Command, FromArgMatches};
 use ignore::types::TypesBuilder;
-use sift_core::{
-    CandidateFilterConfig, GlobConfig, IgnoreConfig, TypeFilterRule, VisibilityConfig,
-};
-use sift_core::{CandidateOrder, CandidateOrderDirection, CandidateOrderKey};
+use sift_core::{FileFilterConfig, GlobConfig, IgnoreConfig, TypeFilterRule, VisibilityConfig};
+use sift_core::{FileOrder, FileOrderDirection, FileOrderKey};
 
 use super::argv::Argv;
 use super::ignore::{IgnoreResolution, MessageFlags};
@@ -21,18 +19,18 @@ pub struct FilterConfig {
 }
 
 impl FilterConfig {
-    /// Build a [`CandidateFilterConfig`] from CLI declarations and resolved filter context.
+    /// Build a [`FileFilterConfig`] from CLI declarations and resolved filter context.
     ///
     /// # Errors
     ///
     /// Returns an error if `max_filesize` parsing fails.
-    pub fn candidate_config(
+    pub fn file_config(
         &self,
-        argv: &Argv<'_>,
+        filter: FilterResolution,
+        type_filters: Vec<TypeFilterRule>,
         scopes: Vec<PathBuf>,
         exclude_paths: Vec<PathBuf>,
-    ) -> anyhow::Result<CandidateFilterConfig> {
-        let filter = FilterResolution::resolve(argv);
+    ) -> anyhow::Result<FileFilterConfig> {
         let max_filesize = self
             .decl
             .max_filesize
@@ -47,10 +45,7 @@ impl FilterConfig {
 
         let glob_ci = filter.glob_case_insensitive || !self.decl.iglob.is_empty();
 
-        let type_catalog = TypeCatalog::from_argv(argv)?;
-        let type_filters = type_catalog.filters(argv)?;
-
-        Ok(CandidateFilterConfig {
+        Ok(FileFilterConfig {
             scopes,
             exclude_paths,
             glob: GlobConfig {
@@ -118,10 +113,10 @@ impl FilterDecl {
     /// # Errors
     ///
     /// Returns an error if a sort flag is missing a value or uses an unknown key.
-    pub fn candidate_order(&self, argv: &Argv<'_>) -> anyhow::Result<CandidateOrder> {
-        let mut order = self.sort_files.then_some(CandidateOrder::new(
-            CandidateOrderKey::Path,
-            CandidateOrderDirection::Ascending,
+    pub fn file_order(&self, argv: &Argv<'_>) -> anyhow::Result<FileOrder> {
+        let mut order = self.sort_files.then_some(FileOrder::new(
+            FileOrderKey::Path,
+            FileOrderDirection::Ascending,
         ));
         let mut iter = argv.as_slice().iter().skip(1);
         while let Some(arg) = iter.next() {
@@ -129,23 +124,23 @@ impl FilterDecl {
                 break;
             }
             if arg == "--sort-files" {
-                order = Some(CandidateOrder::new(
-                    CandidateOrderKey::Path,
-                    CandidateOrderDirection::Ascending,
+                order = Some(FileOrder::new(
+                    FileOrderKey::Path,
+                    FileOrderDirection::Ascending,
                 ));
                 continue;
             }
             if let Some(value) = arg.strip_prefix("--sort=") {
-                order = Some(CandidateOrder::new(
+                order = Some(FileOrder::new(
                     Self::parse_sort_key(value)?,
-                    CandidateOrderDirection::Ascending,
+                    FileOrderDirection::Ascending,
                 ));
                 continue;
             }
             if let Some(value) = arg.strip_prefix("--sortr=") {
-                order = Some(CandidateOrder::new(
+                order = Some(FileOrder::new(
                     Self::parse_sort_key(value)?,
-                    CandidateOrderDirection::Descending,
+                    FileOrderDirection::Descending,
                 ));
                 continue;
             }
@@ -153,9 +148,9 @@ impl FilterDecl {
                 let Some(value) = iter.next() else {
                     anyhow::bail!("--sort requires a sort key");
                 };
-                order = Some(CandidateOrder::new(
+                order = Some(FileOrder::new(
                     Self::parse_sort_key(value)?,
-                    CandidateOrderDirection::Ascending,
+                    FileOrderDirection::Ascending,
                 ));
                 continue;
             }
@@ -163,9 +158,9 @@ impl FilterDecl {
                 let Some(value) = iter.next() else {
                     anyhow::bail!("--sortr requires a sort key");
                 };
-                order = Some(CandidateOrder::new(
+                order = Some(FileOrder::new(
                     Self::parse_sort_key(value)?,
-                    CandidateOrderDirection::Descending,
+                    FileOrderDirection::Descending,
                 ));
             }
         }
@@ -173,13 +168,13 @@ impl FilterDecl {
         Ok(order.unwrap_or_default())
     }
 
-    fn parse_sort_key(value: &str) -> anyhow::Result<CandidateOrderKey> {
+    fn parse_sort_key(value: &str) -> anyhow::Result<FileOrderKey> {
         match value {
-            "none" => Ok(CandidateOrderKey::None),
-            "path" => Ok(CandidateOrderKey::Path),
-            "modified" => Ok(CandidateOrderKey::Modified),
-            "accessed" => Ok(CandidateOrderKey::Accessed),
-            "created" => Ok(CandidateOrderKey::Created),
+            "none" => Ok(FileOrderKey::None),
+            "path" => Ok(FileOrderKey::Path),
+            "modified" => Ok(FileOrderKey::Modified),
+            "accessed" => Ok(FileOrderKey::Accessed),
+            "created" => Ok(FileOrderKey::Created),
             other => anyhow::bail!(
                 "unknown sort key '{other}': expected none, path, modified, accessed, or created"
             ),
@@ -187,16 +182,16 @@ impl FilterDecl {
     }
 }
 
-/// Resolved visibility, ignore sources, and glob case for [`CandidateFilterConfig`].
+/// Resolved visibility, ignore sources, and glob case for [`FileFilterConfig`].
 #[derive(Clone, Copy, Default)]
-struct FilterResolution {
+pub struct FilterResolution {
     ignore: IgnoreResolution,
     glob_case_insensitive: bool,
 }
 
 impl FilterResolution {
     #[must_use]
-    fn resolve(argv: &Argv<'_>) -> Self {
+    pub fn resolve(argv: &Argv<'_>) -> Self {
         let output = OutputArgv::resolve(argv);
         Self {
             ignore: IgnoreResolution::resolve(argv),

@@ -2,6 +2,7 @@ use std::process::ExitCode;
 
 use crate::grep::Argv;
 use crate::grep::engine::{EngineDecl, MultilineDecl, ThreadingDecl, WalkerDecl};
+use crate::grep::filter::FilterResolution;
 use crate::grep::filter::{FilterConfig, FilterDecl, GlobFlags, TypeCatalog};
 use crate::grep::ignore::MessageFlags;
 use crate::grep::ignore::{
@@ -10,21 +11,25 @@ use crate::grep::ignore::{
     IgnoreVcsDecl, MessagesDecl, UnrestrictedDecl,
 };
 use crate::grep::input::ContentTransformConfig;
+use crate::grep::output::OutputArgv;
 use crate::grep::output::OutputDecl;
 use crate::grep::output::{
     ColumnDecl, ColumnsDecl, ExtraOutputDecl, FilenameDecl, HeadingDecl, JsonDecl, LineNumberDecl,
     NullColorDecl, ReplaceDecl, SeparatorDecl, StatsDecl,
 };
 use crate::grep::paths::PathArgs;
+use crate::grep::pattern::PatternArgv;
 use crate::grep::pattern::PatternDecl;
 use crate::grep::pattern::{
     BinaryDecl, GrepFlags, GrepScope, PatternArgs, RegexFlagsA, RegexFlagsB,
 };
-use crate::grep::run::{Run, RunConfig, RunMode, RunResult};
+use crate::grep::run::{Run, RunConfig, RunResult};
 use crate::index::{
     IndexDecl, IndexExecution, IndexJob, IndexOperation, IndexRequest, IndexSelection,
 };
 use crate::update;
+use sift_core::SearchMode;
+use sift_core::ZeroCounts;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -157,94 +162,47 @@ impl Cli {
     ///
     /// # Errors
     ///
-    /// Returns an error if sort/order flags are invalid.
+    /// Returns an error if sort/order flags or type filters are invalid.
     pub fn run_config(&self, argv: &Argv<'_>) -> Result<RunConfig, anyhow::Error> {
         let search_paths = self.search_scope.paths.clone();
+        let zeros = if self.extra_output.include_zero {
+            ZeroCounts::Include
+        } else {
+            ZeroCounts::Omit
+        };
+        let mut pattern_argv = PatternArgv::resolve(argv, zeros);
+        let search_mode = if self.filter_decl.files {
+            SearchMode::Paths
+        } else {
+            pattern_argv.mode
+        };
+        pattern_argv.mode = search_mode;
+        let filter_resolution = FilterResolution::resolve(argv);
+        let type_catalog = TypeCatalog::from_argv(argv)?;
+        let type_filters = type_catalog.filters(argv)?;
+        let output_argv = OutputArgv::resolve(argv);
+        let ignore = IgnoreResolution::resolve(argv);
+        let file_order = self.filter_decl.file_order(argv)?;
         Ok(RunConfig {
             pattern: self.pattern_config(),
+            pattern_argv,
             filter: self.filter_config(),
+            filter_resolution,
+            type_filters,
             output: self.output_config(&search_paths),
+            output_argv,
             sift_dir: self.paths.sift_dir.clone(),
             search_paths,
             threads: self.threading.threads,
-            mode: if self.filter_decl.files {
-                RunMode::ListFiles
-            } else {
-                RunMode::Search
-            },
             content: ContentTransformConfig {
                 search_zip: self.engine_decl.content.search_zip,
                 pre: self.engine_decl.content.pre.clone(),
                 pre_globs: self.engine_decl.content.pre_glob.clone(),
             },
-            candidate_order: self.filter_decl.candidate_order(argv)?,
+            file_order,
+            search_mode,
+            ignore,
         })
-    }
-
-    fn into_run(self, argv: &Argv<'_>) -> Result<Run, anyhow::Error> {
-        let search_paths = self.search_scope.paths;
-        let replace_trim = self.replace_decl.trim;
-        let max_count = self.paths.max_count;
-        let line_number = self.line_number_decl.line_number;
-        let follow_links = self.paths.follow;
-        let one_file_system = self.walker_decl.one_file_system;
-        let threads = self.threading.threads;
-        let path_separator = self.threading.path_separator;
-        let null_data = self.multiline_decl.line_terminator.null_data;
-        let colors = self.engine_decl.colors.clone();
-        let hyperlink_format = self.engine_decl.hyperlink_format.clone();
-        let hostname_bin = self.engine_decl.hostname_bin.clone();
-        let content = self.engine_decl.content.clone();
-        let mode = if self.filter_decl.files {
-            RunMode::ListFiles
-        } else {
-            RunMode::Search
-        };
-        let candidate_order = self.filter_decl.candidate_order(argv)?;
-
-        Ok(Run::new(RunConfig {
-            pattern: PatternDecl {
-                patterns: self.patterns,
-                search_flags: self.search_flags,
-                regex1: self.regex1,
-                regex2: self.regex2,
-                multiline: self.multiline_decl,
-                engine: self.engine_decl,
-                binary: self.binary_decl,
-                replace: self.replace_decl,
-                max_count,
-            },
-            filter: FilterConfig {
-                decl: self.filter_decl,
-                glob_patterns: self.glob_flags.glob,
-                follow_links,
-                one_file_system,
-            },
-            output: OutputDecl {
-                column: self.column_decl,
-                columns: self.columns_decl,
-                extra: self.extra_output,
-                replace_trim,
-                path_separator,
-                colors,
-                hyperlink_format,
-                hostname_bin,
-                line_number,
-                separators: self.separator_decl,
-                search_paths: search_paths.clone(),
-                null_data,
-            },
-            sift_dir: self.paths.sift_dir,
-            search_paths,
-            threads,
-            mode,
-            content: ContentTransformConfig {
-                search_zip: content.search_zip,
-                pre: content.pre,
-                pre_globs: content.pre_glob,
-            },
-            candidate_order,
-        }))
     }
 
     #[must_use]
@@ -298,8 +256,9 @@ impl Cli {
                     max_depth: self.filter_decl.max_depth,
                     max_filesize: self.filter_decl.max_filesize,
                 };
-                match IndexJob::resolve(req) {
-                    Ok(index) => index.run(daemon.as_ref(), argv),
+                let ignore = IgnoreResolution::resolve(argv);
+                match IndexJob::resolve(req, ignore) {
+                    Ok(index) => index.run(daemon.as_ref()),
                     Err(e) => {
                         eprintln!("sift: {e}");
                         ExitCode::from(2)
@@ -308,18 +267,16 @@ impl Cli {
             }
             None => {
                 let daemon = self.paths.daemon();
-                let run = match self.into_run(argv) {
-                    Ok(run) => run,
+                let config = match self.run_config(argv) {
+                    Ok(config) => config,
                     Err(e) => {
                         eprintln!("sift: {e}");
                         return ExitCode::from(2);
                     }
                 };
-
-                let suppress_errors = IgnoreResolution::resolve(argv)
-                    .msg_flags
-                    .contains(MessageFlags::NO_MESSAGES);
-                Self::exit_from_run(run.execute(argv, daemon.as_ref()), suppress_errors)
+                let suppress_errors = config.ignore.msg_flags.contains(MessageFlags::NO_MESSAGES);
+                let run = Run::new(config);
+                Self::exit_from_run(run.execute(daemon.as_ref()), suppress_errors)
             }
         }
     }
@@ -330,7 +287,7 @@ impl Cli {
     ) -> ExitCode {
         match result {
             Ok(outcome) if outcome.succeeded() => ExitCode::SUCCESS,
-            Ok(RunResult::Files { .. } | RunResult::Search { .. }) => ExitCode::from(1),
+            Ok(RunResult::Found | RunResult::NotFound) => ExitCode::from(1),
             Err(e) => {
                 if let Some(ioe) = e.downcast_ref::<std::io::Error>()
                     && ioe.kind() == std::io::ErrorKind::BrokenPipe

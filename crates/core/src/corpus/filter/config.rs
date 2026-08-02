@@ -90,7 +90,7 @@ pub enum TypeFilterRule {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct CandidateFilterConfig {
+pub struct FileFilterConfig {
     pub scopes: Vec<PathBuf>,
     pub exclude_paths: Vec<PathBuf>,
     pub glob: GlobConfig,

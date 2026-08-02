@@ -1,12 +1,12 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use sift_core::candidates::{CandidateSource, ScanScope, SnapshotFreshness};
+use sift_core::candidates::{Scan, ScanScope, SnapshotFreshness};
 use sift_core::search::{
     Events, Query, SearchFlags, SearchInputs, SearchMode, SearchOptions, Searcher, StatsMode,
 };
 use sift_core::{
-    CandidateFilter, CandidateFilterConfig, CorpusKind, CorpusMeta, CorpusSpec, FilterMeta,
+    FileFilter, FileFilterConfig, CorpusKind, CorpusMeta, CorpusSpec, FilterMeta,
     GramWidth, IndexConfig, IndexCoverage, IndexRecord, IndexWalkConfig, Indexes, Inputs, Plan,
     StoreMeta, VisibilityConfig, WalkMeta,
 };
@@ -102,8 +102,8 @@ fn run_search(holder: &IndexHolder, patterns: &[String], opts: &SearchOptions) {
     let Ok(searcher) = Searcher::new(query) else {
         return;
     };
-    let filter = CandidateFilter::new(&CandidateFilterConfig::default(), &holder.root).unwrap();
-    let source = CandidateSource::new(
+    let filter = FileFilter::new(&FileFilterConfig::default(), &holder.root).unwrap();
+    let source = Scan::new(
         Some(&holder.indexes),
         &filter,
         None,

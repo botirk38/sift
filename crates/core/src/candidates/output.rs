@@ -1,5 +1,5 @@
-use crate::corpus::Candidate;
-use crate::corpus::filter::{CandidateFilter, FilterAdmission};
+use crate::corpus::File;
+use crate::corpus::filter::{FileFilter, FilterAdmission};
 use crate::index::{FileId, Indexes};
 
 /// Corpus files ready for search.
@@ -7,39 +7,39 @@ pub struct Candidates<'a>(pub(crate) Inner<'a>);
 
 pub(crate) enum Inner<'a> {
     /// Walk, merge residual, or sorted resolve: paths already materialized.
-    Resolved(Vec<Candidate>),
+    Resolved(Vec<File>),
     /// Index-narrowed file ids; search opens one file at a time.
     Indexed {
         indexes: &'a Indexes,
         file_ids: Vec<FileId>,
-        filter: &'a CandidateFilter,
+        filter: &'a FileFilter,
         admission: FilterAdmission,
     },
     /// Lazy snapshot: index hits stay as ids; unindexed walk paths are resolved.
     Mixed {
         indexes: &'a Indexes,
         file_ids: Vec<FileId>,
-        filter: &'a CandidateFilter,
+        filter: &'a FileFilter,
         admission: FilterAdmission,
-        unindexed: Vec<Candidate>,
+        unindexed: Vec<File>,
     },
 }
 
 /// Iterator over candidates (opens index rows as it goes).
 pub enum IntoIter<'a> {
-    Resolved(std::vec::IntoIter<Candidate>),
+    Resolved(std::vec::IntoIter<File>),
     Indexed {
         ids: std::vec::IntoIter<FileId>,
         indexes: &'a Indexes,
-        filter: &'a CandidateFilter,
+        filter: &'a FileFilter,
         admission: FilterAdmission,
     },
     Mixed {
         ids: std::vec::IntoIter<FileId>,
         indexes: &'a Indexes,
-        filter: &'a CandidateFilter,
+        filter: &'a FileFilter,
         admission: FilterAdmission,
-        unindexed: std::vec::IntoIter<Candidate>,
+        unindexed: std::vec::IntoIter<File>,
     },
 }
 
@@ -52,7 +52,7 @@ impl<'a> Candidates<'a> {
     pub(crate) const fn indexed(
         indexes: &'a Indexes,
         file_ids: Vec<FileId>,
-        filter: &'a CandidateFilter,
+        filter: &'a FileFilter,
         admission: FilterAdmission,
     ) -> Self {
         Self(Inner::Indexed {
@@ -66,9 +66,9 @@ impl<'a> Candidates<'a> {
     pub(crate) const fn mixed(
         indexes: &'a Indexes,
         file_ids: Vec<FileId>,
-        filter: &'a CandidateFilter,
+        filter: &'a FileFilter,
         admission: FilterAdmission,
-        unindexed: Vec<Candidate>,
+        unindexed: Vec<File>,
     ) -> Self {
         Self(Inner::Mixed {
             indexes,
@@ -98,7 +98,7 @@ impl<'a> Candidates<'a> {
 
     /// Materialize every candidate. Index-backed rows open in parallel.
     #[must_use = "materialized candidates are consumed by search"]
-    pub fn into_vec(self) -> Vec<Candidate> {
+    pub fn into_vec(self) -> Vec<File> {
         match self.0 {
             Inner::Resolved(items) => items,
             Inner::Indexed {
@@ -122,14 +122,14 @@ impl<'a> Candidates<'a> {
     }
 }
 
-impl From<Vec<Candidate>> for Candidates<'_> {
-    fn from(items: Vec<Candidate>) -> Self {
+impl From<Vec<File>> for Candidates<'_> {
+    fn from(items: Vec<File>) -> Self {
         Self(Inner::Resolved(items))
     }
 }
 
 impl Iterator for IntoIter<'_> {
-    type Item = Candidate;
+    type Item = File;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
@@ -141,7 +141,7 @@ impl Iterator for IntoIter<'_> {
                 admission,
             } => loop {
                 let id = ids.next()?;
-                if let Some(candidate) = indexes.candidate(id, filter, *admission) {
+                if let Some(candidate) = indexes.file(id, filter, *admission) {
                     return Some(candidate);
                 }
             },
@@ -154,7 +154,7 @@ impl Iterator for IntoIter<'_> {
             } => loop {
                 match ids.next() {
                     Some(id) => {
-                        if let Some(candidate) = indexes.candidate(id, filter, *admission) {
+                        if let Some(candidate) = indexes.file(id, filter, *admission) {
                             return Some(candidate);
                         }
                     }
@@ -184,7 +184,7 @@ impl Iterator for IntoIter<'_> {
 }
 
 impl<'a> IntoIterator for Candidates<'a> {
-    type Item = Candidate;
+    type Item = File;
     type IntoIter = IntoIter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {

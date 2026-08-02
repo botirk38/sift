@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::corpus::filter::{CandidateFilter, VisibilityConfig};
+use crate::corpus::filter::{FileFilter, VisibilityConfig};
 
 use super::IndexError;
 use super::config::{CorpusKind, CorpusSpec, IndexConfig, IndexWalkConfig};
@@ -155,7 +155,7 @@ impl StoreMeta {
 
     /// Whether this index metadata covers the search-time candidate universe.
     #[must_use]
-    pub fn covers_candidate_filter(&self, filter: &CandidateFilter) -> bool {
+    pub fn covers_candidate_filter(&self, filter: &FileFilter) -> bool {
         self.walk.follow_links == filter.follow_links()
             && self.walk.one_file_system == filter.one_file_system()
             && self.walk.max_depth == filter.max_depth()
@@ -164,7 +164,7 @@ impl StoreMeta {
             && self.covers_search_scopes(filter)
     }
 
-    fn covers_search_scopes(&self, filter: &CandidateFilter) -> bool {
+    fn covers_search_scopes(&self, filter: &FileFilter) -> bool {
         if self.corpus.include_paths.is_empty() {
             return true;
         }

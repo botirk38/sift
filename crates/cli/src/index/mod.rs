@@ -9,7 +9,6 @@ use sift_core::{
     WalkMeta,
 };
 
-use crate::grep::Argv;
 use std::str::FromStr;
 
 use crate::grep::filter::ByteSize;
@@ -72,6 +71,7 @@ pub struct IndexJob {
     pub max_filesize: Option<u64>,
     pub exclude_paths: Vec<PathBuf>,
     pub sift_dir: PathBuf,
+    pub ignore: IgnoreResolution,
 }
 
 impl IndexJob {
@@ -80,7 +80,7 @@ impl IndexJob {
     /// # Errors
     ///
     /// Returns an error if the index path cannot be canonicalised.
-    pub fn resolve(req: IndexRequest) -> anyhow::Result<Self> {
+    pub fn resolve(req: IndexRequest, ignore: IgnoreResolution) -> anyhow::Result<Self> {
         let canonical = req.path.canonicalize()?;
         let (root, include_paths, corpus_kind) = if canonical.is_file() {
             let parent = canonical.parent().unwrap_or(&canonical).to_path_buf();
@@ -113,19 +113,19 @@ impl IndexJob {
             max_filesize,
             exclude_paths,
             sift_dir: req.sift_dir,
+            ignore,
         })
     }
 
     /// Run `sift index build` or `sift index update`.
     #[must_use]
-    pub fn run(&self, daemon: Option<&Daemon>, argv: &Argv<'_>) -> ExitCode {
+    pub fn run(&self, daemon: Option<&Daemon>) -> ExitCode {
         if self.execution == IndexExecution::Background {
-            return self.run_background(daemon, argv);
+            return self.run_background(daemon);
         }
 
-        let ignore_res = IgnoreResolution::resolve(argv);
         let existing_meta = StoreMeta::read(&self.sift_dir).ok();
-        let meta = self.store_meta(ignore_res, existing_meta.as_ref());
+        let meta = self.store_meta(self.ignore, existing_meta.as_ref());
 
         let mut indexes = match Indexes::open(&self.sift_dir, &meta) {
             Ok(s) => s,
@@ -182,10 +182,9 @@ impl IndexJob {
         ExitCode::SUCCESS
     }
 
-    fn run_background(&self, daemon: Option<&Daemon>, argv: &Argv<'_>) -> ExitCode {
-        let ignore_res = IgnoreResolution::resolve(argv);
+    fn run_background(&self, daemon: Option<&Daemon>) -> ExitCode {
         let existing_meta = StoreMeta::read(&self.sift_dir).ok();
-        let meta = self.store_meta(ignore_res, existing_meta.as_ref());
+        let meta = self.store_meta(self.ignore, existing_meta.as_ref());
 
         let indexes = match Indexes::open(&self.sift_dir, &meta) {
             Ok(s) => s,

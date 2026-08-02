@@ -1,4 +1,4 @@
-use crate::corpus::CandidateOrder;
+use crate::corpus::FileOrder;
 
 /// Whether candidate resolution should cover every corpus file or only
 /// index-narrowed potential matches.
@@ -16,10 +16,10 @@ pub enum ScanScope {
     /// Streams/stdin only — no corpus file resolution.
     StreamsOnly,
     /// Filesystem walk under the filter.
-    Walk { order: CandidateOrder },
+    Walk { order: FileOrder },
     /// Index-backed discovery; plan chooses walk when indexes are absent.
     Index {
-        order: CandidateOrder,
+        order: FileOrder,
         freshness: SnapshotFreshness,
     },
 }
@@ -34,9 +34,9 @@ pub enum SnapshotFreshness {
 }
 
 impl ScanScope {
-    pub(crate) fn order(self) -> CandidateOrder {
+    pub(crate) fn order(self) -> FileOrder {
         match self {
-            Self::StreamsOnly => CandidateOrder::default(),
+            Self::StreamsOnly => FileOrder::default(),
             Self::Walk { order } | Self::Index { order, .. } => order,
         }
     }

@@ -1,7 +1,6 @@
 use std::ops::Range;
-use std::sync::Arc;
 
-use crate::search::input::FileIdentity;
+use crate::search::input::Origin;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchEvent {
@@ -15,12 +14,12 @@ pub enum SearchEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileEvent {
-    pub file: Arc<FileIdentity>,
+    pub origin: Origin,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatchEvent {
-    pub file: Arc<FileIdentity>,
+    pub origin: Origin,
     pub line_number: Option<u64>,
     pub absolute_byte_offset: Option<u64>,
     pub bytes: Vec<u8>,
@@ -31,7 +30,7 @@ pub struct MatchEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextEvent {
-    pub file: Arc<FileIdentity>,
+    pub origin: Origin,
     pub kind: ContextKind,
     pub line_number: Option<u64>,
     pub absolute_byte_offset: u64,
@@ -47,7 +46,7 @@ pub enum ContextKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BinaryEvent {
-    pub file: Arc<FileIdentity>,
+    pub origin: Origin,
     pub absolute_byte_offset: u64,
     pub explicit: bool,
 }

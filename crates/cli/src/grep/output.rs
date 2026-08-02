@@ -1,10 +1,11 @@
 use crate::format::output::style::{ColorSpecs, HyperlinkFormat, OutputBuffering};
 use crate::format::{
     ColorChoice, ColumnLimit, ColumnOverflow, FilenameMode, LineStyleFlags, OutputEmission,
-    PassthruMode, PrintFormat, PrintLineStyle, PrintMode, PrintRecordStyle, PrintSeparators,
-    PrintSpec, RecordTerminator, ZeroCountMode,
+    PassthruMode, PrintFormat, PrintLineStyle, PrintRecordStyle, PrintSeparators, PrintSpec, Quiet,
+    RecordTerminator,
 };
 use clap::{ArgAction, Args};
+use sift_core::SearchMode;
 use sift_core::search::Stats;
 use std::path::PathBuf;
 use std::process::Command;
@@ -183,6 +184,7 @@ pub struct OutputPathFlags {
     pub nul_terminated: bool,
 }
 
+#[derive(Clone)]
 pub struct OutputArgv {
     pub mode: OutputModeFlags,
     pub path: OutputPathFlags,
@@ -461,8 +463,8 @@ impl OutputDecl {
     pub fn print_spec(
         &self,
         output_argv: &OutputArgv,
-        effective_mode: PrintMode,
-        quiet: bool,
+        mode: SearchMode,
+        quiet: Quiet,
         line_number_override: Option<bool>,
         filename_ctx: FilenameContext,
     ) -> Result<PrintSpec, String> {
@@ -470,7 +472,7 @@ impl OutputDecl {
 
         let pretty = self.column.pretty;
         let vimgrep = self.column.vimgrep;
-        let output_format = Self::format(output_argv, effective_mode);
+        let output_format = Self::format(output_argv, mode);
         let effective_color = if pretty && output_argv.color == ColorChoice::Auto {
             ColorChoice::Always
         } else {
@@ -482,13 +484,11 @@ impl OutputDecl {
 
         Ok(PrintSpec {
             format: output_format,
-            mode: effective_mode,
-            emission: if quiet {
-                OutputEmission::Quiet
-            } else if effective_mode.is_summary() {
-                OutputEmission::Summary
-            } else {
-                OutputEmission::Normal
+            mode,
+            emission: match quiet {
+                Quiet::On => OutputEmission::Quiet,
+                Quiet::Off if mode.is_summary() => OutputEmission::Summary,
+                Quiet::Off => OutputEmission::Normal,
             },
             lines: PrintLineStyle {
                 filename_mode: Self::filename_mode(output_argv.with_filename, filename_ctx),
@@ -497,7 +497,12 @@ impl OutputDecl {
                     self.effective_line_number(line_number_override, output_format),
                     self.column.column || vimgrep,
                 ),
-                path_display: CorpusScope::path_display(&self.search_paths),
+                path_display: if matches!(mode, SearchMode::Paths) {
+                    // Match prior `--files` listing: absolute paths under the filter root.
+                    sift_core::PathDisplay::Absolute
+                } else {
+                    CorpusScope::path_display(&self.search_paths)
+                },
                 columns: self.columns.max_columns.map(|max| ColumnLimit {
                     max,
                     overflow: if self.columns.max_columns_preview {
@@ -524,30 +529,12 @@ impl OutputDecl {
                 buffering: output_argv.buffering,
             },
             passthru: PassthruMode::Disabled,
-            include_zero: if self.extra.include_zero {
-                ZeroCountMode::Include
-            } else {
-                ZeroCountMode::Omit
-            },
         })
     }
 
     #[must_use]
-    pub const fn is_path_mode(mode: PrintMode) -> bool {
-        matches!(
-            mode,
-            PrintMode::FilesWithMatches | PrintMode::FilesWithoutMatch
-        )
-    }
-
-    #[must_use]
-    pub const fn format(output_argv: &OutputArgv, effective_mode: PrintMode) -> PrintFormat {
-        if output_argv.mode.json
-            && matches!(
-                effective_mode,
-                PrintMode::Standard | PrintMode::OnlyMatching
-            )
-        {
+    pub const fn format(output_argv: &OutputArgv, mode: SearchMode) -> PrintFormat {
+        if output_argv.mode.json && matches!(mode, SearchMode::Lines | SearchMode::Matches) {
             PrintFormat::Json
         } else {
             PrintFormat::Text
@@ -555,9 +542,8 @@ impl OutputDecl {
     }
 
     #[must_use]
-    pub const fn print_stats(output_argv: &OutputArgv, effective_mode: PrintMode) -> bool {
-        output_argv.mode.stats
-            || matches!(Self::format(output_argv, effective_mode), PrintFormat::Json)
+    pub const fn print_stats(output_argv: &OutputArgv, mode: SearchMode) -> bool {
+        output_argv.mode.stats || matches!(Self::format(output_argv, mode), PrintFormat::Json)
     }
 
     pub fn write_stats(stats: &Stats) {

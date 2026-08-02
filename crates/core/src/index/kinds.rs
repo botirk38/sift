@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum PlanMode {
     /// The query was narrowed using indexed candidates.
     #[default]
-    IndexedCandidates,
+    Indexed,
     /// No index terms were usable, so all indexed files must be scanned.
     FullScan,
 }

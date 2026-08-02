@@ -8,19 +8,18 @@ pub(crate) mod corpus;
 pub mod index;
 pub mod search;
 
-pub use candidates::{CandidateSource, Candidates, Coverage, Plan, ScanScope, SnapshotFreshness};
+pub use candidates::{Candidates, Coverage, Plan, Scan, ScanScope, SnapshotFreshness};
 pub use corpus::{
-    AllFiles, Candidate, CandidateFilter, CandidateFilterConfig, CandidateOrder,
-    CandidateOrderDirection, CandidateOrderKey, FileWalk, FilterAdmission, GlobConfig, HiddenMode,
-    IgnoreConfig, IgnoreSources, PathDisplay, TypeFilterRule, VisibilityConfig, WalkFile,
-    WalkMetadata, WalkSelector,
+    AllFiles, File, FileFilter, FileFilterConfig, FileOrder, FileOrderDirection, FileOrderKey,
+    FileWalk, FilterAdmission, GlobConfig, HiddenMode, IgnoreConfig, IgnoreSources, PathDisplay,
+    TypeFilterRule, VisibilityConfig, WalkFile, WalkMetadata, WalkSelector,
 };
 pub use search::{
     BinaryEvent, BinaryMode, ByteInput, Case, CaseMode, ContextEvent, ContextKind,
-    Error as SearchError, Events, FileEvent, FileIdentity, Input, InputEncoding, Inputs, LineCount,
-    ListedFile, Listing, Match, MatchEvent, MatchTotals, MatchedFile, Narrowing, Query,
-    RegexEngine, Report, SearchBound, SearchEvent, SearchFlags, SearchInputs, SearchMode,
-    SearchOptions, SearchSink, Searcher, SpanCount, Stats, StatsMode, ZeroCounts,
+    Error as SearchError, Events, FileEvent, Input, InputEncoding, Inputs, LineCount, ListedFile,
+    Listing, Match, MatchEvent, MatchTotals, MatchedFile, Narrowing, Origin, Query, RegexEngine,
+    Report, SearchBound, SearchEvent, SearchFlags, SearchInputs, SearchMode, SearchOptions,
+    SearchSink, Searcher, SpanCount, Stats, StatsMode, ZeroCounts,
 };
 
 pub use ignore::{Walk, WalkBuilder};
