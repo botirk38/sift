@@ -13,9 +13,6 @@ pub enum Error {
     #[error("invalid max-count: 0 matches requested")]
     InvalidMaxCount,
 
-    #[error("JSON output is only supported for standard search (not count or file-list modes)")]
-    JsonOutputIncompatibleMode,
-
     #[error("JSON serialization error: {0}")]
     JsonSerialize(#[from] serde_json::Error),
 

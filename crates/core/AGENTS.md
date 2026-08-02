@@ -8,26 +8,26 @@ Composable indexed code search: index lifecycle, candidate planning, and grep-st
 
 ```
 Indexes::open (lifecycle) / Indexes::load → Option (search)
-Plan::new (pure) → Plan::resolve (query I/O) → Grep::search
+Plan::new (pure) → Plan::resolve (query I/O) → Searcher::execute
 ```
 
 - `Indexes` — build/update/publish and query/hydrate over one store (`load` is `None` when absent)
 - `Snapshot` — shared `Files` + opened `Box<dyn Index>` vec for a committed snapshot
 - `Plan` — pure discovery decision; `resolve` owns index query I/O
-- `Grep` — public entry for resolve + search
+- `Searcher` — match execution over resolved candidates and streams
+- `Query` — patterns + options; owns narrowing policy
+- `File` / `Origin` — path identity (`Origin::{File, Stream { label }}`)
 
-Today the default index is `ngram::Index::new()` (trigram width).
+Today the default index is `ngram::Index` opened from an `IndexRecord` (trigram width).
 
 ## Public API
 
 Search (re-exported from `lib.rs`):
 
-- `Grep`, `GrepRequest`, `Grep::resolve_candidates`, `Searcher`, `Report`
-- `Indexes`, `IndexedCorpus`, `SnapshotId`
+- `Query`, `Searcher`, `Report`, `Origin`, `SearchMode`
+- `Indexes`, `IndexedCorpus`, `SnapshotId`, `Files`
 - `Index`, `IndexRecord`, `IndexConfig`, `IndexDestination`, `ngram::Index`, `GramWidth`
-- `Candidates`, `Scan`, `ScanScope`, `SnapshotFreshness`
-
-Internal: `Plan`.
+- `Candidates`, `Plan`, `Scan`, `ScanScope`, `SnapshotFreshness`, `Coverage`
 
 ## Source map
 
@@ -37,17 +37,18 @@ Internal: `Plan`.
 | `index/record.rs` | `IndexRecord`, opened `Index` |
 | `index/files.rs` | Snapshot-owned `Files` |
 | `index/snapshot/` | `Snapshot`, persistence |
-| `index/ngram/` | N-gram implementation |
-| `grep/` | Public search API |
+| `index/ngram/` | N-gram implementation (artifact names live here) |
+| `index/mmap.rs` | Sole `unsafe` in the crate (`mmap_open`) |
+| `search/` | `Query`, `Searcher`, `Report`, events |
 | `candidates/plan.rs` | `Plan` (plan + resolve) |
 | `candidates/candidates.rs` | `Candidates` collection |
-| `corpus/` | `File`, filters, walk |
+| `corpus/` | `File`, `FileFilter`, `FileOrder`, walk |
 
 ## Search flow
 
 ```text
-Grep::execute
-  1. coverage   ← Coverage::from_mode(mode)
+Searcher::execute
+  1. coverage   ← caller maps SearchMode → Coverage
   2. plan       ← Plan::new(source, query, coverage)
   3. candidates ← plan.resolve(source)
   4. search     ← Searcher::execute(...)
@@ -61,6 +62,7 @@ Planning is pure; `Plan::resolve` is the only candidate I/O boundary.
 - Multi-index intersection in `Indexes::query`, not per-caller.
 - No free helper functions — logic lives on the owning type.
 - No callback/`FnOnce` APIs.
+- No `unsafe` outside `index/mmap.rs`.
 
 ## Testing
 
@@ -72,8 +74,7 @@ cargo test -p sift-core
 
 - Break public API without updating CLI.
 - Add `unsafe` outside `index/mmap.rs`.
-- Import `index::ngram` from `grep/`.
 - Put stdout formatting in core.
 - Expose `Indexes::candidates` or test-only constructors.
 - Mix planning with I/O.
-- Reintroduce `IndexStore` or `open_or_create`.
+- Reintroduce `Grep`, `IndexStore`, or `open_or_create`.

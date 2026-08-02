@@ -18,8 +18,8 @@ use memmap2::Mmap;
 ///
 /// `Mmap::map` dereferences the raw OS mapping pointer. The OS manages
 /// bounds and the mapping outlives the closed `File` handle via refcount.
-#[allow(unsafe_code)]
 pub fn mmap_open(path: &Path) -> std::io::Result<Mmap> {
     let file = std::fs::File::open(path)?;
+    // SAFETY: see module docs — sole `unsafe` in sift-core.
     unsafe { Mmap::map(&file) }
 }

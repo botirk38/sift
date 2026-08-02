@@ -28,7 +28,7 @@ Two-layer flag model:
 | `format/printer.rs` | — | `SearchPrinter`, `PrintSpec` (`SearchMode`) | `SearchPrinter::print` → `Report` |
 | `index/mod.rs` | — | `IndexRequest`, `IndexJob`, `SnapshotRefresh` | `IndexJob::resolve`, `IndexJob::run(daemon)`, `SnapshotRefresh::run` |
 | `index/selection.rs` | `IndexDecl` | `IndexSelection` | `IndexSelection::resolve` (argv order for `--index`/`--width`/`--norm`) |
-| `index/daemon/mod.rs` | — | `Daemon`, `ServeConfig`, `DaemonError` | `Daemon::index`, `Daemon::ensure_running`, `Daemon::serve` |
+| `index/daemon/` | — | `Daemon`, `DaemonOrchestrator`, `ServeConfig` | `Daemon::{index,validate_snapshot}`, `DaemonOrchestrator::{start,serve}` (`ipc` / `watcher` / `refresh`) |
 
 ## Search pipeline (CLI)
 

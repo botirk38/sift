@@ -10,6 +10,11 @@ mod literals;
 pub use gram::{Gram, GramNorm, GramWidth, GramWindows};
 pub use index::{Index, NGramIndexError};
 
+pub(crate) const FILES_BIN: &str = "files.bin";
+pub(crate) const LEXICON_BIN: &str = "lexicon.bin";
+pub(crate) const POSTINGS_BIN: &str = "postings.bin";
+pub(crate) const GRAMS_BIN: &str = "grams.bin";
+
 #[cfg(test)]
 mod candidate_tests {
     use std::path::Path;
@@ -309,7 +314,7 @@ mod candidate_tests {
         grams.extend_from_slice(&3u32.to_le_bytes());
         grams.extend_from_slice(&0u32.to_le_bytes());
         grams.extend_from_slice(&0u32.to_le_bytes());
-        std::fs::write(dir.join(crate::GRAMS_BIN), &grams).expect("write grams");
+        std::fs::write(dir.join(GRAMS_BIN), &grams).expect("write grams");
 
         // Posting count mismatches are caught at build time.
         // The open path skips content-level validation for speed.

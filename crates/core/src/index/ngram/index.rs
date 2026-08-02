@@ -217,19 +217,6 @@ impl Index {
             .collect()
     }
 
-    /// Returns an explanation of how a query would be handled.
-    #[must_use]
-    pub fn explain(&self, query: &Query) -> crate::index::QueryPlanOutput {
-        let mode = match Self::extract_literal_arms(self.width, query) {
-            Some(_) => crate::index::PlanMode::Indexed,
-            None => crate::index::PlanMode::FullScan,
-        };
-        crate::index::QueryPlanOutput {
-            pattern: query.patterns().join("|"),
-            mode,
-        }
-    }
-
     #[must_use]
     pub(crate) fn all_file_ids(&self) -> Vec<FileId> {
         (0..self.storage.files.len()).map(FileId::new).collect()
@@ -380,10 +367,10 @@ impl Index {
                     width,
                 )?;
 
-                writer.put_artifact(namespace, crate::FILES_BIN, files_bytes)?;
-                writer.put_artifact(namespace, crate::LEXICON_BIN, lexicon_bytes)?;
-                writer.put_artifact(namespace, crate::POSTINGS_BIN, postings_bytes)?;
-                writer.put_artifact(namespace, crate::GRAMS_BIN, gram_sets_bytes)?;
+                writer.put_artifact(namespace, super::FILES_BIN, files_bytes)?;
+                writer.put_artifact(namespace, super::LEXICON_BIN, lexicon_bytes)?;
+                writer.put_artifact(namespace, super::POSTINGS_BIN, postings_bytes)?;
+                writer.put_artifact(namespace, super::GRAMS_BIN, gram_sets_bytes)?;
 
                 Self::validate_file_paths(&tables.fingerprints)?;
                 Self::validate_lexicon_postings(&lexicon, &postings)?;
@@ -420,10 +407,10 @@ impl Index {
         root: &Path,
         corpus_kind: CorpusKind,
     ) -> crate::Result<Self> {
-        let files_path = index_dir.join(crate::FILES_BIN);
-        let lexicon_path = index_dir.join(crate::LEXICON_BIN);
-        let postings_path = index_dir.join(crate::POSTINGS_BIN);
-        let grams_path = index_dir.join(crate::GRAMS_BIN);
+        let files_path = index_dir.join(super::FILES_BIN);
+        let lexicon_path = index_dir.join(super::LEXICON_BIN);
+        let postings_path = index_dir.join(super::POSTINGS_BIN);
+        let grams_path = index_dir.join(super::GRAMS_BIN);
 
         for p in [&files_path, &lexicon_path, &postings_path, &grams_path] {
             if !p.is_file() {
@@ -464,10 +451,10 @@ impl Index {
     ) -> crate::Result<Self> {
         std::fs::create_dir_all(dir)?;
 
-        let files_path = dir.join(crate::FILES_BIN);
-        let lexicon_path = dir.join(crate::LEXICON_BIN);
-        let postings_path = dir.join(crate::POSTINGS_BIN);
-        let grams_path = dir.join(crate::GRAMS_BIN);
+        let files_path = dir.join(super::FILES_BIN);
+        let lexicon_path = dir.join(super::LEXICON_BIN);
+        let postings_path = dir.join(super::POSTINGS_BIN);
+        let grams_path = dir.join(super::GRAMS_BIN);
 
         let ((fr, lr), (pr, gr)) = rayon::join(
             || {

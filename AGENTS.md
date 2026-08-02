@@ -44,16 +44,38 @@ evidence for performance PRs.
 | `crates/core/src/index/ngram/` | N-gram `Index` impl (first shipped kind) |
 | `crates/core/src/search/` | Query, Searcher, Origin, SearchMode, report/events |
 | `crates/core/src/corpus/` | `File`, `FileFilter`, `FileOrder`, walk |
-| `crates/cli/` | `sift-cli`: `sift` binary (clap CLI over core) |
+| `crates/cli/` | `sift-grep`: `sift` / `sift-daemon` binaries (clap CLI over core) |
 | `fuzz/` | `cargo-fuzz` targets (standalone package, nightly) |
 | `benchsuite/` | Comparative `rg` vs `sift` benchmarks |
 | `scripts/` | `fuzz.sh`, `install.sh`, `release.sh` |
 | `skills/` | Agent usage skill for searching with `sift` (`npx skills`); CLI development → `crates/cli/AGENTS.md` |
 | `docs/` | Performance snapshots, compatibility matrix |
 
+## Domain nouns
+
+| Type | Module | Role |
+|------|--------|------|
+| `Indexes` | `index` | `.sift` directory: meta + current snapshot; `open` / `load` / `build` / `update` |
+| `Snapshot` | `index/snapshot` | Committed opened indexes, lease, and `Files` |
+| `Files` | `index` | Snapshot-owned `FileId → File` map |
+| `Index` | `index` trait + `ngram` | Opened index only |
+| `IndexRecord` | `index` | Catalog knobs; `build` / `open` → `Box<dyn Index>` |
+| `Plan` | `candidates` | Pure discovery decision |
+| `Candidates` | `candidates` | Output of `Plan::resolve` |
+| `Query` | `search` | Patterns + options |
+| `Searcher` | `search` | `Searcher::new(Query)` + `execute` |
+| `Report` | `search` | Listing + optional stats |
+| `File` | `corpus` | Indexed path identity |
+| `Origin` | `search` | `File` or `Stream { label }` search identity |
+| `Run` | `cli/grep` | Resolved search intent; `execute` (no `Argv`) |
+| `IndexJob` | `cli/index` | Resolved index lifecycle; `run` |
+| `Daemon` | `cli/index/daemon` | Background work; modules `ipc`, `watcher`, `refresh` |
+
+Values (not aggregates): `StoreMeta`, `IndexConfig`, `SearchMode`, `StatsMode`, `Scan` / `ScanScope`, `FileFilter`, `FileOrder`, `Coverage`. Printing stays under `cli/format`.
+
 ## Key Conventions
 
-- **No `unsafe`** except in `index/mmap.rs` (documented safety invariant).
+- **No `unsafe`** except in `index/mmap.rs` (documented safety invariant). Workspace does not deny `unsafe_code` so mmap needs no `#[allow]`.
 - **Strict clippy:** workspace uses `pedantic + nursery + cargo` warnings; CI uses `-D warnings`.
 - Fix lints at the root cause. `#[allow]` is **never** permitted.
 - **Never** add free helper functions or callback/`FnOnce` APIs (see Function
@@ -77,7 +99,7 @@ Use short, descriptive kebab-case with a type prefix:
 
 ## Core API Entry Points
 
-`Indexes::open(dir, meta)` (lifecycle) / `Indexes::load(dir) -> Result<Option<Indexes>>` (search) → `build` / `update` → `Plan::resolve` → `Searcher::execute`. CLI: `IndexJob::run` / `SnapshotRefresh::run` for lifecycle; `Run::execute` for search. See `crates/core/README.md`.
+`Indexes::open(dir, meta)` (lifecycle) / `Indexes::load(dir) -> Result<Option<Indexes>>` (search) → `build` / `update` → `Plan::resolve` → `Searcher::execute`. CLI: `IndexJob::run` / `SnapshotRefresh::run` for lifecycle; `Run::execute` for search; `Daemon` / `DaemonOrchestrator` for background refresh. See `crates/core/README.md`.
 
 ## Index layer
 
@@ -338,4 +360,5 @@ Clap parses `*Decl` flag groups; **`Argv` resolves effective runtime values**
 
 ## Learned Workspace Facts
 
-- Core search lives under `crates/core/src/search/` (`Query`, `Searcher`, `Plan`, `SearchInputs`, `SearchError`); there is no `sift_core::grep` module or `Grep` facade. The CLI may still keep a local `grep` module for `Run`.
+- Core search lives under `crates/core/src/search/` (`Query`, `Searcher`, `Origin`, `SearchInputs`, `SearchError`); `Plan` lives under `candidates/`. There is no `sift_core::grep` module or `Grep` facade. The CLI keeps a local `grep` module for `Run`.
+- Daemon IPC is enum-shaped (`DaemonRequest` / `DaemonResponse`); accept loop forwards `Event::Client` — no `FnMut` handler API.

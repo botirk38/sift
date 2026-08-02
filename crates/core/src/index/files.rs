@@ -20,7 +20,8 @@ impl Files {
     ///
     /// Returns an error if the file table is missing or malformed.
     pub(crate) fn open(index_dir: &Path, root: PathBuf) -> crate::Result<Self> {
-        let table = FileTable::open(&index_dir.join(crate::FILES_BIN)).map_err(crate::Error::Io)?;
+        let table = FileTable::open(&index_dir.join(crate::index::ngram::FILES_BIN))
+            .map_err(crate::Error::Io)?;
         table.validate_paths().map_err(crate::Error::Io)?;
         Ok(Self { root, table })
     }

@@ -27,7 +27,7 @@ builds the same dimensions as grep/candidates.
 | Target | Groups (filter ids) | `iter` measures |
 |--------|---------------------|-----------------|
 | `query` | `query_compile/*` | `Searcher` construction |
-| `index` | build / open / update / candidates / explain | named lifecycle op |
+| `index` | build / open / update / candidates | named lifecycle op |
 | `grep` | `grep_search/*`, `grep_pipeline/*`, `grep_walk_tiny/*` | search-only, plan+search, tiny walk |
 | `candidates` | `candidate_planner/*`, `candidate_planner_tiny/*` | `Plan::resolve` |
 

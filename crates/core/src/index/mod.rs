@@ -16,7 +16,7 @@ pub use config::{CorpusKind, CorpusSpec, IndexConfig, IndexWalkConfig};
 pub use error::IndexError;
 pub use files::Files;
 pub use indexes::Indexes;
-pub use kinds::{FileId, IndexId, PlanMode, QueryPlanOutput};
+pub use kinds::FileId;
 pub use meta::{CorpusMeta, FilterMeta, IndexCoverage, StoreMeta, WalkMeta};
 pub use paths::IndexedCorpus;
 pub use record::{Index, IndexRecord};
@@ -54,12 +54,6 @@ mod tests {
     fn file_id_new_and_get() {
         let id = FileId::new(42);
         assert_eq!(id.get(), 42);
-    }
-
-    #[test]
-    fn index_id_new_and_get() {
-        let id = IndexId::new(7);
-        assert_eq!(id.get(), 7);
     }
 
     #[test]
