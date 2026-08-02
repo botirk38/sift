@@ -93,14 +93,14 @@ impl IndexRefresh<'_> {
     pub(super) fn apply_index(
         &self,
         paths: Vec<PathBuf>,
-        response: &mpsc::Sender<DaemonResponse>,
+        reply: &mpsc::Sender<DaemonResponse>,
         watcher: &mut CorpusWatcher,
         store: &Path,
         phase: &mut Phase,
     ) -> Result<(), DaemonError> {
         watcher.rebind(store)?;
         PendingIndex::lock(self.pending)?.push(paths);
-        let _ = response.send(DaemonResponse::Accepted);
+        let _ = reply.send(DaemonResponse::Accepted);
         if phase.is_refreshing() {
             *phase = Phase::Refreshing {
                 follow_up: RefreshFollowUp::Queued,

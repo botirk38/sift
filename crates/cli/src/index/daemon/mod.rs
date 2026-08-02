@@ -20,7 +20,7 @@ use thiserror::Error;
 use crate::grep::paths::CorpusScope;
 use crate::index::{ReconcileOutcome, SnapshotRefresh};
 
-use ipc::{ClientRequest, DaemonRequest, DaemonResponse};
+use ipc::{DaemonRequest, DaemonResponse};
 use refresh::{IndexRefresh, PendingIndex, RefreshResult, RefreshScope};
 use watcher::CorpusWatcher;
 
@@ -355,7 +355,11 @@ impl DaemonOrchestrator {
 enum Event {
     FsChange(notify::Event),
     RefreshFinished(RefreshResult),
-    Client(ClientRequest),
+    /// IPC request plus the channel the accept loop waits on for the reply.
+    Client {
+        request: DaemonRequest,
+        reply: mpsc::Sender<DaemonResponse>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -538,7 +542,10 @@ enum ChannelPoll {
     Done,
     Input(PhaseInput),
     RefreshFinished(RefreshResult),
-    Client(ClientRequest),
+    Client {
+        request: DaemonRequest,
+        reply: mpsc::Sender<DaemonResponse>,
+    },
 }
 
 struct DaemonRuntime<'a> {
@@ -570,7 +577,9 @@ impl DaemonRuntime<'_> {
 
             match self.events.poll(&self.store, self.phase, timeout) {
                 ChannelPoll::Done => return Ok(()),
-                ChannelPoll::Client(client) => self.handle_client(client)?,
+                ChannelPoll::Client { request, reply } => {
+                    self.handle_client(request, &reply)?;
+                }
                 ChannelPoll::RefreshFinished(result) => self.finish_refresh(&result),
                 ChannelPoll::Input(input) => {
                     if self.advance(input)? {
@@ -582,14 +591,18 @@ impl DaemonRuntime<'_> {
         }
     }
 
-    fn handle_client(&mut self, client: ClientRequest) -> Result<(), DaemonError> {
-        match client.request {
+    fn handle_client(
+        &mut self,
+        request: DaemonRequest,
+        reply: &mpsc::Sender<DaemonResponse>,
+    ) -> Result<(), DaemonError> {
+        match request {
             DaemonRequest::ValidateSnapshot(id) => {
                 let response = {
                     let pending = PendingIndex::lock(self.pending)?;
                     self.ingest.validate_snapshot(&id, self.phase, &pending)
                 };
-                let _ = client.response.send(response);
+                let _ = reply.send(response);
             }
             DaemonRequest::Index(paths) => {
                 self.ingest.observe();
@@ -602,7 +615,7 @@ impl DaemonRuntime<'_> {
                 };
                 self.refresh.apply_index(
                     paths,
-                    &client.response,
+                    reply,
                     self.watcher,
                     self.store.canonical,
                     self.phase,
@@ -665,7 +678,7 @@ impl EventChannel<'_> {
                 }
             }
             Ok(Event::RefreshFinished(result)) => ChannelPoll::RefreshFinished(result),
-            Ok(Event::Client(client)) => ChannelPoll::Client(client),
+            Ok(Event::Client { request, reply }) => ChannelPoll::Client { request, reply },
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if phase.deadline().is_some_and(|d| Instant::now() >= d) {
                     ChannelPoll::Input(PhaseInput::DeadlineReached)

@@ -175,11 +175,6 @@ impl DaemonResponse {
     }
 }
 
-pub(super) struct ClientRequest {
-    pub(super) request: DaemonRequest,
-    pub(super) response: mpsc::Sender<DaemonResponse>,
-}
-
 /// Handle to the index daemon for a `.sift` store directory.
 #[derive(Debug, Clone)]
 pub struct Daemon {
@@ -265,19 +260,13 @@ impl Daemon {
                     continue;
                 }
             };
-            let (response_tx, response_rx) = mpsc::channel();
-            if events
-                .send(Event::Client(ClientRequest {
-                    request,
-                    response: response_tx,
-                }))
-                .is_err()
-            {
+            let (reply, reply_rx) = mpsc::channel();
+            if events.send(Event::Client { request, reply }).is_err() {
                 let _ = DaemonResponse::Error("daemon stopped accepting requests".into())
                     .encode(&mut stream);
                 break;
             }
-            match response_rx.recv() {
+            match reply_rx.recv() {
                 Ok(response) => {
                     let _ = response.encode(&mut stream);
                 }
