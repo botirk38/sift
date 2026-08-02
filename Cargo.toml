@@ -17,9 +17,8 @@ keywords = ["grep", "regex", "search", "index", "codebase"]
 categories = ["command-line-utilities", "development-tools"]
 
 # Shared lint levels (members use `[lints] workspace = true`).
-[workspace.lints.rust]
-unsafe_code = "deny"
-
+# `unsafe_code` is not denied: the only `unsafe` lives in `index/mmap.rs` with a
+# documented invariant. Denying it would require a forbidden `#[allow]`.
 [workspace.lints.clippy]
 # Deny here so `cargo clippy` matches CI; `-D warnings` still catches rustc lints.
 # Group priority -1 lets individual lint overrides (e.g. below) take precedence.

@@ -1,19 +1,16 @@
 //! Background index refresh daemon: CLI spawn/IPC and server event loop.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-use std::io::{self, Read, Write};
+mod ipc;
+mod refresh;
+mod watcher;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use fslock::LockFile;
-use interprocess::local_socket::traits::{ListenerExt, Stream as _};
-use interprocess::local_socket::{GenericNamespaced, Listener, ListenerOptions, Stream, ToNsName};
-use notify::RecursiveMode;
-use notify::Watcher;
 use sift_core::{
     CorpusKind, CorpusMeta, FilterMeta, IndexCoverage, IndexRecord, Indexes, SnapshotId, StoreMeta,
     WalkMeta,
@@ -22,6 +19,12 @@ use thiserror::Error;
 
 use crate::grep::paths::CorpusScope;
 use crate::index::{ReconcileOutcome, SnapshotRefresh};
+
+use ipc::{ClientRequest, DaemonRequest, DaemonResponse};
+use refresh::{IndexRefresh, PendingIndex, RefreshResult, RefreshScope};
+use watcher::CorpusWatcher;
+
+pub use ipc::Daemon;
 
 pub(crate) const DAEMON_LOCK: &str = "lock";
 const READY_DIR: &str = "daemon-ready";
@@ -63,280 +66,6 @@ pub struct ServeConfig {
     /// Internal spawn handshake file, written once the watcher is active.
     pub ready: Option<PathBuf>,
     pub idle_timeout: Duration,
-}
-
-/// IPC request sent to the index daemon.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum DaemonRequest {
-    /// Rel-paths to index. Empty vec = full corpus.
-    Index(Vec<PathBuf>),
-    /// Validate that an opened snapshot is the daemon's committed read version.
-    ValidateSnapshot(SnapshotId),
-}
-
-impl DaemonRequest {
-    const INDEX_OPCODE: u8 = 0x02;
-    const VALIDATE_SNAPSHOT_OPCODE: u8 = 0x03;
-
-    #[must_use]
-    pub const fn index(paths: Vec<PathBuf>) -> Self {
-        Self::Index(paths)
-    }
-
-    #[must_use]
-    pub const fn validate_snapshot(id: SnapshotId) -> Self {
-        Self::ValidateSnapshot(id)
-    }
-
-    /// Encode this operation for IPC.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if writing fails.
-    pub fn encode(&self, writer: &mut impl Write) -> io::Result<()> {
-        match self {
-            Self::Index(paths) => {
-                writer.write_all(&[Self::INDEX_OPCODE])?;
-                for path in paths {
-                    let line = path.to_string_lossy();
-                    writer.write_all(line.as_bytes())?;
-                    writer.write_all(b"\n")?;
-                }
-                writer.write_all(b"\n")?;
-            }
-            Self::ValidateSnapshot(id) => {
-                writer.write_all(&[Self::VALIDATE_SNAPSHOT_OPCODE])?;
-                writer.write_all(id.as_str().as_bytes())?;
-                writer.write_all(b"\n")?;
-            }
-        }
-        writer.flush()
-    }
-
-    /// Decode a daemon operation from IPC.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the payload is malformed.
-    pub fn decode(mut reader: impl Read) -> io::Result<Self> {
-        let mut opcode = [0_u8; 1];
-        reader.read_exact(&mut opcode)?;
-        match opcode[0] {
-            Self::INDEX_OPCODE => {
-                let mut paths = Vec::new();
-                loop {
-                    let mut buf = Vec::new();
-                    loop {
-                        let mut byte = [0_u8; 1];
-                        let n = reader.read(&mut byte)?;
-                        if n == 0 || byte[0] == b'\n' {
-                            break;
-                        }
-                        buf.push(byte[0]);
-                    }
-                    if buf.is_empty() {
-                        break;
-                    }
-                    let line = String::from_utf8(buf).map_err(|_| {
-                        io::Error::new(io::ErrorKind::InvalidData, "index path is not valid utf-8")
-                    })?;
-                    paths.push(PathBuf::from(line));
-                }
-                Ok(Self::Index(paths))
-            }
-            Self::VALIDATE_SNAPSHOT_OPCODE => {
-                let mut buf = Vec::new();
-                loop {
-                    let mut byte = [0_u8; 1];
-                    let n = reader.read(&mut byte)?;
-                    if n == 0 || byte[0] == b'\n' {
-                        break;
-                    }
-                    buf.push(byte[0]);
-                }
-                let id = String::from_utf8(buf).map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidData, "snapshot id is not valid utf-8")
-                })?;
-                Ok(Self::ValidateSnapshot(SnapshotId::new(id)))
-            }
-            other => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unknown daemon opcode: {other}"),
-            )),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum DaemonResponse {
-    Accepted,
-    SnapshotValid,
-    SnapshotBehind,
-    Error(String),
-}
-
-impl DaemonResponse {
-    const ACCEPTED: u8 = 0x00;
-    const SNAPSHOT_VALID: u8 = 0x01;
-    const SNAPSHOT_BEHIND: u8 = 0x02;
-    const ERROR: u8 = 0xff;
-
-    fn encode(&self, writer: &mut impl Write) -> io::Result<()> {
-        match self {
-            Self::Accepted => writer.write_all(&[Self::ACCEPTED])?,
-            Self::SnapshotValid => writer.write_all(&[Self::SNAPSHOT_VALID])?,
-            Self::SnapshotBehind => writer.write_all(&[Self::SNAPSHOT_BEHIND])?,
-            Self::Error(message) => {
-                writer.write_all(&[Self::ERROR])?;
-                writer.write_all(message.as_bytes())?;
-                writer.write_all(b"\n")?;
-            }
-        }
-        writer.flush()
-    }
-
-    fn decode(mut reader: impl Read) -> io::Result<Self> {
-        let mut opcode = [0_u8; 1];
-        reader.read_exact(&mut opcode)?;
-        match opcode[0] {
-            Self::ACCEPTED => Ok(Self::Accepted),
-            Self::SNAPSHOT_VALID => Ok(Self::SnapshotValid),
-            Self::SNAPSHOT_BEHIND => Ok(Self::SnapshotBehind),
-            Self::ERROR => {
-                let mut buf = Vec::new();
-                loop {
-                    let mut byte = [0_u8; 1];
-                    let n = reader.read(&mut byte)?;
-                    if n == 0 || byte[0] == b'\n' {
-                        break;
-                    }
-                    buf.push(byte[0]);
-                }
-                let message = String::from_utf8(buf).map_err(|_| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "daemon error is not valid utf-8",
-                    )
-                })?;
-                Ok(Self::Error(message))
-            }
-            other => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unknown daemon response: {other}"),
-            )),
-        }
-    }
-}
-
-/// Handle to the index daemon for a `.sift` store directory.
-#[derive(Debug, Clone)]
-pub struct Daemon {
-    pub(crate) sift_dir: PathBuf,
-}
-
-impl Daemon {
-    /// Client handle for the sift CLI (search / index commands).
-    #[must_use]
-    pub const fn new(sift_dir: PathBuf) -> Self {
-        Self { sift_dir }
-    }
-
-    /// Queue index work. Empty `paths` = full corpus reconcile.
-    ///
-    /// # Errors
-    ///
-    /// Propagates spawn and IPC failures.
-    pub fn index(&self, paths: Vec<PathBuf>) -> Result<(), DaemonError> {
-        self.invoke(&DaemonRequest::index(paths))
-            .and_then(|response| match response {
-                DaemonResponse::Accepted => Ok(()),
-                DaemonResponse::Error(message) => Err(DaemonError::message(message)),
-                DaemonResponse::SnapshotValid | DaemonResponse::SnapshotBehind => {
-                    Err(DaemonError::message("daemon returned unexpected response"))
-                }
-            })
-    }
-
-    /// Check whether this exact snapshot is a valid daemon read version.
-    ///
-    /// # Errors
-    ///
-    /// Propagates spawn and IPC failures.
-    pub fn validate_snapshot(&self, id: &SnapshotId) -> Result<bool, DaemonError> {
-        self.invoke(&DaemonRequest::validate_snapshot(id.clone()))
-            .and_then(|response| match response {
-                DaemonResponse::SnapshotValid => Ok(true),
-                DaemonResponse::SnapshotBehind => Ok(false),
-                DaemonResponse::Error(message) => Err(DaemonError::message(message)),
-                DaemonResponse::Accepted => {
-                    Err(DaemonError::message("daemon returned unexpected response"))
-                }
-            })
-    }
-
-    pub(crate) fn reachable(&self) -> Result<bool, DaemonError> {
-        let name = self.ipc_name()?;
-        Ok(Stream::connect(name).is_ok())
-    }
-
-    pub(crate) fn ipc_name(
-        &self,
-    ) -> Result<interprocess::local_socket::Name<'static>, DaemonError> {
-        let canonical = self
-            .sift_dir
-            .canonicalize()
-            .unwrap_or_else(|_| self.sift_dir.clone());
-        let mut hasher = DefaultHasher::new();
-        canonical.hash(&mut hasher);
-        format!("sift-{:016x}", hasher.finish())
-            .to_ns_name::<GenericNamespaced>()
-            .map_err(DaemonError::Io)
-    }
-
-    fn bind_listener(&self) -> Result<Listener, DaemonError> {
-        ListenerOptions::new()
-            .name(self.ipc_name()?)
-            .try_overwrite(true)
-            .create_sync()
-            .map_err(DaemonError::Io)
-    }
-
-    fn serve_listener(
-        listener: &Listener,
-        mut handler: impl FnMut(DaemonRequest) -> Option<DaemonResponse> + Send + 'static,
-    ) {
-        for stream in listener.incoming().flatten() {
-            let mut stream = stream;
-            let request = match DaemonRequest::decode(&mut stream) {
-                Ok(op) => op,
-                Err(e) => {
-                    let _ = DaemonResponse::Error(e.to_string()).encode(&mut stream);
-                    eprintln!("sift-daemon: ipc decode failed: {e}");
-                    continue;
-                }
-            };
-            let response = handler(request).unwrap_or_else(|| {
-                DaemonResponse::Error("daemon stopped accepting requests".into())
-            });
-            let _ = response.encode(&mut stream);
-        }
-    }
-
-    fn invoke(&self, request: &DaemonRequest) -> Result<DaemonResponse, DaemonError> {
-        DaemonOrchestrator::new(self.sift_dir.clone(), None).start()?;
-        let mut stream = Stream::connect(self.ipc_name()?).map_err(DaemonError::Io)?;
-        request.encode(&mut stream)?;
-        DaemonResponse::decode(&mut stream).map_err(DaemonError::Io)
-    }
-
-    /// Resolve the `sift-daemon` binary for spawn and integration tests.
-    ///
-    /// # Errors
-    ///
-    /// Returns an IO error if the current executable path cannot be read.
-    pub fn executable() -> Result<PathBuf, DaemonError> {
-        DaemonOrchestrator::executable()
-    }
 }
 
 /// Owns daemon process lifecycle and server runtime.
@@ -414,13 +143,7 @@ impl DaemonOrchestrator {
         let ipc_daemon = Daemon::new(sift_dir.clone());
         let listener = ipc_daemon.bind_listener()?;
         std::thread::spawn(move || {
-            Daemon::serve_listener(&listener, move |request| {
-                let (response, rx) = mpsc::channel();
-                ipc_tx
-                    .send(Event::Client(ClientRequest { request, response }))
-                    .ok()?;
-                rx.recv().ok()
-            });
+            Daemon::accept_clients(&listener, &ipc_tx);
         });
 
         if let Some(ready) = config.ready {
@@ -635,16 +358,6 @@ enum Event {
     Client(ClientRequest),
 }
 
-struct ClientRequest {
-    request: DaemonRequest,
-    response: mpsc::Sender<DaemonResponse>,
-}
-
-enum RefreshResult {
-    Success(ReconcileOutcome),
-    Failed,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PhaseInput {
     FsChange,
@@ -660,12 +373,12 @@ enum LoopAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RefreshFollowUp {
+pub(super) enum RefreshFollowUp {
     None,
     Queued,
 }
 
-enum Phase {
+pub(super) enum Phase {
     Idle { deadline: Instant },
     Debouncing { deadline: Instant },
     Refreshing { follow_up: RefreshFollowUp },
@@ -795,76 +508,13 @@ impl IngestTracker {
     }
 }
 
-enum PendingIndex {
-    None,
-    Full,
-    Paths(Vec<PathBuf>),
-}
-
-impl PendingIndex {
-    fn lock(pending: &Arc<Mutex<Self>>) -> Result<MutexGuard<'_, Self>, DaemonError> {
-        pending
-            .lock()
-            .map_err(|_| DaemonError::message("daemon pending queue lock poisoned"))
-    }
-
-    fn push(&mut self, paths: Vec<PathBuf>) {
-        if paths.is_empty() {
-            *self = Self::Full;
-            return;
-        }
-        match self {
-            Self::Full => {}
-            Self::None => *self = Self::Paths(paths),
-            Self::Paths(existing) => {
-                for path in paths {
-                    if !existing.contains(&path) {
-                        existing.push(path);
-                    }
-                }
-            }
-        }
-    }
-
-    const fn is_pending(&self) -> bool {
-        !matches!(self, Self::None)
-    }
-
-    fn take(&mut self) -> Option<Vec<PathBuf>> {
-        match std::mem::replace(self, Self::None) {
-            Self::None => None,
-            Self::Full => Some(Vec::new()),
-            Self::Paths(paths) => Some(paths),
-        }
-    }
-
-    fn reconcile(&mut self, sift_dir: &Path, meta: &StoreMeta) -> Option<ReconcileOutcome> {
-        let paths = self.take()?;
-        let result = Indexes::open(sift_dir, meta)
-            .and_then(|mut indexes| SnapshotRefresh::new(sift_dir, meta).run(&mut indexes));
-        match result {
-            Ok(outcome) => Some(outcome),
-            Err(e) => {
-                eprintln!("sift-daemon: refresh failed: {e}");
-                self.push(paths);
-                None
-            }
-        }
-    }
-}
-
-enum RefreshScope {
-    CorpusAndPending,
-    PendingOnly,
-}
-
-struct StorePaths<'a> {
+pub(super) struct StorePaths<'a> {
     canonical: &'a Path,
     raw: &'a Path,
 }
 
 impl StorePaths<'_> {
-    fn read_meta(sift_dir: &Path) -> Result<StoreMeta, DaemonError> {
+    pub(super) fn read_meta(sift_dir: &Path) -> Result<StoreMeta, DaemonError> {
         let mut meta = StoreMeta::read(sift_dir)
             .map_err(|e| DaemonError::message(format!("no store metadata: {e}")))?;
         if meta.indexes.is_empty() {
@@ -1025,140 +675,6 @@ impl EventChannel<'_> {
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => ChannelPoll::Done,
         }
-    }
-}
-
-#[cfg(windows)]
-type PlatformWatcher = notify::PollWatcher;
-
-#[cfg(not(windows))]
-type PlatformWatcher = notify::RecommendedWatcher;
-
-struct CorpusWatcher {
-    platform: PlatformWatcher,
-    root: PathBuf,
-}
-
-impl CorpusWatcher {
-    fn new(events: &mpsc::Sender<Event>, root: &Path) -> Result<Self, DaemonError> {
-        #[cfg(windows)]
-        let config =
-            notify::Config::default().with_poll_interval(Duration::from_millis(DEBOUNCE_MS));
-        #[cfg(not(windows))]
-        let config = notify::Config::default();
-        let platform = PlatformWatcher::new(
-            {
-                let events = events.clone();
-                move |res: Result<notify::Event, notify::Error>| {
-                    if let Ok(event) = res {
-                        let _ = events.send(Event::FsChange(event));
-                    }
-                }
-            },
-            config,
-        )
-        .map_err(|e| DaemonError::message(e.to_string()))?;
-        let mut watcher = Self {
-            platform,
-            root: root.to_path_buf(),
-        };
-        watcher.watch(root)?;
-        Ok(watcher)
-    }
-
-    fn watch(&mut self, root: &Path) -> Result<(), DaemonError> {
-        self.platform
-            .watch(root, RecursiveMode::Recursive)
-            .map_err(|e| DaemonError::message(e.to_string()))
-    }
-
-    fn rebind(&mut self, store: &Path) -> Result<(), DaemonError> {
-        let meta = StorePaths::read_meta(store)?;
-        let root = meta.corpus.root;
-        if root == self.root {
-            return Ok(());
-        }
-        let _ = self.platform.unwatch(self.root.as_path());
-        self.watch(&root)?;
-        self.root = root;
-        Ok(())
-    }
-}
-
-struct IndexRefresh<'a> {
-    tx: &'a mpsc::Sender<Event>,
-    store: &'a Path,
-    pending: &'a Arc<Mutex<PendingIndex>>,
-}
-
-impl IndexRefresh<'_> {
-    fn apply_index(
-        &self,
-        paths: Vec<PathBuf>,
-        response: &mpsc::Sender<DaemonResponse>,
-        watcher: &mut CorpusWatcher,
-        store: &Path,
-        phase: &mut Phase,
-    ) -> Result<(), DaemonError> {
-        watcher.rebind(store)?;
-        PendingIndex::lock(self.pending)?.push(paths);
-        let _ = response.send(DaemonResponse::Accepted);
-        if phase.is_refreshing() {
-            *phase = Phase::Refreshing {
-                follow_up: RefreshFollowUp::Queued,
-            };
-        } else {
-            self.begin(RefreshScope::CorpusAndPending, phase);
-        }
-        Ok(())
-    }
-
-    fn begin(&self, scope: RefreshScope, phase: &mut Phase) {
-        self.spawn(scope);
-        *phase = Phase::Refreshing {
-            follow_up: RefreshFollowUp::None,
-        };
-    }
-
-    fn spawn(&self, scope: RefreshScope) {
-        let tx = self.tx.clone();
-        let sift_dir = self.store.to_path_buf();
-        let pending = Arc::clone(self.pending);
-        std::thread::spawn(move || {
-            let meta = match StorePaths::read_meta(&sift_dir) {
-                Ok(meta) => meta,
-                Err(e) => {
-                    eprintln!("sift-daemon: {e}");
-                    let _ = tx.send(Event::RefreshFinished(RefreshResult::Failed));
-                    return;
-                }
-            };
-            let mut outcome = None;
-            if matches!(scope, RefreshScope::CorpusAndPending) {
-                let result = Indexes::open(&sift_dir, &meta).and_then(|mut indexes| {
-                    SnapshotRefresh::new(&sift_dir, &meta).run(&mut indexes)
-                });
-                match result {
-                    Ok(committed) => outcome = Some(committed),
-                    Err(e) => {
-                        eprintln!("sift-daemon: refresh failed: {e}");
-                        let _ = tx.send(Event::RefreshFinished(RefreshResult::Failed));
-                        return;
-                    }
-                }
-            }
-            let pending_outcome = if let Ok(mut queue) = pending.lock() {
-                queue.reconcile(&sift_dir, &meta)
-            } else {
-                eprintln!("sift-daemon: pending queue lock poisoned");
-                let _ = tx.send(Event::RefreshFinished(RefreshResult::Failed));
-                return;
-            };
-            let result = pending_outcome
-                .or(outcome)
-                .map_or(RefreshResult::Failed, RefreshResult::Success);
-            let _ = tx.send(Event::RefreshFinished(result));
-        });
     }
 }
 

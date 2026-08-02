@@ -22,8 +22,6 @@ pub use search::{
     SearchSink, Searcher, SpanCount, Stats, StatsMode, ZeroCounts,
 };
 
-pub use ignore::{Walk, WalkBuilder};
-
 pub use index::config::IndexWalkConfig;
 pub use index::meta::StoreMeta;
 pub use index::ngram::{
@@ -31,17 +29,13 @@ pub use index::ngram::{
 };
 pub use index::{
     CorpusKind, CorpusMeta, CorpusSpec, FileId, Files, FilterMeta, Index, IndexConfig,
-    IndexCoverage, IndexDestination, IndexError, IndexId, IndexRecord, IndexedCorpus, Indexes,
-    PlanMode, QueryPlanOutput, SnapshotId, WalkMeta,
+    IndexCoverage, IndexDestination, IndexError, IndexRecord, IndexedCorpus, Indexes, SnapshotId,
+    WalkMeta,
 };
 
 use thiserror::Error;
 
 pub const SIFT_DIR: &str = ".sift";
-pub const FILES_BIN: &str = "files.bin";
-pub const LEXICON_BIN: &str = "lexicon.bin";
-pub const POSTINGS_BIN: &str = "postings.bin";
-pub const GRAMS_BIN: &str = "grams.bin";
 
 /// Top-level umbrella error for all core operations.
 #[derive(Debug, Error)]

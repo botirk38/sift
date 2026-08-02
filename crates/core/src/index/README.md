@@ -28,7 +28,7 @@ index/
 | [`indexes.rs`](indexes.rs) | `Indexes` orchestrator |
 | [`files.rs`](files.rs) | Snapshot `Files` |
 | [`snapshot/`](snapshot/) | Snapshot persistence |
-| [`kinds.rs`](kinds.rs) | `FileId`, `IndexId`, plan output types |
+| [`kinds.rs`](kinds.rs) | `FileId` |
 | [`paths.rs`](paths.rs) | `IndexedCorpus` |
 | [`config.rs`](config.rs) | `IndexConfig` (corpus write inputs), `CorpusSpec` |
 | [`meta.rs`](meta.rs) | `StoreMeta` |
@@ -45,7 +45,7 @@ let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
 indexes.build(&catalog, &config)?;
 ```
 
-Resolve candidates through `Grep::resolve_candidates`.
+Resolve candidates through `Plan::resolve`.
 
 ## Adding a New Index Kind
 

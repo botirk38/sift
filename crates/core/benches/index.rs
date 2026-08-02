@@ -682,34 +682,9 @@ fn bench_candidates(c: &mut Criterion) {
     g.finish();
 }
 
-// ─── Explain benches ─────────────────────────────────────────────────────────
-
-fn bench_explain(c: &mut Criterion) {
-    let fixture = open_large_index();
-    let index = fixture.1;
-
-    let mut g = c.benchmark_group("index_explain");
-
-    g.bench_function("indexed_mode", |b| {
-        let query = Query::new(vec!["beta".to_string()], SearchOptions::default()).unwrap();
-        b.iter(|| black_box(index.explain(&query)));
-    });
-
-    g.bench_function("full_scan_mode", |b| {
-        let query = Query::new(
-            vec![r"\w{5}\s+\w{5}\s+\w{5}\s+\w{5}\s+\w{5}".to_string()],
-            SearchOptions::default(),
-        )
-        .unwrap();
-        b.iter(|| black_box(index.explain(&query)));
-    });
-
-    g.finish();
-}
-
 criterion_group! {
     name = benches;
     config = sift_criterion();
-    targets = bench_index_build, bench_index_update, bench_index_open, bench_indexes_open, bench_index_save_reopen, bench_trigram_index_methods, bench_candidates, bench_explain,
+    targets = bench_index_build, bench_index_update, bench_index_open, bench_indexes_open, bench_index_save_reopen, bench_trigram_index_methods, bench_candidates,
 }
 criterion_main!(benches);
