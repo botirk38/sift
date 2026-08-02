@@ -423,9 +423,9 @@ dependencies = [
 
 [[package]]
 name = "grep-pcre2"
-version = "0.1.9"
+version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "667bb90a3ee51f8f6e2aadf1d0f106ea42efca4cf28f0e71f0fdec1137d7f9b0"
+checksum = "b752bb6f57dd3716e55b63a33ca05b5825c3d66cd427468874a5564af6ca365c"
 dependencies = [
  "grep-matcher",
  "log",
