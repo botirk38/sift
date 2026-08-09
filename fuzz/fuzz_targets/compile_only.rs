@@ -1,16 +1,13 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use sift_core::search::{SearchFlags, SearchOptions, SearchQueryBuilder, Searcher};
+use sift_core::search::{Query, SearchFlags, SearchOptions, Searcher};
 
 /// Static branches combined with random bytes to stress alternation and flag shaping.
 const STATIC_BRANCHES: &[&str] = &[r"a.c", r"foo|bar", r"^line$", r"\bword\b", "(", r"[", ""];
 
 fn compile_with_flags(patterns: &[String], opts: &SearchOptions) {
-    let Ok(query) = SearchQueryBuilder::new(patterns.to_vec())
-        .options(opts.clone())
-        .build()
-    else {
+    let Ok(query) = Query::new(patterns.to_vec(), opts.clone()) else {
         return;
     };
     let _ = Searcher::new(query);

@@ -20,7 +20,7 @@ use common::assert_success;
 use common::normalize;
 use common::normalize_stderr;
 use common::normalize_stdout;
-use sift_core::grep::VisibilityConfig;
+use sift_core::VisibilityConfig;
 use sift_core::{
     CorpusKind, CorpusMeta, FilterMeta, GramWidth, IndexCoverage, IndexRecord, Indexes, SnapshotId,
     StoreMeta, WalkMeta,

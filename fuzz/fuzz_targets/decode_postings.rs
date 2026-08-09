@@ -11,7 +11,7 @@
 //! over-allocate, or read out of bounds.
 
 use libfuzzer_sys::fuzz_target;
-use sift_core::grep::VisibilityConfig;
+use sift_core::VisibilityConfig;
 use sift_core::{
     CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramWidth, IndexConfig, IndexCoverage,
     IndexRecord, IndexWalkConfig, Indexes, NGramIndex, StoreMeta, WalkMeta,
@@ -50,9 +50,12 @@ fn harness() -> &'static Harness {
             walk: IndexWalkConfig::new(false),
             visibility: VisibilityConfig::default(),
         };
-        NGramIndex::new()
-            .width(GramWidth::TRIGRAM)
-            .build(&config, &trigram_dir, &[])
+        NGramIndex::build(
+            GramWidth::TRIGRAM,
+            sift_core::GramNorm::Identity,
+            sift_core::IndexDestination::Directory(&trigram_dir),
+            &config,
+        )
             .expect("build_index");
         let postings = trigram_dir.join("postings.bin");
         let magic = fs::read(&postings).expect("read postings")[..8].to_vec();

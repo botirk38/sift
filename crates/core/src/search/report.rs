@@ -47,7 +47,9 @@ impl Report {
 
         let stats = summary.stats.collect().then_some(Stats {
             matches: match summary.mode {
-                SearchMode::FilesWithMatches | SearchMode::FilesWithoutMatch => MatchTotals::None,
+                SearchMode::FilesWithMatches
+                | SearchMode::FilesWithoutMatch
+                | SearchMode::Paths => MatchTotals::None,
                 SearchMode::CountMatches { .. } | SearchMode::Matches => {
                     MatchTotals::Spans(match_spans)
                 }

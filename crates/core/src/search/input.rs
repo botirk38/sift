@@ -1,105 +1,133 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use crate::corpus::Candidate;
-use crate::corpus::candidate::PathDisplay;
+use crate::corpus::{File, PathDisplay};
 
-/// How the corpus-relative hit path relates to the display path.
-///
-/// Relative path display reuses [`InputIdentity::display_path`] as the hit path
-/// without a second allocation. Absolute display still owns a distinct relative
-/// path for hit tracking.
+/// Shared identity for inputs, listing rows, and search events.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HitPath {
-    /// No corpus path (stdin / anonymous bytes).
-    Absent,
-    /// Hit path equals [`InputIdentity::display_path`].
-    Display,
-    /// Distinct owned path (corpus-relative when display is absolute).
-    Owned(PathBuf),
+pub enum Origin {
+    File(Arc<File>),
+    Stream { label: Arc<str> },
 }
 
-#[derive(Debug, Clone)]
-pub struct InputIdentity {
-    pub display_path: PathBuf,
-    /// Corpus hit path relative to how [`Self::display_path`] is shown.
-    pub corpus_hit: HitPath,
-    pub byte_len: Option<u64>,
+impl Origin {
+    #[must_use]
+    pub fn file(file: File) -> Self {
+        Self::File(Arc::new(file))
+    }
+
+    #[must_use]
+    pub fn stream(label: impl Into<Arc<str>>) -> Self {
+        Self::Stream {
+            label: label.into(),
+        }
+    }
+
+    /// Corpus-relative path for daemon / lazy index enqueue, if any.
+    #[must_use]
+    pub fn corpus_path(&self) -> Option<&Path> {
+        match self {
+            Self::File(file) => Some(file.rel_path()),
+            Self::Stream { .. } => None,
+        }
+    }
+
+    /// Absolute filesystem path when this origin is a corpus file.
+    #[must_use]
+    pub fn abs_path(&self) -> Option<&Path> {
+        match self {
+            Self::File(file) => Some(file.abs_path()),
+            Self::Stream { .. } => None,
+        }
+    }
+
+    /// Stable key for printer sets (abs path or stream label).
+    #[must_use]
+    pub fn key(&self) -> Cow<'_, str> {
+        match self {
+            Self::File(file) => file.abs_path().to_string_lossy(),
+            Self::Stream { label } => Cow::Borrowed(label),
+        }
+    }
+
+    /// Text shown to the user for this origin.
+    #[must_use]
+    pub fn display(&self, mode: PathDisplay) -> Cow<'_, str> {
+        match (self, mode) {
+            (Self::File(file), PathDisplay::Relative) => file.rel_path().to_string_lossy(),
+            (Self::File(file), PathDisplay::Absolute) => file.abs_path().to_string_lossy(),
+            (Self::Stream { label }, _) => Cow::Borrowed(label),
+        }
+    }
+
+    #[must_use]
+    pub fn cached_size(&self) -> Option<u64> {
+        match self {
+            Self::File(file) => file.cached_size(),
+            Self::Stream { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn is_explicit(&self, explicit: &[PathBuf]) -> bool {
+        match self {
+            Self::File(file) => file.is_explicit(explicit),
+            Self::Stream { .. } => true,
+        }
+    }
 }
 
 pub enum Input<'a> {
     Path {
-        path: Cow<'a, Path>,
-        identity: InputIdentity,
+        origin: Origin,
         explicit: bool,
     },
     Bytes {
-        path: Cow<'a, str>,
+        origin: Origin,
         bytes: Cow<'a, [u8]>,
-        identity: InputIdentity,
         explicit: bool,
     },
 }
 
-impl InputIdentity {
-    #[must_use]
-    pub fn from_name(name: &str) -> Self {
-        Self {
-            display_path: PathBuf::from(name),
-            corpus_hit: HitPath::Absent,
-            byte_len: None,
-        }
-    }
-
-    /// Corpus-relative hit path for reporting, if any.
-    #[must_use]
-    pub fn hit_path(&self) -> Option<&Path> {
-        match &self.corpus_hit {
-            HitPath::Absent => None,
-            HitPath::Display => Some(self.display_path.as_path()),
-            HitPath::Owned(path) => Some(path.as_path()),
-        }
-    }
-}
-
 impl Input<'_> {
-    /// Display path for matching and optional corpus rel-path for hit tracking.
     #[must_use]
-    pub fn paths(&self) -> (PathBuf, Option<PathBuf>) {
-        (
-            self.display_path().to_path_buf(),
-            self.hit_path().map(Path::to_path_buf),
-        )
-    }
-
-    #[must_use]
-    pub fn display_path(&self) -> &Path {
+    pub const fn origin(&self) -> &Origin {
         match self {
-            Self::Path { identity, .. } | Self::Bytes { identity, .. } => &identity.display_path,
+            Self::Path { origin, .. } | Self::Bytes { origin, .. } => origin,
         }
-    }
-
-    #[must_use]
-    pub const fn identity(&self) -> &InputIdentity {
-        match self {
-            Self::Path { identity, .. } | Self::Bytes { identity, .. } => identity,
-        }
-    }
-
-    #[must_use]
-    pub fn hit_path(&self) -> Option<&Path> {
-        self.identity().hit_path()
     }
 
     #[must_use]
     pub fn byte_len(&self) -> u64 {
         match self {
-            Self::Path { path, identity, .. } => identity
-                .byte_len
-                .unwrap_or_else(|| std::fs::metadata(path).map_or(0, |m| m.len())),
+            Self::Path { origin, .. } => origin.cached_size().unwrap_or_else(|| {
+                origin
+                    .abs_path()
+                    .and_then(|path| std::fs::metadata(path).ok())
+                    .map_or(0, |m| m.len())
+            }),
             Self::Bytes { bytes, .. } => u64::try_from(bytes.len()).unwrap_or(u64::MAX),
         }
     }
+}
+
+impl Input<'_> {
+    /// Open a corpus file as a path input for search.
+    #[must_use]
+    pub fn from_file(file: File, explicit: &[PathBuf]) -> Self {
+        let explicit = file.is_explicit(explicit);
+        Self::Path {
+            origin: Origin::file(file),
+            explicit,
+        }
+    }
+}
+
+pub struct ByteInput<'a> {
+    pub label: Cow<'a, str>,
+    pub bytes: Cow<'a, [u8]>,
+    pub explicit: bool,
 }
 
 pub struct Inputs<'a> {
@@ -114,43 +142,29 @@ impl<'a> Inputs<'a> {
         }
     }
 
-    pub fn push_path(&mut self, path: Cow<'a, Path>, identity: InputIdentity, explicit: bool) {
-        self.items.push(Input::Path {
-            path,
-            identity,
-            explicit,
-        });
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::with_capacity(0)
     }
 
-    pub fn push_bytes(
-        &mut self,
-        path: Cow<'a, str>,
-        bytes: Cow<'a, [u8]>,
-        identity: InputIdentity,
-    ) {
-        self.push_bytes_input(path, bytes, identity, false);
-    }
-
-    pub fn push_explicit_bytes(
-        &mut self,
-        path: Cow<'a, str>,
-        bytes: Cow<'a, [u8]>,
-        identity: InputIdentity,
-    ) {
-        self.push_bytes_input(path, bytes, identity, true);
-    }
-
-    fn push_bytes_input(
-        &mut self,
-        path: Cow<'a, str>,
-        bytes: Cow<'a, [u8]>,
-        identity: InputIdentity,
-        explicit: bool,
-    ) {
+    #[must_use]
+    pub fn with_stream(mut self, stream: ByteInput<'a>) -> Self {
         self.items.push(Input::Bytes {
-            path,
-            bytes,
-            identity,
+            origin: Origin::stream(stream.label.as_ref()),
+            bytes: stream.bytes,
+            explicit: stream.explicit,
+        });
+        self
+    }
+
+    pub fn push_path(&mut self, origin: Origin, explicit: bool) {
+        self.items.push(Input::Path { origin, explicit });
+    }
+
+    pub fn push_file_bytes(&mut self, file: File, bytes: Vec<u8>, explicit: bool) {
+        self.items.push(Input::Bytes {
+            origin: Origin::file(file),
+            bytes: Cow::Owned(bytes),
             explicit,
         });
     }
@@ -176,86 +190,11 @@ impl<'a> Inputs<'a> {
     }
 }
 
-/// Read transformed bytes that should be searched for one candidate.
-pub trait CandidateTransform: Sync {
-    /// # Errors
-    ///
-    /// Returns an error if transformed content cannot be read.
-    fn read_candidate(&self, candidate: &Candidate) -> crate::Result<Vec<u8>>;
-}
-
-/// How a discovered file is presented as a search input.
-pub struct InputConversion<'a> {
-    explicit_paths: &'a [PathBuf],
-    path_display: PathDisplay,
-    transform: Option<&'a dyn CandidateTransform>,
-}
-
-impl<'a> InputConversion<'a> {
-    #[must_use]
-    pub const fn new(
-        explicit_paths: &'a [PathBuf],
-        path_display: PathDisplay,
-        transform: Option<&'a dyn CandidateTransform>,
-    ) -> Self {
-        Self {
-            explicit_paths,
-            path_display,
-            transform,
-        }
-    }
-
-    /// Open a candidate as a searchable input.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the configured candidate transform cannot read input bytes.
-    pub fn open<'c>(&self, candidate: &'c Candidate) -> crate::Result<Input<'c>> {
-        let explicit = self.is_explicit(candidate);
-        let identity = self.identity(candidate);
-        if let Some(transform) = self.transform {
-            let bytes = transform.read_candidate(candidate)?;
-            return Ok(Input::Bytes {
-                path: Cow::Owned(candidate.abs_path().display().to_string()),
-                bytes: Cow::Owned(bytes),
-                identity,
-                explicit,
-            });
-        }
-        Ok(Input::Path {
-            path: Cow::Borrowed(candidate.abs_path()),
-            identity,
-            explicit,
-        })
-    }
-
-    fn is_explicit(&self, candidate: &Candidate) -> bool {
-        self.explicit_paths
-            .iter()
-            .any(|path| path == candidate.rel_path() || path == candidate.abs_path())
-    }
-
-    fn identity(&self, candidate: &Candidate) -> InputIdentity {
-        match self.path_display {
-            PathDisplay::Relative => InputIdentity {
-                display_path: candidate.rel_path().to_path_buf(),
-                corpus_hit: HitPath::Display,
-                byte_len: candidate.cached_size(),
-            },
-            PathDisplay::Absolute => InputIdentity {
-                display_path: candidate.abs_path().to_path_buf(),
-                corpus_hit: HitPath::Owned(candidate.rel_path().to_path_buf()),
-                byte_len: candidate.cached_size(),
-            },
-        }
-    }
-}
-
 /// Inputs ready for [`crate::search::Searcher`] execution.
 pub struct SearchInputs<'a> {
     pub candidates: crate::candidates::Candidates<'a>,
     pub streams: Inputs<'a>,
-    pub conversion: InputConversion<'a>,
+    pub explicit: &'a [PathBuf],
 }
 
 impl SearchInputs<'_> {

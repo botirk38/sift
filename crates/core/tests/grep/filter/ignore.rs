@@ -1,4 +1,4 @@
-use sift_core::grep::{CandidateFilter, CandidateFilterConfig, IgnoreConfig, VisibilityConfig};
+use sift_core::{FileFilter, FileFilterConfig, IgnoreConfig, VisibilityConfig};
 use tempfile::TempDir;
 
 use crate::common::make_filter_corpus;
@@ -8,13 +8,13 @@ fn matcher_excludes_gitignore_and_ignore_paths() {
     let tmp = TempDir::new().expect("tempdir");
     make_filter_corpus(tmp.path());
 
-    let filter = CandidateFilter::new(
-        &CandidateFilterConfig {
+    let filter = FileFilter::new(
+        &FileFilterConfig {
             visibility: VisibilityConfig {
                 ignore: IgnoreConfig::standard(),
                 ..VisibilityConfig::default()
             },
-            ..CandidateFilterConfig::default()
+            ..FileFilterConfig::default()
         },
         tmp.path(),
     )

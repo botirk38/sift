@@ -44,7 +44,7 @@ impl ColorOutput {
     }
 }
 
-pub use sift_core::grep::PathDisplay;
+pub use sift_core::PathDisplay;
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]

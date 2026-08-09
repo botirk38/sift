@@ -1,6 +1,6 @@
 use std::ops::Range;
-use std::path::Path;
-use std::sync::Arc;
+
+use crate::search::input::Origin;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchEvent {
@@ -14,12 +14,12 @@ pub enum SearchEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileEvent {
-    pub path: Arc<Path>,
+    pub origin: Origin,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatchEvent {
-    pub path: Arc<Path>,
+    pub origin: Origin,
     pub line_number: Option<u64>,
     pub absolute_byte_offset: Option<u64>,
     pub bytes: Vec<u8>,
@@ -30,7 +30,7 @@ pub struct MatchEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextEvent {
-    pub path: Arc<Path>,
+    pub origin: Origin,
     pub kind: ContextKind,
     pub line_number: Option<u64>,
     pub absolute_byte_offset: u64,
@@ -46,7 +46,7 @@ pub enum ContextKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BinaryEvent {
-    pub path: Arc<Path>,
+    pub origin: Origin,
     pub absolute_byte_offset: u64,
     pub explicit: bool,
 }
@@ -58,4 +58,12 @@ pub trait SearchSink {
     ///
     /// Returns an error if the sink cannot accept the event.
     fn event(&mut self, event: SearchEvent) -> crate::Result<()>;
+}
+
+/// Whether search records semantic events.
+pub enum Events<'a> {
+    /// Drop events during search.
+    Discard,
+    /// Buffer events during search, then deliver to the sink.
+    Emit(&'a mut dyn SearchSink),
 }

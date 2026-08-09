@@ -1,53 +1,38 @@
 use std::path::PathBuf;
 
-use sift_core::candidates::{CandidateSource, ScanScope, SnapshotFreshness};
-use sift_core::grep::{Grep, Inputs, PathDisplay};
-use sift_core::search::{
-    InputConversion, SearchMode, SearchOptions, SearchQueryBuilder, ZeroCounts,
+use sift_core::candidates::{Scan, ScanScope, SnapshotFreshness};
+use sift_core::search::{Query, SearchInputs, SearchMode, SearchOptions, Searcher};
+use sift_core::{
+    Candidates, CorpusKind, FileFilter, FileOrder, IndexCoverage, Narrowing, Plan, TypeFilterRule,
 };
-use sift_core::{CorpusKind, GrepRequest, IndexCoverage};
 
-use crate::format::output::mode::ZeroCountMode;
-use crate::format::{PrintExtras, PrintMode, SearchPrinter};
-
+use crate::format::SearchPrinter;
 use crate::index::daemon::Daemon;
 
-use super::argv::Argv;
-use super::filter::FilterConfig;
+use super::filter::{FilterConfig, FilterResolution};
+use super::ignore::IgnoreResolution;
 use super::input::{ContentTransformConfig, InputSources};
 use super::output::{FilenameContext, OutputArgv, OutputDecl};
 use super::paths::CorpusScope;
-use super::pattern::{PatternArgv, PatternDecl, ResolvedPatterns};
+use super::pattern::{PatternArgv, PatternDecl, PatternInputUse, ResolvedPatterns};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunMode {
-    Search,
-    ListFiles,
-}
-
-/// Resolved configuration for a search invocation.
+/// Resolved configuration for a search invocation (no Decl bags / Argv at execute).
 #[derive(Clone)]
 pub struct RunConfig {
     pub pattern: PatternDecl,
+    pub pattern_argv: PatternArgv,
     pub filter: FilterConfig,
+    pub filter_resolution: FilterResolution,
+    pub type_filters: Vec<TypeFilterRule>,
     pub output: OutputDecl,
+    pub output_argv: OutputArgv,
     pub sift_dir: PathBuf,
     pub search_paths: Vec<PathBuf>,
     pub threads: Option<usize>,
-    pub mode: RunMode,
     pub content: ContentTransformConfig,
-    pub candidate_order: sift_core::grep::CandidateOrder,
-}
-
-impl RunConfig {
-    /// Build a resolved run configuration from parsed CLI state.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if sort/order flags are invalid.
-    pub fn from_cli(cli: &crate::Cli, argv: &Argv<'_>) -> Result<Self, anyhow::Error> {
-        cli.run_config(argv)
-    }
+    pub file_order: FileOrder,
+    pub search_mode: SearchMode,
+    pub ignore: IgnoreResolution,
 }
 
 /// CLI search runner.
@@ -55,27 +40,24 @@ pub struct Run {
     config: RunConfig,
 }
 
-/// Result of a search run; variant reflects `--files` vs pattern search.
+/// Outcome of a search / path-list run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunResult {
-    Files { found: bool },
-    Search { matched: bool },
+    Found,
+    NotFound,
 }
 
 struct SearchSession {
     indexes: Option<sift_core::Indexes>,
     scope: CorpusScope,
-    search_filter: sift_core::grep::CandidateFilter,
+    search_filter: FileFilter,
     store_meta: Option<sift_core::StoreMeta>,
 }
 
 impl RunResult {
     #[must_use]
     pub const fn succeeded(self) -> bool {
-        match self {
-            Self::Files { found } => found,
-            Self::Search { matched } => matched,
-        }
+        matches!(self, Self::Found)
     }
 }
 
@@ -88,13 +70,13 @@ impl Run {
     /// # Errors
     ///
     /// Returns an error if I/O operations fail, paths are invalid, or filter config building fails.
-    pub fn execute(&self, argv: &Argv<'_>, daemon: Option<&Daemon>) -> anyhow::Result<RunResult> {
-        match self.config.mode {
-            RunMode::ListFiles => self.run_files(argv).map(|found| RunResult::Files { found }),
-            RunMode::Search => self
-                .run_search(argv, daemon)
-                .map(|matched| RunResult::Search { matched }),
-        }
+    pub fn execute(&self, daemon: Option<&Daemon>) -> anyhow::Result<RunResult> {
+        let matched = self.run_search(daemon)?;
+        Ok(if matched {
+            RunResult::Found
+        } else {
+            RunResult::NotFound
+        })
     }
 
     fn configure_threads(&self) {
@@ -106,11 +88,7 @@ impl Run {
         }
     }
 
-    fn prepare_session(
-        &self,
-        argv: &Argv<'_>,
-        search_paths: &[PathBuf],
-    ) -> anyhow::Result<SearchSession> {
+    fn prepare_session(&self, search_paths: &[PathBuf]) -> anyhow::Result<SearchSession> {
         self.configure_threads();
         let cwd = std::env::current_dir()?;
         let store_meta = sift_core::StoreMeta::read(&self.config.sift_dir).ok();
@@ -122,13 +100,13 @@ impl Run {
             search_paths,
             &self.config.sift_dir,
         )?;
-        let filter_config = self.config.filter.candidate_config(
-            argv,
+        let filter_config = self.config.filter.file_config(
+            self.config.filter_resolution,
+            self.config.type_filters.clone(),
             scope.prefixes.clone(),
             scope.exclude_paths.clone(),
         )?;
-        let search_filter =
-            sift_core::grep::CandidateFilter::new(&filter_config, &scope.filter_root)?;
+        let search_filter = FileFilter::new(&filter_config, &scope.filter_root)?;
         Ok(SearchSession {
             indexes,
             scope,
@@ -137,8 +115,8 @@ impl Run {
         })
     }
 
-    const fn candidate_source(session: &SearchSession, scope: ScanScope) -> CandidateSource<'_> {
-        CandidateSource::new(
+    const fn scan(session: &SearchSession, scope: ScanScope) -> Scan<'_> {
+        Scan::new(
             session.indexes.as_ref(),
             &session.search_filter,
             session.store_meta.as_ref(),
@@ -146,63 +124,23 @@ impl Run {
         )
     }
 
-    fn run_files(&self, argv: &Argv<'_>) -> anyhow::Result<bool> {
-        let output_argv = OutputArgv::resolve(argv);
-        let session = self.prepare_session(argv, &self.config.search_paths)?;
-        let scope = ScanScope::Walk {
-            order: self.config.candidate_order,
-        };
-        let source = Self::candidate_source(&session, scope);
-        let query = SearchQueryBuilder::new(vec![".".to_string()])
-            .options(SearchOptions::default())
-            .build()
-            .map_err(|e| anyhow::anyhow!("{e}"))?
-            .with_narrowing(sift_core::Narrowing::Disabled);
-        let request = GrepRequest {
-            query,
-            streams: Inputs::empty(),
-            conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-            mode: SearchMode::Lines,
-            stats: sift_core::StatsMode::Off,
-        };
-        let grep = Grep::new(source);
-        let candidates = grep
-            .resolve_candidates(&request)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let all_paths: Vec<_> = candidates
-            .into_vec()
-            .into_iter()
-            .map(|candidate| candidate.rel_path().to_path_buf())
-            .collect();
-        let sep = if output_argv.path.nul_terminated {
-            '\0'
+    fn run_search(&self, daemon: Option<&Daemon>) -> anyhow::Result<bool> {
+        let mode = self.config.search_mode;
+        let patterns = if matches!(mode, SearchMode::Paths) {
+            ResolvedPatterns {
+                patterns: Vec::new(),
+                input: PatternInputUse::None,
+            }
         } else {
-            '\n'
+            ResolvedPatterns::resolve(&self.config.pattern)?
         };
-        let mut any = false;
-        for p in &all_paths {
-            any = true;
-            let display = session.scope.filter_root.join(p);
-            print!("{}{sep}", display.display());
-        }
-        Ok(any)
-    }
-
-    fn run_search(&self, argv: &Argv<'_>, daemon: Option<&Daemon>) -> anyhow::Result<bool> {
-        let patterns = ResolvedPatterns::resolve(&self.config.pattern)?;
         let sources = InputSources::from_paths(&self.config.search_paths);
-        let pattern_argv = PatternArgv::resolve(argv);
-        let output_argv = OutputArgv::resolve(argv);
+        let pattern_argv = &self.config.pattern_argv;
+        let output_argv = &self.config.output_argv;
 
-        let effective_mode = if pattern_argv.only_matching {
-            PrintMode::OnlyMatching
-        } else {
-            pattern_argv.mode
-        };
+        let line_number_override = self.line_number_override();
 
-        let line_number_override = self.line_number_override(&output_argv);
-
-        let session = self.prepare_session(argv, &sources.paths)?;
+        let session = self.prepare_session(&sources.paths)?;
         let indexes_empty = session
             .indexes
             .as_ref()
@@ -210,13 +148,13 @@ impl Run {
         let sources = sources.resolve(patterns.input, indexes_empty)?;
         let transform = self.config.content.transform()?;
 
-        let filename_ctx = Self::filename_context(effective_mode, &sources, &session);
+        let filename_ctx = Self::filename_context(mode, &sources, &session);
         let print_spec = self
             .config
             .output
             .print_spec(
-                &output_argv,
-                effective_mode,
+                output_argv,
+                mode,
                 pattern_argv.quiet,
                 line_number_override,
                 filename_ctx,
@@ -225,40 +163,62 @@ impl Run {
         let separators = self.config.output.separators();
         let freshness = Self::snapshot_freshness(&session, daemon);
         let scan_scope = self.scan_scope(freshness, sources.resolve_candidates());
-        let candidate_source = Self::candidate_source(&session, scan_scope);
+        let scan = Self::scan(&session, scan_scope);
 
-        let mut query = self
-            .config
-            .pattern
-            .search_query(patterns.patterns, &pattern_argv)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        if transform.is_some() {
-            query = query.with_narrowing(sift_core::Narrowing::Disabled);
-        }
-        let explicit_files = Self::explicit_files(&session);
-        let (streams, conversion) = sources.search_inputs(
-            &explicit_files,
-            print_spec.lines.path_display,
-            transform.as_ref(),
-        );
-        let print_stats = OutputDecl::print_stats(&output_argv, effective_mode);
-        let extras = PrintExtras::hits().with_stats(print_stats);
-        let mode = Self::search_mode(effective_mode, print_spec.include_zero);
+        let print_stats = OutputDecl::print_stats(output_argv, mode);
         let stats = if print_stats {
             sift_core::StatsMode::On
         } else {
             sift_core::StatsMode::Off
         };
-        let grep = Grep::new(candidate_source);
-        let request = GrepRequest {
-            query,
-            streams,
-            conversion,
+        let query = {
+            let query = if matches!(mode, SearchMode::Paths) {
+                Query::new(vec![".".to_string()], SearchOptions::default())
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+                    .with_narrowing(Narrowing::Disabled)
+            } else {
+                self.config
+                    .pattern
+                    .query(patterns.patterns, pattern_argv)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+            };
+            match transform {
+                Some(_) => query.with_narrowing(Narrowing::Disabled),
+                None => query,
+            }
+        };
+        let explicit_files = Self::explicit_files(&session);
+        let mut streams = sources.stdin_streams();
+        let searcher = Searcher::new(query).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let resolved = Plan::new(&scan, searcher.query(), mode.coverage())
+            .resolve(&scan)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let (candidates, streams) = match transform.as_ref() {
+            Some(transform) => {
+                for candidate in resolved.into_vec() {
+                    let bytes = transform
+                        .read_candidate(&candidate)
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    let is_explicit = candidate.is_explicit(&explicit_files);
+                    streams.push_file_bytes(candidate, bytes, is_explicit);
+                }
+                (Candidates::empty(), streams)
+            }
+            None => (resolved, streams),
+        };
+        let report = SearchPrinter::print(
+            &searcher,
+            SearchInputs {
+                candidates,
+                streams,
+                explicit: &explicit_files,
+            },
             mode,
             stats,
-        };
-        let report = SearchPrinter::print_grep(&grep, request, print_spec, &separators, extras)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            print_spec,
+            &separators,
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         if let Some(s) = report.stats.as_ref() {
             OutputDecl::write_stats(s);
@@ -268,11 +228,11 @@ impl Run {
         Ok(selected)
     }
 
-    const fn line_number_override(&self, output_argv: &OutputArgv) -> Option<bool> {
+    const fn line_number_override(&self) -> Option<bool> {
         if self.config.output.column.pretty || self.config.output.column.vimgrep {
             Some(true)
         } else {
-            output_argv.line_number
+            self.config.output_argv.line_number
         }
     }
 
@@ -284,24 +244,14 @@ impl Run {
         if !resolve_candidates {
             return ScanScope::StreamsOnly;
         }
-        ScanScope::Index {
-            order: self.config.candidate_order,
-            freshness,
+        if matches!(self.config.search_mode, SearchMode::Paths) {
+            return ScanScope::Walk {
+                order: self.config.file_order,
+            };
         }
-    }
-
-    const fn search_mode(mode: PrintMode, zeros: ZeroCountMode) -> SearchMode {
-        let zeros = match zeros {
-            ZeroCountMode::Omit => ZeroCounts::Omit,
-            ZeroCountMode::Include => ZeroCounts::Include,
-        };
-        match mode {
-            PrintMode::Standard => SearchMode::Lines,
-            PrintMode::OnlyMatching => SearchMode::Matches,
-            PrintMode::Count => SearchMode::CountLines { zeros },
-            PrintMode::CountMatches => SearchMode::CountMatches { zeros },
-            PrintMode::FilesWithMatches => SearchMode::FilesWithMatches,
-            PrintMode::FilesWithoutMatch => SearchMode::FilesWithoutMatch,
+        ScanScope::Index {
+            order: self.config.file_order,
+            freshness,
         }
     }
 
@@ -319,11 +269,11 @@ impl Run {
     }
 
     fn filename_context(
-        effective_mode: PrintMode,
+        mode: SearchMode,
         sources: &InputSources,
         session: &SearchSession,
     ) -> FilenameContext {
-        if OutputDecl::is_path_mode(effective_mode) {
+        if mode.is_path_mode() {
             FilenameContext::PathMode
         } else if !sources.stdin_bytes.is_empty() && sources.paths.is_empty() {
             FilenameContext::SingleFileCorpus

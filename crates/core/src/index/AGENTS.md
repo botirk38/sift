@@ -3,15 +3,15 @@
 ## Responsibility
 
 Uniform index kinds, snapshot persistence, and search orchestration via
-[`Indexes`](search.rs).
+[`Indexes`](indexes.rs).
 
 ## Layer split
 
 | Layer | Types | Owns |
 |-------|-------|------|
-| Contract | `Index` trait, `IndexWrite`, `IndexRecord` | Kind interface + persistable identity |
+| Record | `IndexRecord`, `Index` trait | Catalog knobs + opened query/update |
 | Orchestrator | `Indexes`, `StoreMeta` | `open` / `build` / `update` + query/hydrate |
-| Snapshot | `Snapshot`, `SnapshotId` | Opened `Box<dyn Index>` vec, artifact I/O |
+| Snapshot | `Snapshot`, `Files`, `SnapshotId` | Shared `Files`, opened indexes, artifact I/O |
 | Kind impl | `ngram::Index` | Knobs + storage + trait impl |
 
 CLI owns daemon orchestration (`SnapshotRefresh`, path debouncing). Core does
@@ -20,13 +20,13 @@ not expose `reconcile`, `unindexed_hit_paths`, or walk-merge helpers on
 
 ## Key types
 
-- `Index` — uniform trait: `build` / `open` / `query` / `candidate` / `update`
-- `IndexRecord` — persisted catalog entry (`kind` + `params`)
+- `Index` — opened trait only: `query` / `coverage` / `all_file_ids` / `update`
+- `IndexRecord` — typed catalog entry; `build` / `open` → `Box<dyn Index>`
 - `IndexConfig` — corpus/walk/visibility inputs for a write
-- `IndexWrite` — `{ dest, config, paths }` for `build` and `update`
-- `Indexes` — lifecycle + search over one store
+- `IndexDestination` — directory or snapshot write target
+- `Indexes` — store orchestrator over one `.sift` directory
+- `Files` — snapshot-owned `FileId → File` hydration
 - `IndexedCorpus` — covered rel-paths; `retain_unindexed` filters paths
-- `IndexSource` / `IndexDestination` — directory vs snapshot I/O
 
 ## Conventions
 
@@ -34,22 +34,18 @@ not expose `reconcile`, `unindexed_hit_paths`, or walk-merge helpers on
   `ngram/` internals.
 - `Index::query` returns `Vec<FileId>` (may over-return; must not under-return;
   cannot narrow → every covered id). No `AllIndexed` / `Unavailable` status.
-- Filtering happens in `Indexes` hydrate (`candidate(id)` then filter), not on
-  the trait.
+- Hydration uses `Snapshot::files()`, never a lead index.
 - `Indexes::open(dir, meta)` writes meta when the store is new — no
   `open_or_create`. Search uses `Indexes::load(dir) -> Result<Option<_>>`,
   which never creates a store (`None` when absent).
-- Kind knobs live on the kind's `Index` (`Index::new()` + optional setters);
-  no separate builder/config types.
+- Catalog knobs live on `IndexRecord`; opened indexes cannot be queried before
+  `open`.
 
 ## Adding a new index kind
 
-1. Implement `Index` on the kind's type (`kind` / `params` / `name` / lifecycle /
-   `query` / `candidate` / `coverage`).
-2. Register `"kind"` in `IndexRecord::to_index`.
+1. Add a typed `IndexRecord` arm with `build` / `open` / `name`.
+2. Implement opened `Index` on the kind's type.
 3. Sibling module under `index/`.
-
-No enum arms in a central dispatcher. Search/build loops stay match-free.
 
 ## Do NOT
 
@@ -59,3 +55,4 @@ No enum arms in a central dispatcher. Search/build loops stay match-free.
 - Add parallel `open` / `open_or_create` (or mode enums that recreate that
   split).
 - Add `#[allow]`.
+- Use vague module names (`contract`, `lifecycle`, `search` for `Indexes`).

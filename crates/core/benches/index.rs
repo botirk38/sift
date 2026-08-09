@@ -8,14 +8,11 @@ use std::fs;
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
 
-use sift_core::candidates::{CandidateSource, ScanScope, SnapshotFreshness};
-use sift_core::grep::{CandidateOrder, Grep, GrepRequest, PathDisplay, VisibilityConfig};
-use sift_core::search::{
-    InputConversion, SearchMode, SearchOptions, SearchQueryBuilder, StatsMode,
-};
 use sift_core::{
-    CaseMode, CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramWidth, Index, IndexConfig,
-    IndexRecord, IndexWalkConfig, Indexes, Inputs, NGramIndex, StoreMeta, WalkMeta,
+    CaseMode, CorpusKind, CorpusMeta, CorpusSpec, FileFilter, FileFilterConfig, FileOrder,
+    FilterMeta, GramNorm, GramWidth, IndexConfig, IndexDestination, IndexRecord, IndexWalkConfig,
+    Indexes, NGramIndex, Plan, Query, Scan, ScanScope, SearchMode, SearchOptions, Searcher,
+    SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta,
 };
 
 mod common;
@@ -39,13 +36,18 @@ fn build_index(corpus: &Path, idx_dir: &Path) -> NGramIndex {
         walk: IndexWalkConfig::new(false),
         visibility: VisibilityConfig::default(),
     };
-    let config_index = NGramIndex::new().width(GramWidth::TRIGRAM);
-    config_index.build(&config, idx_dir, &[]).unwrap();
-    NGramIndex::open(GramWidth::TRIGRAM, idx_dir, root, kind).unwrap()
+    NGramIndex::build(
+        GramWidth::TRIGRAM,
+        GramNorm::Identity,
+        IndexDestination::Directory(idx_dir),
+        &config,
+    )
+    .unwrap();
+    NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, root, kind).unwrap()
 }
 
 fn open_index(idx_dir: &Path, root: &Path, kind: CorpusKind) -> NGramIndex {
-    NGramIndex::open(GramWidth::TRIGRAM, idx_dir, root, kind).unwrap()
+    NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, root, kind).unwrap()
 }
 
 fn open_large_index() -> (tempfile::TempDir, NGramIndex) {
@@ -63,32 +65,23 @@ fn open_large_index() -> (tempfile::TempDir, NGramIndex) {
 
 fn index_candidate_vec(
     indexes: &Indexes,
-    filter: &sift_core::grep::CandidateFilter,
+    filter: &FileFilter,
     patterns: &[String],
     options: SearchOptions,
-) -> Vec<sift_core::Candidate> {
-    let source = CandidateSource::new(
+) -> Vec<sift_core::File> {
+    let source = Scan::new(
         Some(indexes),
         filter,
         None,
         ScanScope::Index {
-            order: CandidateOrder::default(),
+            order: FileOrder::default(),
             freshness: SnapshotFreshness::Current,
         },
     );
-    let query = SearchQueryBuilder::new(patterns.to_vec())
-        .options(options)
-        .build()
-        .unwrap();
-    let request = GrepRequest {
-        query,
-        streams: Inputs::empty(),
-        conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-        mode: SearchMode::Lines,
-        stats: StatsMode::Off,
-    };
-    Grep::new(source)
-        .resolve_candidates(&request)
+    let query = Query::new(patterns.to_vec(), options).unwrap();
+    let searcher = Searcher::new(query).unwrap();
+    Plan::new(&source, searcher.query(), SearchMode::Lines.coverage())
+        .resolve(&source)
         .unwrap()
         .into_vec()
 }
@@ -233,8 +226,8 @@ fn build_index_via_store(corpus: &Path, sift_dir: &Path) {
     let mut indexes = Indexes::open(sift_dir, &meta).unwrap();
     indexes.refresh_meta(&meta).unwrap();
     let config = standard_build_config(corpus, &[]);
-    let catalog: Vec<Box<dyn Index>> = vec![Box::new(NGramIndex::new().width(GramWidth::TRIGRAM))];
-    indexes.build(&catalog, &config, &[]).unwrap();
+    let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
+    indexes.build(&catalog, &config).unwrap();
 }
 
 // ─── Build benchmarks ────────────────────────────────────────────────────────
@@ -363,10 +356,13 @@ fn bench_index_update(c: &mut Criterion) {
         let fx = build_update_fixture(FILES, LINES, FANOUT);
         let rel = corpus_rel_path(0, FANOUT);
         fs::write(fx.corpus.join(&rel), changed_file_body(0)).unwrap();
-        let paths = [rel];
         let config = standard_build_config(&fx.corpus, &[]);
         b.iter(|| {
-            black_box(fx.index.update(&config, &fx.out_dir, &paths).unwrap());
+            black_box(
+                fx.index
+                    .update(IndexDestination::Directory(&fx.out_dir), &config)
+                    .unwrap(),
+            );
         });
     });
 
@@ -377,35 +373,43 @@ fn bench_index_update(c: &mut Criterion) {
             .join("src")
             .join("added.rs");
         fs::write(fx.corpus.join(&rel), changed_file_body(99_999)).unwrap();
-        let paths = [rel];
         let config = standard_build_config(&fx.corpus, &[]);
         b.iter(|| {
-            black_box(fx.index.update(&config, &fx.out_dir, &paths).unwrap());
+            black_box(
+                fx.index
+                    .update(IndexDestination::Directory(&fx.out_dir), &config)
+                    .unwrap(),
+            );
         });
     });
 
     g.bench_function("deleted_file", |b| {
         let fx = build_update_fixture(FILES, LINES, FANOUT);
         fs::remove_file(fx.corpus.join(corpus_rel_path(1, FANOUT))).unwrap();
-        // Deletion is detected only by a full rescan (empty `paths`).
+        // Deletion is detected by a full corpus rescan.
         let config = standard_build_config(&fx.corpus, &[]);
         b.iter(|| {
-            black_box(fx.index.update(&config, &fx.out_dir, &[]).unwrap());
+            black_box(
+                fx.index
+                    .update(IndexDestination::Directory(&fx.out_dir), &config)
+                    .unwrap(),
+            );
         });
     });
 
     g.bench_function("many_small_changes", |b| {
         let fx = build_update_fixture(FILES, LINES, FANOUT);
-        let paths: Vec<PathBuf> = (0..50)
-            .map(|i| {
-                let rel = corpus_rel_path(i, FANOUT);
-                fs::write(fx.corpus.join(&rel), changed_file_body(i)).unwrap();
-                rel
-            })
-            .collect();
+        for i in 0..50 {
+            let rel = corpus_rel_path(i, FANOUT);
+            fs::write(fx.corpus.join(&rel), changed_file_body(i)).unwrap();
+        }
         let config = standard_build_config(&fx.corpus, &[]);
         b.iter(|| {
-            black_box(fx.index.update(&config, &fx.out_dir, &paths).unwrap());
+            black_box(
+                fx.index
+                    .update(IndexDestination::Directory(&fx.out_dir), &config)
+                    .unwrap(),
+            );
         });
     });
 
@@ -512,8 +516,7 @@ fn bench_indexes_open(c: &mut Criterion) {
             );
             let mut indexes = Indexes::open(&sift, &meta).expect("open indexes");
             indexes.refresh_meta(&meta).expect("refresh meta");
-            let catalog: Vec<Box<dyn Index>> =
-                vec![Box::new(NGramIndex::new().width(GramWidth::TRIGRAM))];
+            let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
             indexes
                 .build(
                     &catalog,
@@ -528,7 +531,6 @@ fn bench_indexes_open(c: &mut Criterion) {
                         walk: IndexWalkConfig::new(false),
                         visibility: VisibilityConfig::default(),
                     },
-                    &[],
                 )
                 .expect("build");
             drop(indexes);
@@ -587,17 +589,13 @@ fn bench_trigram_index_methods(c: &mut Criterion) {
     g.finish();
 }
 
-// ─── Candidate benches ───────────────────────────────────────────────────────
+// ─── File benches ───────────────────────────────────────────────────────
 
 fn bench_candidates(c: &mut Criterion) {
     let fixture = common::open_large_indexes();
     let indexes = fixture.1;
     let root = indexes.corpus_root().to_path_buf();
-    let filter = sift_core::grep::CandidateFilter::new(
-        &sift_core::grep::CandidateFilterConfig::default(),
-        &root,
-    )
-    .unwrap();
+    let filter = FileFilter::new(&FileFilterConfig::default(), &root).unwrap();
 
     let mut g = c.benchmark_group("index_candidates");
 
@@ -684,37 +682,9 @@ fn bench_candidates(c: &mut Criterion) {
     g.finish();
 }
 
-// ─── Explain benches ─────────────────────────────────────────────────────────
-
-fn bench_explain(c: &mut Criterion) {
-    let fixture = open_large_index();
-    let index = fixture.1;
-
-    let mut g = c.benchmark_group("index_explain");
-
-    g.bench_function("indexed_mode", |b| {
-        let query = SearchQueryBuilder::new(vec!["beta".to_string()])
-            .options(SearchOptions::default())
-            .build()
-            .unwrap();
-        b.iter(|| black_box(index.explain(&query)));
-    });
-
-    g.bench_function("full_scan_mode", |b| {
-        let query =
-            SearchQueryBuilder::new(vec![r"\w{5}\s+\w{5}\s+\w{5}\s+\w{5}\s+\w{5}".to_string()])
-                .options(SearchOptions::default())
-                .build()
-                .unwrap();
-        b.iter(|| black_box(index.explain(&query)));
-    });
-
-    g.finish();
-}
-
 criterion_group! {
     name = benches;
     config = sift_criterion();
-    targets = bench_index_build, bench_index_update, bench_index_open, bench_indexes_open, bench_index_save_reopen, bench_trigram_index_methods, bench_candidates, bench_explain,
+    targets = bench_index_build, bench_index_update, bench_index_open, bench_indexes_open, bench_index_save_reopen, bench_trigram_index_methods, bench_candidates,
 }
 criterion_main!(benches);

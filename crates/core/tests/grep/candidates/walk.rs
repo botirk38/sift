@@ -1,6 +1,5 @@
-use sift_core::grep::{
-    CandidateFilter, CandidateFilterConfig, HiddenMode, IgnoreConfig, IgnoreSources,
-    VisibilityConfig,
+use sift_core::{
+    FileFilter, FileFilterConfig, HiddenMode, IgnoreConfig, IgnoreSources, VisibilityConfig,
 };
 use tempfile::TempDir;
 
@@ -11,7 +10,7 @@ fn filter_respects_gitignore_on_fixture() {
     let tmp = TempDir::new().expect("tempdir");
     make_filter_corpus(tmp.path());
 
-    let config = CandidateFilterConfig {
+    let config = FileFilterConfig {
         visibility: VisibilityConfig {
             hidden: HiddenMode::Respect,
             ignore: IgnoreConfig {
@@ -20,9 +19,9 @@ fn filter_respects_gitignore_on_fixture() {
                 ..IgnoreConfig::default()
             },
         },
-        ..CandidateFilterConfig::default()
+        ..FileFilterConfig::default()
     };
-    let filter = CandidateFilter::new(&config, tmp.path()).expect("filter");
+    let filter = FileFilter::new(&config, tmp.path()).expect("filter");
     assert!(!filter.matches_path(std::path::Path::new("skip/ignored.txt")));
     assert!(filter.matches_path(std::path::Path::new("keep.txt")));
 }

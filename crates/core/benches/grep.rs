@@ -6,15 +6,11 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use std::path::Path;
 
-use sift_core::candidates::{CandidateSource, ScanScope, SnapshotFreshness};
-use sift_core::grep::{
-    CandidateFilter, CandidateFilterConfig, CandidateOrder, Grep, GrepRequest, PathDisplay,
+use sift_core::{
+    CaseMode, Events, FileFilter, FileFilterConfig, FileOrder, Indexes, Inputs, Plan, Query, Scan,
+    ScanScope, SearchFlags, SearchInputs, SearchMode, SearchOptions, Searcher, SnapshotFreshness,
+    StatsMode,
 };
-use sift_core::search::{
-    EventEmission, InputConversion, SearchFlags, SearchInputs, SearchMode, SearchOptions,
-    SearchQueryBuilder, Searcher, StatsMode,
-};
-use sift_core::{Indexes, Inputs};
 
 mod common;
 
@@ -33,49 +29,36 @@ fn make_search(patterns: &[&str], opts: SearchOptions) -> (Vec<String>, SearchOp
     (pats, opts)
 }
 
-fn make_filter(config: &CandidateFilterConfig, root: &Path) -> CandidateFilter {
-    CandidateFilter::new(config, root).unwrap()
+fn make_filter(config: &FileFilterConfig, root: &Path) -> FileFilter {
+    FileFilter::new(config, root).unwrap()
 }
 
-fn run_grep(
-    indexes: &Indexes,
-    filter: &CandidateFilter,
-    query: &(Vec<String>, SearchOptions),
-) -> bool {
-    let source = CandidateSource::new(
+fn run_grep(indexes: &Indexes, filter: &FileFilter, query: &(Vec<String>, SearchOptions)) -> bool {
+    let source = Scan::new(
         Some(indexes),
         filter,
         None,
         ScanScope::Index {
-            order: CandidateOrder::default(),
+            order: FileOrder::default(),
             freshness: SnapshotFreshness::Current,
         },
     );
-    let query = SearchQueryBuilder::new(query.0.clone())
-        .options(query.1.clone())
-        .build()
-        .unwrap();
-    let request = GrepRequest {
-        query: query.clone(),
-        streams: Inputs::empty(),
-        conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-        mode: sift_core::search::SearchMode::Lines,
-        stats: StatsMode::Off,
-    };
-    let grep = Grep::new(source);
-    let candidates = grep.resolve_candidates(&request).unwrap();
+    let query = Query::new(query.0.clone(), query.1.clone()).unwrap();
     let searcher = Searcher::new(query).unwrap();
-    let inputs = SearchInputs {
-        candidates,
-        streams: Inputs::empty(),
-        conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-    };
+    let mode = SearchMode::Lines;
+    let candidates = Plan::new(&source, searcher.query(), mode.coverage())
+        .resolve(&source)
+        .unwrap();
     searcher
         .execute(
-            inputs,
+            SearchInputs {
+                candidates,
+                streams: Inputs::empty(),
+                explicit: &[],
+            },
             StatsMode::Off,
-            SearchMode::Lines,
-            EventEmission::Discard,
+            mode,
+            Events::Discard,
         )
         .unwrap()
         .found()
@@ -85,7 +68,7 @@ fn bench_indexed_search(c: &mut Criterion) {
     let fixture = common::open_large_indexes();
     let indexes = fixture.1;
     let root = indexes.corpus_root().to_path_buf();
-    let filter = make_filter(&CandidateFilterConfig::default(), &root);
+    let filter = make_filter(&FileFilterConfig::default(), &root);
 
     let mut g = c.benchmark_group("grep_indexed");
 
@@ -111,7 +94,7 @@ fn bench_indexed_search(c: &mut Criterion) {
         let query = make_search(
             &["beta"],
             SearchOptions {
-                case_mode: sift_core::search::CaseMode::Insensitive,
+                case_mode: CaseMode::Insensitive,
                 ..Default::default()
             },
         );
@@ -122,7 +105,7 @@ fn bench_indexed_search(c: &mut Criterion) {
         let query = make_search(
             &["ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT"],
             SearchOptions {
-                case_mode: sift_core::search::CaseMode::Insensitive,
+                case_mode: CaseMode::Insensitive,
                 ..Default::default()
             },
         );
@@ -155,7 +138,7 @@ fn bench_walk_search(c: &mut Criterion) {
     let tmp = tempfile::tempdir().unwrap();
     let corpus = tmp.path().join("corpus");
     common::make_filter_corpus(&corpus);
-    let filter = make_filter(&CandidateFilterConfig::default(), &corpus);
+    let filter = make_filter(&FileFilterConfig::default(), &corpus);
     let sift_dir = tmp.path().join(".sift");
     let meta = sift_core::StoreMeta::read(&sift_dir).unwrap_or_else(|_| {
         sift_core::StoreMeta::new(

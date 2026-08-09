@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use super::Candidate;
+use super::File;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CandidateOrderKey {
+pub enum FileOrderKey {
     #[default]
     None,
     Path,
@@ -14,27 +14,27 @@ pub enum CandidateOrderKey {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CandidateOrderDirection {
+pub enum FileOrderDirection {
     #[default]
     Ascending,
     Descending,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct CandidateOrder {
-    pub key: CandidateOrderKey,
-    pub direction: CandidateOrderDirection,
+pub struct FileOrder {
+    pub key: FileOrderKey,
+    pub direction: FileOrderDirection,
 }
 
-impl CandidateOrder {
+impl FileOrder {
     #[must_use]
-    pub const fn new(key: CandidateOrderKey, direction: CandidateOrderDirection) -> Self {
+    pub const fn new(key: FileOrderKey, direction: FileOrderDirection) -> Self {
         Self { key, direction }
     }
 
     #[must_use]
     pub const fn is_sorted(self) -> bool {
-        !matches!(self.key, CandidateOrderKey::None)
+        !matches!(self.key, FileOrderKey::None)
     }
 
     /// Order candidates in place according to the configured key.
@@ -43,14 +43,14 @@ impl CandidateOrder {
     ///
     /// Returns an I/O error when filesystem metadata required by a timestamp
     /// ordering key cannot be read.
-    pub fn order(self, candidates: &mut [Candidate]) -> crate::Result<()> {
+    pub fn order(self, candidates: &mut [File]) -> crate::Result<()> {
         if !self.is_sorted() {
             return Ok(());
         }
 
         let mut keyed = Vec::with_capacity(candidates.len());
         for candidate in candidates.iter().cloned() {
-            keyed.push(CandidateOrderEntry::new(candidate, self.key)?);
+            keyed.push(FileOrderEntry::new(candidate, self.key)?);
         }
 
         keyed.sort_by(|a, b| {
@@ -58,7 +58,7 @@ impl CandidateOrder {
                 .cmp(&b.value)
                 .then_with(|| a.rel_path.cmp(&b.rel_path))
         });
-        if matches!(self.direction, CandidateOrderDirection::Descending) {
+        if matches!(self.direction, FileOrderDirection::Descending) {
             keyed.reverse();
         }
 
@@ -70,28 +70,26 @@ impl CandidateOrder {
     }
 }
 
-struct CandidateOrderEntry {
-    value: CandidateOrderValue,
+struct FileOrderEntry {
+    value: FileOrderValue,
     rel_path: PathBuf,
-    candidate: Candidate,
+    candidate: File,
 }
 
-impl CandidateOrderEntry {
-    fn new(candidate: Candidate, key: CandidateOrderKey) -> crate::Result<Self> {
+impl FileOrderEntry {
+    fn new(candidate: File, key: FileOrderKey) -> crate::Result<Self> {
         let rel_path = candidate.rel_path().to_path_buf();
         let value = match key {
-            CandidateOrderKey::None | CandidateOrderKey::Path => {
-                CandidateOrderValue::Path(rel_path.clone())
-            }
-            CandidateOrderKey::Modified => CandidateOrderValue::Time(candidate_time(
+            FileOrderKey::None | FileOrderKey::Path => FileOrderValue::Path(rel_path.clone()),
+            FileOrderKey::Modified => FileOrderValue::Time(candidate_time(
                 candidate.abs_path(),
                 std::fs::Metadata::modified,
             )?),
-            CandidateOrderKey::Accessed => CandidateOrderValue::Time(candidate_time(
+            FileOrderKey::Accessed => FileOrderValue::Time(candidate_time(
                 candidate.abs_path(),
                 std::fs::Metadata::accessed,
             )?),
-            CandidateOrderKey::Created => CandidateOrderValue::Time(candidate_time(
+            FileOrderKey::Created => FileOrderValue::Time(candidate_time(
                 candidate.abs_path(),
                 std::fs::Metadata::created,
             )?),
@@ -106,7 +104,7 @@ impl CandidateOrderEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum CandidateOrderValue {
+enum FileOrderValue {
     Path(PathBuf),
     Time(SystemTime),
 }

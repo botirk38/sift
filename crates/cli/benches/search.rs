@@ -12,15 +12,17 @@ fn bench_binary_mode(g: &mut criterion::BenchmarkGroup<'_, criterion::measuremen
     let argv_storage_text = args(&["sift", "-a", "pattern"]);
     let argv_default = sift_grep::Argv::new(&argv_storage_default);
     let argv_text = sift_grep::Argv::new(&argv_storage_text);
-    let pat_default = sift_grep::pattern::PatternArgv::resolve(&argv_default);
-    let pat_text = sift_grep::pattern::PatternArgv::resolve(&argv_text);
+    let pat_default =
+        sift_grep::pattern::PatternArgv::resolve(&argv_default, sift_core::ZeroCounts::Omit);
+    let pat_text =
+        sift_grep::pattern::PatternArgv::resolve(&argv_text, sift_core::ZeroCounts::Omit);
 
     g.bench_function("binary_mode/default", |b| {
         let config = cli_default.pattern_config();
         b.iter(|| {
             black_box(
                 config
-                    .search_query(vec!["pattern".to_string()], black_box(&pat_default))
+                    .query(vec!["pattern".to_string()], black_box(&pat_default))
                     .and_then(Searcher::new)
                     .unwrap()
                     .options()
@@ -33,7 +35,7 @@ fn bench_binary_mode(g: &mut criterion::BenchmarkGroup<'_, criterion::measuremen
         b.iter(|| {
             black_box(
                 config
-                    .search_query(vec!["pattern".to_string()], black_box(&pat_text))
+                    .query(vec!["pattern".to_string()], black_box(&pat_text))
                     .and_then(Searcher::new)
                     .unwrap()
                     .options()

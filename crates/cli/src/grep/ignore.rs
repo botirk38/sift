@@ -1,5 +1,5 @@
 use clap::{ArgAction, Args};
-use sift_core::grep::IgnoreSources;
+use sift_core::IgnoreSources;
 
 use super::argv::Argv;
 
@@ -16,7 +16,7 @@ bitflags::bitflags! {
 #[derive(Clone, Copy)]
 pub struct IgnoreResolution {
     pub hidden: bool,
-    pub sources: sift_core::grep::IgnoreSources,
+    pub sources: sift_core::IgnoreSources,
     pub require_git: bool,
     pub msg_flags: MessageFlags,
 }
@@ -25,7 +25,7 @@ impl Default for IgnoreResolution {
     fn default() -> Self {
         Self {
             hidden: false,
-            sources: sift_core::grep::IgnoreSources::all(),
+            sources: sift_core::IgnoreSources::all(),
             require_git: false,
             msg_flags: MessageFlags::empty(),
         }
@@ -34,11 +34,11 @@ impl Default for IgnoreResolution {
 
 impl IgnoreResolution {
     #[must_use]
-    pub const fn hidden_mode(&self) -> sift_core::grep::HiddenMode {
+    pub const fn hidden_mode(&self) -> sift_core::HiddenMode {
         if self.hidden {
-            sift_core::grep::HiddenMode::Include
+            sift_core::HiddenMode::Include
         } else {
-            sift_core::grep::HiddenMode::Respect
+            sift_core::HiddenMode::Respect
         }
     }
 
@@ -224,7 +224,7 @@ pub struct ContextDecl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sift_core::grep::IgnoreSources;
+    use sift_core::IgnoreSources;
 
     fn args(items: &[&str]) -> Vec<String> {
         items.iter().map(ToString::to_string).collect()

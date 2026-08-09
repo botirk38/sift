@@ -4,9 +4,9 @@ mod rust;
 use grep_pcre2::RegexMatcher as Pcre2Matcher;
 use grep_regex::RegexMatcher;
 
-use crate::GrepError;
+use crate::SearchError;
 use crate::search::options::RegexEngine;
-use crate::search::query::SearchQuery;
+use crate::search::query::Query;
 
 #[derive(Debug, Clone)]
 pub(super) enum Matcher {
@@ -15,15 +15,15 @@ pub(super) enum Matcher {
 }
 
 pub(super) struct MatcherBuilder<'a> {
-    query: &'a SearchQuery,
+    query: &'a Query,
 }
 
 impl<'a> MatcherBuilder<'a> {
-    pub(super) const fn new(query: &'a SearchQuery) -> Self {
+    pub(super) const fn new(query: &'a Query) -> Self {
         Self { query }
     }
 
-    pub(super) fn build(self) -> Result<Matcher, GrepError> {
+    pub(super) fn build(self) -> Result<Matcher, SearchError> {
         match self.query.options.regex_engine {
             RegexEngine::Rust => rust::build(self.query).map(Matcher::Rust),
             RegexEngine::Pcre2 => pcre2::build(self.query).map(Matcher::Pcre2),

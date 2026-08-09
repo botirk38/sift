@@ -1,8 +1,8 @@
 use std::fs;
 
-use sift_core::grep::VisibilityConfig;
 use sift_core::{
-    CorpusKind, CorpusSpec, FileId, GramWidth, IndexConfig, IndexWalkConfig, NGramIndex,
+    CorpusKind, CorpusSpec, FileId, GramNorm, GramWidth, IndexConfig, IndexDestination,
+    IndexWalkConfig, NGramIndex, VisibilityConfig,
 };
 use tempfile::TempDir;
 
@@ -27,13 +27,17 @@ fn persisted_index_reopens_with_same_files() {
         walk: IndexWalkConfig::new(false),
         visibility: VisibilityConfig::default(),
     };
-    let index_config = NGramIndex::new().width(GramWidth::TRIGRAM);
-    index_config
-        .build(&config, &trigram_dir, &[])
-        .expect("build");
+    NGramIndex::build(
+        GramWidth::TRIGRAM,
+        GramNorm::Identity,
+        IndexDestination::Directory(&trigram_dir),
+        &config,
+    )
+    .expect("build");
 
     let reopened = NGramIndex::open(
         GramWidth::TRIGRAM,
+        GramNorm::Identity,
         &trigram_dir,
         &root,
         CorpusKind::Directory,

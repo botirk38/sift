@@ -1,22 +1,22 @@
 use crate::StoreMeta;
-use crate::corpus::filter::CandidateFilter;
+use crate::corpus::filter::FileFilter;
 use crate::index::Indexes;
 
 use super::scope::ScanScope;
 
 /// Indexes, filters, and metadata used to resolve candidate files.
-pub struct CandidateSource<'a> {
+pub struct Scan<'a> {
     pub indexes: Option<&'a Indexes>,
-    pub filter: &'a CandidateFilter,
+    pub filter: &'a FileFilter,
     pub store_meta: Option<&'a StoreMeta>,
     pub scope: ScanScope,
 }
 
-impl<'a> CandidateSource<'a> {
+impl<'a> Scan<'a> {
     #[must_use]
     pub const fn new(
         indexes: Option<&'a Indexes>,
-        filter: &'a CandidateFilter,
+        filter: &'a FileFilter,
         store_meta: Option<&'a StoreMeta>,
         scope: ScanScope,
     ) -> Self {

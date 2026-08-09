@@ -5,17 +5,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use sift_core::grep::{
-    CandidateFilter, CandidateFilterConfig, FilterAdmission, Grep, GrepRequest, IgnoreConfig,
-    PathDisplay, VisibilityConfig,
-};
-use sift_core::search::{
-    InputConversion, SearchMode, SearchOptions, SearchQueryBuilder, StatsMode,
-};
-use sift_core::{Candidate, CandidateOrder, CandidateSource, ScanScope, SnapshotFreshness};
 use sift_core::{
-    CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramWidth, Index, IndexConfig, IndexCoverage,
-    IndexRecord, IndexWalkConfig, Indexes, Inputs, NGramIndex, StoreMeta, WalkMeta,
+    CorpusKind, CorpusMeta, CorpusSpec, File, FileFilter, FileFilterConfig, FileOrder,
+    FilterAdmission, FilterMeta, GramNorm, GramWidth, IgnoreConfig, IndexConfig, IndexCoverage,
+    IndexDestination, IndexRecord, IndexWalkConfig, Indexes, NGramIndex, Plan, Query, Scan,
+    ScanScope, SearchOptions, SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta,
 };
 
 pub fn sample_store_meta(root: PathBuf, indexes: Vec<IndexRecord>) -> StoreMeta {
@@ -108,8 +102,8 @@ pub fn build_indexes(corpus: &Path, sift_dir: &Path) -> Indexes {
     let mut indexes = Indexes::open(sift_dir, &meta).expect("open indexes");
     indexes.refresh_meta(&meta).expect("refresh meta");
     let config = standard_build_config(corpus, &[]);
-    let catalog: Vec<Box<dyn Index>> = vec![Box::new(NGramIndex::new().width(GramWidth::TRIGRAM))];
-    indexes.build(&catalog, &config, &[]).expect("build index");
+    let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
+    indexes.build(&catalog, &config).expect("build index");
     indexes
 }
 
@@ -126,8 +120,8 @@ pub fn index_candidates(
     patterns: &[String],
     options: SearchOptions,
     admission: FilterAdmission,
-) -> Vec<Candidate> {
-    let filter = CandidateFilter::new(&CandidateFilterConfig::default(), corpus).expect("filter");
+) -> Vec<File> {
+    let filter = FileFilter::new(&FileFilterConfig::default(), corpus).expect("filter");
     let root = corpus
         .canonicalize()
         .unwrap_or_else(|_| corpus.to_path_buf());
@@ -140,30 +134,25 @@ pub fn index_candidates(
         None
     };
     let store_meta = meta_storage.as_ref();
-    let source = CandidateSource::new(
+    let source = Scan::new(
         Some(indexes),
         &filter,
         store_meta,
         ScanScope::Index {
-            order: CandidateOrder::default(),
+            order: FileOrder::default(),
             freshness: SnapshotFreshness::Current,
         },
     );
-    let query = SearchQueryBuilder::new(patterns.to_vec())
-        .options(options)
-        .build()
-        .expect("query");
-    let request = GrepRequest {
-        query,
-        streams: Inputs::empty(),
-        conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-        mode: SearchMode::Lines,
-        stats: StatsMode::Off,
-    };
-    Grep::new(source)
-        .resolve_candidates(&request)
-        .expect("candidates")
-        .into_vec()
+    let query = Query::new(patterns.to_vec(), options).expect("query");
+    let searcher = sift_core::Searcher::new(query).expect("searcher");
+    Plan::new(
+        &source,
+        searcher.query(),
+        sift_core::SearchMode::Lines.coverage(),
+    )
+    .resolve(&source)
+    .expect("candidates")
+    .into_vec()
 }
 
 pub fn build_trigram_in_dir(corpus: &Path, trigram_dir: &Path) -> NGramIndex {
@@ -185,10 +174,22 @@ pub fn build_trigram_in_dir(corpus: &Path, trigram_dir: &Path) -> NGramIndex {
         walk: IndexWalkConfig::new(false),
         visibility: VisibilityConfig::default(),
     };
-    NGramIndex::new()
-        .width(GramWidth::TRIGRAM)
-        .build(&config, trigram_dir, &[])
-        .expect("build trigram index")
+    NGramIndex::build(
+        GramWidth::TRIGRAM,
+        GramNorm::Identity,
+        IndexDestination::Directory(trigram_dir),
+        &config,
+    )
+    .expect("build trigram index");
+    let abs_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    NGramIndex::open(
+        GramWidth::TRIGRAM,
+        GramNorm::Identity,
+        trigram_dir,
+        &abs_root,
+        kind,
+    )
+    .expect("open trigram index")
 }
 
 pub fn dir_size(path: &Path) -> u64 {

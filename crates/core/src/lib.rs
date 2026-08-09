@@ -5,26 +5,22 @@
 
 pub mod candidates;
 pub(crate) mod corpus;
-pub mod grep;
 pub mod index;
 pub mod search;
 
-pub use candidates::{CandidateSource, Candidates, ScanScope, SnapshotFreshness};
-pub use corpus::Candidate;
-pub use grep::{
-    ByteInput, CandidateFilter, CandidateFilterConfig, CandidateOrder, CandidateTransform,
-    Error as GrepError, FilterAdmission, GlobConfig, Grep, GrepRequest, HiddenMode, IgnoreConfig,
-    IgnoreSources, TypeFilterRule, VisibilityConfig,
+pub use candidates::{Candidates, Coverage, Plan, Scan, ScanScope, SnapshotFreshness};
+pub use corpus::{
+    AllFiles, File, FileFilter, FileFilterConfig, FileOrder, FileOrderDirection, FileOrderKey,
+    FileWalk, FilterAdmission, GlobConfig, HiddenMode, IgnoreConfig, IgnoreSources, PathDisplay,
+    TypeFilterRule, VisibilityConfig, WalkFile, WalkMetadata, WalkSelector,
 };
 pub use search::{
-    BinaryEvent, BinaryMode, Case, CaseMode, ContextEvent, ContextKind, EventEmission, FileEvent,
-    HitPath, Input, InputConversion, InputEncoding, InputIdentity, Inputs, LineCount, ListedFile,
-    Listing, Match, MatchEvent, MatchTotals, MatchedFile, Narrowing, RegexEngine, Report,
-    SearchBound, SearchEvent, SearchFlags, SearchInputs, SearchMode, SearchOptions, SearchQuery,
-    SearchQueryBuilder, SearchSink, Searcher, SpanCount, Stats, StatsMode, ZeroCounts,
+    BinaryEvent, BinaryMode, ByteInput, Case, CaseMode, ContextEvent, ContextKind,
+    Error as SearchError, Events, FileEvent, Input, InputEncoding, Inputs, LineCount, ListedFile,
+    Listing, Match, MatchEvent, MatchTotals, MatchedFile, Narrowing, Origin, Query, RegexEngine,
+    Report, SearchBound, SearchEvent, SearchFlags, SearchInputs, SearchMode, SearchOptions,
+    SearchSink, Searcher, SpanCount, Stats, StatsMode, ZeroCounts,
 };
-
-pub use ignore::{Walk, WalkBuilder};
 
 pub use index::config::IndexWalkConfig;
 pub use index::meta::StoreMeta;
@@ -32,18 +28,14 @@ pub use index::ngram::{
     Gram, GramNorm, GramWidth, GramWindows, Index as NGramIndex, NGramIndexError,
 };
 pub use index::{
-    CorpusKind, CorpusMeta, CorpusSpec, FileId, FilterMeta, Index, IndexConfig, IndexCoverage,
-    IndexError, IndexId, IndexRecord, IndexWrite, IndexedCorpus, Indexes, PlanMode,
-    QueryPlanOutput, SnapshotId, WalkMeta,
+    CorpusKind, CorpusMeta, CorpusSpec, FileId, Files, FilterMeta, Index, IndexConfig,
+    IndexCoverage, IndexDestination, IndexError, IndexRecord, IndexedCorpus, Indexes, SnapshotId,
+    WalkMeta,
 };
 
 use thiserror::Error;
 
 pub const SIFT_DIR: &str = ".sift";
-pub const FILES_BIN: &str = "files.bin";
-pub const LEXICON_BIN: &str = "lexicon.bin";
-pub const POSTINGS_BIN: &str = "postings.bin";
-pub const GRAMS_BIN: &str = "grams.bin";
 
 /// Top-level umbrella error for all core operations.
 #[derive(Debug, Error)]
@@ -52,7 +44,7 @@ pub enum Error {
     Index(#[from] IndexError),
 
     #[error(transparent)]
-    Search(#[from] grep::Error),
+    Search(#[from] search::Error),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

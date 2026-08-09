@@ -3,13 +3,12 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use sift_core::grep::VisibilityConfig;
+use sift_core::VisibilityConfig;
 use sift_core::{
     CorpusMeta, FilterMeta, IndexCoverage, IndexError, IndexRecord, Indexes, SnapshotId, StoreMeta,
     WalkMeta,
 };
 
-use crate::grep::Argv;
 use std::str::FromStr;
 
 use crate::grep::filter::ByteSize;
@@ -72,6 +71,7 @@ pub struct IndexJob {
     pub max_filesize: Option<u64>,
     pub exclude_paths: Vec<PathBuf>,
     pub sift_dir: PathBuf,
+    pub ignore: IgnoreResolution,
 }
 
 impl IndexJob {
@@ -80,7 +80,7 @@ impl IndexJob {
     /// # Errors
     ///
     /// Returns an error if the index path cannot be canonicalised.
-    pub fn resolve(req: IndexRequest) -> anyhow::Result<Self> {
+    pub fn resolve(req: IndexRequest, ignore: IgnoreResolution) -> anyhow::Result<Self> {
         let canonical = req.path.canonicalize()?;
         let (root, include_paths, corpus_kind) = if canonical.is_file() {
             let parent = canonical.parent().unwrap_or(&canonical).to_path_buf();
@@ -113,19 +113,19 @@ impl IndexJob {
             max_filesize,
             exclude_paths,
             sift_dir: req.sift_dir,
+            ignore,
         })
     }
 
     /// Run `sift index build` or `sift index update`.
     #[must_use]
-    pub fn run(&self, daemon: Option<&Daemon>, argv: &Argv<'_>) -> ExitCode {
+    pub fn run(&self, daemon: Option<&Daemon>) -> ExitCode {
         if self.execution == IndexExecution::Background {
-            return self.run_background(daemon, argv);
+            return self.run_background(daemon);
         }
 
-        let ignore_res = IgnoreResolution::resolve(argv);
         let existing_meta = StoreMeta::read(&self.sift_dir).ok();
-        let meta = self.store_meta(ignore_res, existing_meta.as_ref());
+        let meta = self.store_meta(self.ignore, existing_meta.as_ref());
 
         let mut indexes = match Indexes::open(&self.sift_dir, &meta) {
             Ok(s) => s,
@@ -159,7 +159,7 @@ impl IndexJob {
             return ExitCode::from(2);
         }
 
-        if let Err(e) = SnapshotRefresh::new(&self.sift_dir, &meta, &[]).run(&mut indexes) {
+        if let Err(e) = SnapshotRefresh::new(&self.sift_dir, &meta).run(&mut indexes) {
             eprintln!("sift: {e}");
             return ExitCode::from(2);
         }
@@ -182,10 +182,9 @@ impl IndexJob {
         ExitCode::SUCCESS
     }
 
-    fn run_background(&self, daemon: Option<&Daemon>, argv: &Argv<'_>) -> ExitCode {
-        let ignore_res = IgnoreResolution::resolve(argv);
+    fn run_background(&self, daemon: Option<&Daemon>) -> ExitCode {
         let existing_meta = StoreMeta::read(&self.sift_dir).ok();
-        let meta = self.store_meta(ignore_res, existing_meta.as_ref());
+        let meta = self.store_meta(self.ignore, existing_meta.as_ref());
 
         let indexes = match Indexes::open(&self.sift_dir, &meta) {
             Ok(s) => s,
@@ -274,7 +273,7 @@ impl IndexJob {
             FilterMeta {
                 visibility: VisibilityConfig {
                     hidden: ignore_res.hidden_mode(),
-                    ignore: sift_core::grep::IgnoreConfig {
+                    ignore: sift_core::IgnoreConfig {
                         sources: ignore_res.sources,
                         require_git: ignore_res.require_git,
                         custom_files: Vec::new(),
@@ -290,45 +289,26 @@ impl IndexJob {
 pub struct SnapshotRefresh<'a> {
     sift_dir: &'a Path,
     meta: &'a StoreMeta,
-    paths: &'a [PathBuf],
 }
 
 impl<'a> SnapshotRefresh<'a> {
     #[must_use]
-    pub const fn new(sift_dir: &'a Path, meta: &'a StoreMeta, paths: &'a [PathBuf]) -> Self {
-        Self {
-            sift_dir,
-            meta,
-            paths,
-        }
+    pub const fn new(sift_dir: &'a Path, meta: &'a StoreMeta) -> Self {
+        Self { sift_dir, meta }
     }
 
-    /// Rebuild or update index files.
-    ///
-    /// Empty `paths` → full corpus. Non-empty → partial rel-paths only.
+    /// Rebuild or update index files for the full configured corpus.
     ///
     /// # Errors
     ///
     /// Propagates build/update failures from the underlying index kinds.
     pub fn run(self, indexes: &mut Indexes) -> sift_core::Result<ReconcileOutcome> {
         let build = self.meta.write_config();
-        let catalog = self.meta.catalog()?;
-        let (snapshot_id, changed) = if self.paths.is_empty() {
-            if indexes.current_id().is_none() {
-                (SnapshotId::new(indexes.build(&catalog, &build, &[])?), true)
-            } else {
-                match indexes.update(&catalog, &[])? {
-                    Some(id) => (SnapshotId::new(id), true),
-                    None => (Self::current_snapshot_id(indexes, self.sift_dir)?, false),
-                }
-            }
-        } else if indexes.current_id().is_none() {
-            (
-                SnapshotId::new(indexes.build(&catalog, &build, self.paths)?),
-                true,
-            )
+        let catalog = self.meta.catalog();
+        let (snapshot_id, changed) = if indexes.current_id().is_none() {
+            (SnapshotId::new(indexes.build(catalog, &build)?), true)
         } else {
-            match indexes.update(&catalog, self.paths)? {
+            match indexes.update(catalog)? {
                 Some(id) => (SnapshotId::new(id), true),
                 None => (Self::current_snapshot_id(indexes, self.sift_dir)?, false),
             }

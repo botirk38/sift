@@ -1,23 +1,25 @@
 pub mod artifacts;
 pub mod config;
-pub mod contract;
 pub mod error;
+pub mod files;
+mod indexes;
 pub mod kinds;
 pub mod meta;
 pub mod mmap;
 pub mod ngram;
 mod paths;
-mod search;
+pub mod record;
 pub mod snapshot;
 
-pub use artifacts::{IndexDestination, IndexSource};
+pub use artifacts::IndexDestination;
 pub use config::{CorpusKind, CorpusSpec, IndexConfig, IndexWalkConfig};
-pub use contract::{Index, IndexRecord, IndexWrite};
 pub use error::IndexError;
-pub use kinds::{FileId, IndexId, PlanMode, QueryPlanOutput};
+pub use files::Files;
+pub use indexes::Indexes;
+pub use kinds::FileId;
 pub use meta::{CorpusMeta, FilterMeta, IndexCoverage, StoreMeta, WalkMeta};
 pub use paths::IndexedCorpus;
-pub use search::Indexes;
+pub use record::{Index, IndexRecord};
 pub use snapshot::SnapshotId;
 
 #[cfg(test)]
@@ -52,12 +54,6 @@ mod tests {
     fn file_id_new_and_get() {
         let id = FileId::new(42);
         assert_eq!(id.get(), 42);
-    }
-
-    #[test]
-    fn index_id_new_and_get() {
-        let id = IndexId::new(7);
-        assert_eq!(id.get(), 7);
     }
 
     #[test]

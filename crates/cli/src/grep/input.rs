@@ -5,7 +5,7 @@ use std::process::Command;
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use grep_cli::DecompressionReaderBuilder;
-use sift_core::Candidate;
+use sift_core::File;
 
 #[derive(Debug, Clone, Default)]
 pub struct ContentTransformConfig {
@@ -53,7 +53,7 @@ impl ContentTransform {
     /// # Errors
     ///
     /// Returns an error if transformed content cannot be read.
-    pub fn read_candidate(&self, candidate: &Candidate) -> sift_core::Result<Vec<u8>> {
+    pub fn read_candidate(&self, candidate: &File) -> sift_core::Result<Vec<u8>> {
         if let Some(pre) = &self.pre
             && pre.matches(candidate)
         {
@@ -74,12 +74,6 @@ impl ContentTransform {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes)?;
         Ok(bytes)
-    }
-}
-
-impl sift_core::grep::CandidateTransform for ContentTransform {
-    fn read_candidate(&self, candidate: &Candidate) -> sift_core::Result<Vec<u8>> {
-        Self::read_candidate(self, candidate)
     }
 }
 
@@ -164,7 +158,8 @@ impl InputSources {
     ///
     /// Returns `false` for stdin-only runs (explicit `-`, implicit pipe, or
     /// empty explicit `-` with no paths). Mixed runs (paths plus stdin) return
-    /// `true`; callers resolve corpus candidates and [`Self::search_inputs`]
+    /// `true`; callers resolve corpus candidates and search them via
+    /// [`sift_core::Searcher`].
     /// appends streams.
     #[must_use]
     pub const fn resolve_candidates(&self) -> bool {
@@ -178,36 +173,16 @@ impl InputSources {
 impl InputSources {
     /// Assemble stdin streams and candidate-to-input conversion for search.
     #[must_use]
-    pub fn search_inputs<'a>(
-        &'a self,
-        explicit_files: &'a [PathBuf],
-        path_display: crate::format::PathDisplay,
-        transform: Option<&'a ContentTransform>,
-    ) -> (
-        sift_core::Inputs<'a>,
-        sift_core::search::InputConversion<'a>,
-    ) {
-        use sift_core::grep::{ByteInput, PathDisplay as CorePathDisplay};
-        use sift_core::search::InputConversion;
-
-        let path_display = match path_display {
-            crate::format::PathDisplay::Relative => CorePathDisplay::Relative,
-            crate::format::PathDisplay::Absolute => CorePathDisplay::Absolute,
-        };
+    pub fn stdin_streams(&self) -> sift_core::Inputs<'_> {
         let mut streams = sift_core::Inputs::empty();
         for bytes in &self.stdin_bytes {
-            streams = streams.with_stream(ByteInput {
-                path: std::borrow::Cow::Borrowed("<stdin>"),
-                bytes: std::borrow::Cow::Borrowed(bytes.as_slice()),
+            streams = streams.with_stream(sift_core::ByteInput {
+                label: Cow::Borrowed("<stdin>"),
+                bytes: Cow::Borrowed(bytes.as_slice()),
                 explicit: true,
             });
         }
-        let conversion = InputConversion::new(
-            explicit_files,
-            path_display,
-            transform.map(|value| value as &dyn sift_core::grep::CandidateTransform),
-        );
-        (streams, conversion)
+        streams
     }
 }
 
@@ -223,7 +198,7 @@ struct Preprocessor {
 }
 
 impl Preprocessor {
-    fn matches(&self, candidate: &Candidate) -> bool {
+    fn matches(&self, candidate: &File) -> bool {
         self.globs.matches(candidate.rel_path())
     }
 

@@ -17,57 +17,58 @@ IndexRecord / Box<dyn Index> ──Indexes::build──> snapshot on disk
                                       │
                 Plan::new → Plan::resolve
                                       │
-                                 Grep::search
+                            Searcher::execute
 ```
 
 | Type | Role |
 |------|------|
-| `Index` | Kind contract (`build` / `open` / `query` / `candidate` / `update`) |
-| `IndexRecord` | Persisted `{ kind, params }` |
+| `Index` | Opened kind (`query` / `coverage` / `all_file_ids` / `update`) |
+| `IndexRecord` | Typed catalog knobs (`build` / `open`) |
+| `Files` | Snapshot-owned `FileId → File` map |
 | `IndexConfig` | Corpus/walk/visibility for a write |
-| `Indexes` | Lifecycle + search |
-| `Grep` | Resolve candidates + run search |
+| `Indexes` | Build/update + query/hydrate |
+| `Query` / `Searcher` | Patterns + execute |
+| `Plan` / `Candidates` | Pure plan then resolve |
 
 ## Modules
 
 | Module | Description |
 |--------|-------------|
-| [`index/`](src/index/) | Contract, snapshot, orchestrator |
+| [`index/`](src/index/) | Record, Files, Snapshot, Indexes |
 | [`index/ngram/`](src/index/ngram/) | N-gram index implementation |
-| [`grep/`](src/grep/) | Public search API |
+| [`search/`](src/search/) | Query, Searcher, inputs, events |
 | [`candidates/`](src/candidates/) | Planning and resolution |
 
 ## Search API
 
 ```rust
 use sift_core::{
-    CandidateSource, Grep, GrepRequest, Indexes, IndexNarrowing, Inputs, InputConversion,
-    PathDisplay, ScanScope, SnapshotFreshness, SearchMode, SearchOptions, SearchQuery, StatsMode,
-    StoreMeta,
+    Scan, Events, Inputs, Plan, Query, ScanScope, SearchInputs, SearchMode,
+    SearchOptions, Searcher, SnapshotFreshness, StatsMode,
 };
 
-let indexes = Indexes::open(&sift_dir, &meta)?;
-let source = CandidateSource::new(
-    &indexes,
+let searcher = Searcher::new(Query::new(vec!["pattern".into()], SearchOptions::default())?)?;
+let source = Scan::new(
+    indexes.as_ref(),
     &filter,
-    Some(indexes.meta()),
+    store_meta.as_ref(),
     ScanScope::Index {
         order: Default::default(),
         freshness: SnapshotFreshness::Current,
     },
-    IndexNarrowing::Allowed,
 );
-
-let grep = Grep::new(source);
-let request = GrepRequest {
-    query: SearchQuery::new(vec!["pattern".into()])?.options(SearchOptions::default()),
-    streams: Inputs::empty(),
-    conversion: InputConversion::new(&[], PathDisplay::Relative, None),
-    mode: SearchMode::Lines,
-    stats: StatsMode::Off,
-};
-
-let report = grep.search(request)?;
+let candidates = Plan::new(&source, searcher.query(), SearchMode::Lines.coverage())
+    .resolve(&source)?;
+let report = searcher.execute(
+    SearchInputs {
+        candidates,
+        streams: Inputs::empty(),
+        explicit: &[],
+    },
+    StatsMode::Off,
+    SearchMode::Lines,
+    Events::Discard,
+)?;
 ```
 
 Formatting lives in `sift-grep`.
@@ -77,6 +78,4 @@ Formatting lives in `sift-grep`.
 ```bash
 cargo test -p sift-core
 cargo bench -p sift-core --bench index
-cargo bench -p sift-core --bench grep
-cargo bench -p sift-core --bench candidates
 ```

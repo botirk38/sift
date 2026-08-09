@@ -9,16 +9,16 @@ pub use identity::SnapshotId;
 pub use lease::SnapshotLease;
 pub use manifest::SnapshotManifest;
 pub use store::disk::DiskSnapshotStore;
-pub use store::{SnapshotRead, SnapshotStore, SnapshotWrite, SnapshotWriterSession};
+pub use store::{SnapshotRead, SnapshotWrite};
 
 use std::path::{Path, PathBuf};
 
-use super::IndexSource;
 use super::config::CorpusKind;
-use super::contract::Index;
 use super::error::IndexError;
+use super::files::Files;
+use super::record::Index;
 
-/// An immutable opened snapshot and the indexes it contains.
+/// An immutable opened snapshot: shared [`Files`], opened indexes, and lease.
 pub struct Snapshot {
     id: Option<SnapshotId>,
     root: PathBuf,
@@ -31,6 +31,7 @@ enum SnapshotState {
 }
 
 struct CurrentSnapshot {
+    files: Files,
     indexes: Vec<Box<dyn Index>>,
     _lease: SnapshotLease,
 }
@@ -49,6 +50,7 @@ impl Snapshot {
     pub(crate) fn committed(
         id: SnapshotId,
         root: PathBuf,
+        files: Files,
         indexes: Vec<Box<dyn Index>>,
         lease: SnapshotLease,
     ) -> Self {
@@ -56,6 +58,7 @@ impl Snapshot {
             id: Some(id),
             root,
             state: SnapshotState::Current(CurrentSnapshot {
+                files,
                 indexes,
                 _lease: lease,
             }),
@@ -77,6 +80,15 @@ impl Snapshot {
         match &self.state {
             SnapshotState::Empty => &[],
             SnapshotState::Current(c) => &c.indexes,
+        }
+    }
+
+    /// Shared file table for this snapshot.
+    #[must_use]
+    pub const fn files(&self) -> Option<&Files> {
+        match &self.state {
+            SnapshotState::Empty => None,
+            SnapshotState::Current(c) => Some(&c.files),
         }
     }
 
@@ -131,9 +143,9 @@ impl Snapshot {
             })?;
 
             let mut indexes: Vec<Box<dyn Index>> = Vec::new();
+            let mut files = None;
             for record in &manifest.indexes {
                 let namespace = record.name();
-                let handle = record.to_index()?;
                 let index_dir = snap_dir.join(&namespace);
                 if !index_dir.exists() {
                     return Err(crate::Error::Io(std::io::Error::new(
@@ -141,11 +153,17 @@ impl Snapshot {
                         format!("index namespace {namespace} missing under snapshot"),
                     )));
                 }
-                let opened = handle.open(IndexSource::Directory(&index_dir), &root, corpus_kind)?;
-                indexes.push(opened);
+                if files.is_none() {
+                    files = Some(Files::open(&index_dir, root.clone())?);
+                }
+                indexes.push(record.open(&index_dir, &root, corpus_kind)?);
             }
 
-            return Ok(Self::committed(manifest.id, root, indexes, lease));
+            let Some(files) = files else {
+                return Ok(Self::empty(root));
+            };
+
+            return Ok(Self::committed(manifest.id, root, files, indexes, lease));
         }
 
         Err(crate::Error::Io(std::io::Error::new(

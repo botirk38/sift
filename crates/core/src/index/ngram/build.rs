@@ -259,7 +259,7 @@ mod tests {
     use crate::corpus::filter::IgnoreConfig;
     use crate::corpus::walk::LinkTraversal;
     use crate::corpus::walk::{FileWalk, WalkFile};
-    use crate::grep::{CandidateFilter, CandidateFilterConfig, VisibilityConfig};
+    use crate::corpus::{FileFilter, FileFilterConfig, VisibilityConfig};
     use crate::index::config::IndexWalkConfig;
     use crate::index::ngram::gram::GramWidth;
     use crate::index::ngram::storage::postings::Postings;
@@ -337,12 +337,12 @@ mod tests {
     struct FilterParity;
 
     impl FilterParity {
-        fn filter_config(build: &IndexConfig<'_>) -> CandidateFilterConfig {
-            CandidateFilterConfig {
+        fn filter_config(build: &IndexConfig<'_>) -> FileFilterConfig {
+            FileFilterConfig {
                 exclude_paths: build.corpus.exclude_paths.to_vec(),
                 visibility: build.visibility.clone(),
                 follow_links: build.corpus.follow_links,
-                ..CandidateFilterConfig::default()
+                ..FileFilterConfig::default()
             }
         }
 
@@ -520,8 +520,8 @@ mod tests {
             .into_iter()
             .map(WalkFile::into_rel_path)
             .collect();
-        let filter = CandidateFilter::new(&FilterParity::filter_config(&config), tmp.path())
-            .expect("filter");
+        let filter =
+            FileFilter::new(&FilterParity::filter_config(&config), tmp.path()).expect("filter");
 
         for rel in FilterParity::all_corpus_files(tmp.path()) {
             let should_index = filter.matches_path(&rel);

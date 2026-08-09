@@ -6,7 +6,7 @@ Guidelines for AI agents working on the sift codebase.
 
 Sift is an indexed code search engine written in Rust, built around **composable on-disk indexes**. It builds indexes tuned to the search workload, then uses them to narrow candidate files before running the full regex engine.
 
-The core architecture treats code search like database query execution: every kind implements one `Index` trait; `Indexes` orchestrates build/update/search and intersects `query` results. Candidate resolution goes through `Grep::resolve_candidates` / `Plan`. Today the default index is runtime-width N-gram (trigram default).
+The core architecture treats code search like database query execution: every kind implements one `Index` trait; `Indexes` orchestrates build/update/search and intersects `query` results. File resolution goes through `Plan::resolve`. Today the default index is runtime-width N-gram (trigram default).
 
 The candidate pipeline is **plan (pure) → resolve (I/O) → search**: `Plan::new` decides discovery without querying indexes; `Plan::resolve` is the single I/O boundary (query + walk + order); `Searcher` consumes lazy `Candidates` (`into_vec()` materializes all).
 
@@ -42,17 +42,40 @@ evidence for performance PRs.
 | `crates/core/src/candidates/` | Index-agnostic candidate description, planning, and resolution |
 | `crates/core/src/index/` | `Index` trait, `IndexRecord`, `Indexes` orchestrator, `Snapshot` |
 | `crates/core/src/index/ngram/` | N-gram `Index` impl (first shipped kind) |
-| `crates/core/src/grep/` | Grep search API and matcher execution |
-| `crates/cli/` | `sift-cli`: `sift` binary (clap CLI over core) |
+| `crates/core/src/search/` | Query, Searcher, Origin, SearchMode, report/events |
+| `crates/core/src/corpus/` | `File`, `FileFilter`, `FileOrder`, walk |
+| `crates/cli/` | `sift-grep`: `sift` / `sift-daemon` binaries (clap CLI over core) |
 | `fuzz/` | `cargo-fuzz` targets (standalone package, nightly) |
 | `benchsuite/` | Comparative `rg` vs `sift` benchmarks |
 | `scripts/` | `fuzz.sh`, `install.sh`, `release.sh` |
 | `skills/` | Agent usage skill for searching with `sift` (`npx skills`); CLI development → `crates/cli/AGENTS.md` |
 | `docs/` | Performance snapshots, compatibility matrix |
 
+## Domain nouns
+
+| Type | Module | Role |
+|------|--------|------|
+| `Indexes` | `index` | `.sift` directory: meta + current snapshot; `open` / `load` / `build` / `update` |
+| `Snapshot` | `index/snapshot` | Committed opened indexes, lease, and `Files` |
+| `Files` | `index` | Snapshot-owned `FileId → File` map |
+| `Index` | `index` trait + `ngram` | Opened index only |
+| `IndexRecord` | `index` | Catalog knobs; `build` / `open` → `Box<dyn Index>` |
+| `Plan` | `candidates` | Pure discovery decision |
+| `Candidates` | `candidates` | Output of `Plan::resolve` |
+| `Query` | `search` | Patterns + options |
+| `Searcher` | `search` | `Searcher::new(Query)` + `execute` |
+| `Report` | `search` | Listing + optional stats |
+| `File` | `corpus` | Indexed path identity |
+| `Origin` | `search` | `File` or `Stream { label }` search identity |
+| `Run` | `cli/grep` | Resolved search intent; `execute` (no `Argv`) |
+| `IndexJob` | `cli/index` | Resolved index lifecycle; `run` |
+| `Daemon` | `cli/index/daemon` | Background work; modules `ipc`, `watcher`, `refresh` |
+
+Values (not aggregates): `StoreMeta`, `IndexConfig`, `SearchMode`, `StatsMode`, `Scan` / `ScanScope`, `FileFilter`, `FileOrder`, `Coverage`. Printing stays under `cli/format`.
+
 ## Key Conventions
 
-- **No `unsafe`** except in `index/mmap.rs` (documented safety invariant).
+- **No `unsafe`** except in `index/mmap.rs` (documented safety invariant). Workspace does not deny `unsafe_code` so mmap needs no `#[allow]`.
 - **Strict clippy:** workspace uses `pedantic + nursery + cargo` warnings; CI uses `-D warnings`.
 - Fix lints at the root cause. `#[allow]` is **never** permitted.
 - **Never** add free helper functions or callback/`FnOnce` APIs (see Function
@@ -76,20 +99,21 @@ Use short, descriptive kebab-case with a type prefix:
 
 ## Core API Entry Points
 
-`Indexes::open(dir, meta)` (lifecycle) / `Indexes::load(dir) -> Result<Option<Indexes>>` (search) → `build` / `update` → `Grep::resolve_candidates` → `Searcher::execute`. CLI: `IndexJob::run` / `SnapshotRefresh::run` for lifecycle; `Run::execute` for search. See `crates/core/README.md`.
+`Indexes::open(dir, meta)` (lifecycle) / `Indexes::load(dir) -> Result<Option<Indexes>>` (search) → `build` / `update` → `Plan::resolve` → `Searcher::execute`. CLI: `IndexJob::run` / `SnapshotRefresh::run` for lifecycle; `Run::execute` for search; `Daemon` / `DaemonOrchestrator` for background refresh. See `crates/core/README.md`.
 
 ## Index layer
 
 | Type | Role |
 |------|------|
-| `Index` trait | Uniform kind: `build` / `open` / `query` / `candidate` / `update` |
-| `IndexRecord` | Persisted `{ kind, params }` in meta/manifest |
+| `Index` trait | Opened kind only: `query` / `coverage` / `all_file_ids` / `update` |
+| `IndexRecord` | Typed catalog knobs; `build` / `open` |
 | `IndexConfig` | Corpus/walk/visibility for a write |
-| `IndexWrite` | `{ dest, config, paths }` for create and refresh |
-| `Indexes` | Lifecycle + search orchestrator |
+| `IndexDestination` | Directory or snapshot write target |
+| `Indexes` | Build/update + query/hydrate orchestrator |
+| `Files` | Snapshot-owned `FileId → File` map |
 | `StoreMeta` | Store metadata |
 
-**Do not add to core:** `from_single`, `Indexes::candidates(SearchQuery)`, `reconcile`, `unindexed_hit_paths`, or other caller-specific helpers. Callers compose `Indexes::open`, `indexed_corpus().retain_unindexed`, and `Grep::resolve_candidates`.
+**Do not add to core:** `from_single`, `Indexes::candidates(Query)`, `reconcile`, `unindexed_hit_paths`, or other caller-specific helpers. Callers compose `Indexes::open`, `indexed_corpus().retain_unindexed`, and `Plan::resolve`.
 
 ## Architecture & Design
 
@@ -150,7 +174,7 @@ done.
 When adding request/config structs, name them after the domain decision they
 represent, not the mechanical data they carry. Avoid vague bundles such as
 `Context`, `State`, `Read`, or `Options` unless those are the actual domain
-terms. Prefer names like `CandidateSource`, `ScanScope`, and
+terms. Prefer names like `Scan`, `ScanScope`, and
 `IndexCoverage` that tell callers how to reason about the API.
 
 Do not expose low-level planner knobs through higher-level APIs as loose fields.
@@ -248,29 +272,26 @@ Examples of **good** names that describe the domain action:
 - `posting_ids` with a `GramMatch` (or similar) argument
 
 When a lifecycle function needs to write to either a directory or a
-snapshot store, use a domain enum instead of `*_to_dir` / `*_into` variants:
+snapshot store, use a destination enum instead of `*_to_dir` / `*_into` variants:
 
 ```rust
 // Do this:
-fn build(&self, write: IndexWrite<'_>) -> Result<()>;
+fn build(&self, dest: IndexDestination<'_>, config: &IndexConfig<'_>) -> Result<()>;
 
 // NOT this (parallel variants):
 fn build(config, output_dir) -> Result;     // directory
 fn build_into(config, writer, ns) -> Result; // snapshot
 ```
 
-## IndexSource / IndexDestination / IndexWrite
+## IndexDestination
 
-Index lifecycle uses destination/source domain types and a single write request:
+Index writes take a destination and corpus config:
 
-- `IndexSource` — where index data is read from:
-  `Directory(&Path)` or `Snapshot { reader, namespace }`.
-- `IndexDestination` — where index data is written to:
-  `Directory(&Path)` or `Snapshot { writer, namespace }`.
-- `IndexWrite` — `{ dest, config, paths }` for both `build` and `update`
-  (update differs only because `&self` already holds prior index data).
+- `IndexDestination` — `Directory(&Path)` or `Snapshot { writer, namespace }`.
+- `build(dest, config)` / `update(dest, config)` — full corpus from `config`.
+- Open is path-only: `IndexRecord::open(dir, root, corpus_kind)`.
 
-See `crates/core/src/index/artifacts.rs`, `contract.rs`, and `ngram/`.
+See `crates/core/src/index/artifacts.rs`, `record.rs`, and `ngram/`.
 
 ## Module Organization
 
@@ -326,3 +347,18 @@ Clap parses `*Decl` flag groups; **`Argv` resolves effective runtime values**
   - Point `--sift-dir` at a writable index dir, e.g.:
     `target/debug/sift --sift-dir /tmp/demo/.sift index build --wait /tmp/demo`
     then `target/debug/sift --sift-dir /tmp/demo/.sift "pattern" /tmp/demo`.
+
+## Learned User Preferences
+
+- When work is split across multiple PRs, stop after each PR and pull from master before starting the next.
+- Prefer unifying types across layers over adapter or translation layers between near-duplicates.
+- Treat narrowly crate-restricted `pub(in crate::...)` wrapper enums as a smell; prefer domain types with clear ownership.
+- Prefer search identity as `Origin::{File, Stream}` (not `Candidate`); stream identity is a string `label`, not a filesystem `Path`.
+- Prefer printer/JSON rendering via match on `Origin` variants; do not Path-force stream labels for API uniformity.
+- Prefer enums over bools for real alternatives (`Quiet`, `InvertMatch`, `MatchEmissionMode`, `ZeroCounts`).
+- Minimize helper methods as well as free functions—only when absolutely justified.
+
+## Learned Workspace Facts
+
+- Core search lives under `crates/core/src/search/` (`Query`, `Searcher`, `Origin`, `SearchInputs`, `SearchError`); `Plan` lives under `candidates/`. There is no `sift_core::grep` module or `Grep` facade. The CLI keeps a local `grep` module for `Run`.
+- Daemon IPC is enum-shaped (`DaemonRequest` / `DaemonResponse`); accept loop forwards `Event::Client` — no `FnMut` handler API.

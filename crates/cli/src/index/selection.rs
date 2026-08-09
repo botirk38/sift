@@ -4,7 +4,7 @@
 //! argv so options attach to the preceding `--index` (ripgrep-style order).
 
 use clap::{Args, ValueEnum};
-use sift_core::{GramNorm, GramWidth, Index, IndexRecord, NGramIndex};
+use sift_core::{GramNorm, GramWidth, IndexRecord};
 
 use crate::grep::Argv;
 
@@ -74,7 +74,7 @@ impl Pending {
                 let norm = self
                     .norm
                     .map_or(GramNorm::Identity, GramNormArg::to_gram_norm);
-                Ok(NGramIndex::new().width(width).norm(norm).to_record())
+                Ok(IndexRecord::ngram_norm(width, norm))
             }
         }
     }
@@ -253,8 +253,7 @@ mod tests {
         .expect("resolve")
         .expect("selection");
         assert_eq!(selection.indexes.len(), 1);
-        let index = selection.indexes[0].to_index().expect("to_index");
-        assert_eq!(index.name(), "ngram-5-ascii-lower");
+        assert_eq!(selection.indexes[0].name(), "ngram-5-ascii-lower");
     }
 
     #[test]

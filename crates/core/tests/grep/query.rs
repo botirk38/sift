@@ -1,10 +1,9 @@
 use std::fs;
 use std::path::Path;
 
-use sift_core::search::{SearchOptions, SearchQueryBuilder};
 use sift_core::{
-    CorpusKind, CorpusMeta, FileId, FilterMeta, IndexCoverage, IndexRecord, Indexes, PlanMode,
-    StoreMeta, VisibilityConfig, WalkMeta,
+    CorpusKind, CorpusMeta, FileId, FilterMeta, IndexCoverage, IndexRecord, Indexes, StoreMeta,
+    VisibilityConfig, WalkMeta,
 };
 use tempfile::TempDir;
 
@@ -58,39 +57,6 @@ fn open_broken_current_errors() {
     fs::write(sift_dir.join("CURRENT"), "nonexistent-snapshot-id\n").expect("write");
     let meta = default_meta();
     assert!(Indexes::open(&sift_dir, &meta).is_err());
-}
-
-#[test]
-fn explain_reports_indexed_for_literal() {
-    let tmp = TempDir::new().expect("tempdir");
-    let corpus = tmp.path().join("corpus");
-    fs::create_dir_all(&corpus).expect("mkdir");
-    fs::write(corpus.join("a.txt"), "alpha beta\n").expect("write");
-
-    let index = build_trigram_in_dir(&corpus, &tmp.path().join("trigram"));
-    let query = SearchQueryBuilder::new(vec!["foo.*".to_string()])
-        .options(SearchOptions::default())
-        .build()
-        .expect("query");
-    let output = index.explain(&query);
-    assert_eq!(output.pattern, "foo.*");
-    assert_eq!(output.mode, PlanMode::IndexedCandidates);
-}
-
-#[test]
-fn explain_reports_full_scan_without_literal() {
-    let tmp = TempDir::new().expect("tempdir");
-    let corpus = tmp.path().join("corpus");
-    fs::create_dir_all(&corpus).expect("mkdir");
-    fs::write(corpus.join("a.txt"), "alpha beta\n").expect("write");
-
-    let index = build_trigram_in_dir(&corpus, &tmp.path().join("trigram"));
-    let query = SearchQueryBuilder::new(vec![r"\w{5}\s+\w{5}".to_string()])
-        .options(SearchOptions::default())
-        .build()
-        .expect("query");
-    let output = index.explain(&query);
-    assert_eq!(output.mode, PlanMode::FullScan);
 }
 
 #[test]

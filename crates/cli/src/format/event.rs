@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write as _;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -10,11 +9,12 @@ use sift_core::search::{
 };
 
 use crate::format::output::format::ColumnOverflow;
-use crate::format::output::mode::{OutputEmission, PrintMode};
+use crate::format::output::mode::OutputEmission;
 use crate::format::output::style::{
     ColorOutput, FilenameMode, LineStyleFlags, PrintSeparators, RecordTerminator,
 };
 use crate::format::output::{PrintFormat, PrintSpec};
+use sift_core::SearchMode;
 
 #[derive(Default)]
 struct FileJsonStats {
@@ -30,16 +30,15 @@ pub(super) struct EventRenderer<'a> {
     binary_mode: BinaryMode,
     context_requested: bool,
     bytes: Vec<u8>,
-    json_stats: HashMap<Arc<Path>, FileJsonStats>,
-    headings: HashSet<Arc<Path>>,
-    binary_paths: HashSet<Arc<Path>>,
+    json_stats: HashMap<Arc<str>, FileJsonStats>,
+    headings: HashSet<Arc<str>>,
+    binary_paths: HashSet<Arc<str>>,
 }
 
 impl<'a> EventRenderer<'a> {
     pub(super) fn new(
         output: PrintSpec,
         separators: &'a PrintSeparators,
-        _extras: crate::format::collection::PrintExtras,
         started: Instant,
         binary_mode: BinaryMode,
         context_requested: bool,
@@ -75,21 +74,28 @@ impl<'a> EventRenderer<'a> {
     }
 
     fn render_summary_modes(&mut self, report: &Report) {
+        let path_display = self.output.lines.path_display;
         match (&self.output.mode, &report.listed) {
-            (PrintMode::Count, Listing::LineCounts(counts)) => {
+            (SearchMode::CountLines { .. }, Listing::LineCounts(counts)) => {
                 for count in counts {
-                    self.write_path_record(count.file.path.as_ref(), &count.lines.to_string());
+                    self.write_path_record(
+                        count.file.display(path_display).as_ref(),
+                        &count.lines.to_string(),
+                    );
                 }
             }
-            (PrintMode::CountMatches, Listing::SpanCounts(counts)) => {
+            (SearchMode::CountMatches { .. }, Listing::SpanCounts(counts)) => {
                 for count in counts {
-                    self.write_path_record(count.file.path.as_ref(), &count.spans.to_string());
+                    self.write_path_record(
+                        count.file.display(path_display).as_ref(),
+                        &count.spans.to_string(),
+                    );
                 }
             }
-            (PrintMode::FilesWithMatches, Listing::MatchingPaths(files))
-            | (PrintMode::FilesWithoutMatch, Listing::NonMatchingPaths(files)) => {
+            (SearchMode::FilesWithMatches | SearchMode::Paths, Listing::MatchingPaths(files))
+            | (SearchMode::FilesWithoutMatch, Listing::NonMatchingPaths(files)) => {
                 for file in files {
-                    self.write_path_only(file.path.as_ref());
+                    self.write_path_only(file.display(path_display).as_ref());
                 }
             }
             _ => {}
@@ -99,23 +105,27 @@ impl<'a> EventRenderer<'a> {
     fn write_text_match(&mut self, event: &MatchEvent) {
         if matches!(
             self.output.mode,
-            PrintMode::Count
-                | PrintMode::CountMatches
-                | PrintMode::FilesWithMatches
-                | PrintMode::FilesWithoutMatch
+            SearchMode::CountLines { .. }
+                | SearchMode::CountMatches { .. }
+                | SearchMode::FilesWithMatches
+                | SearchMode::FilesWithoutMatch
+                | SearchMode::Paths
         ) {
             return;
         }
-        if self.binary_paths.contains(&event.path)
+        if self.binary_paths.contains(event.origin.key().as_ref())
             && !matches!(self.binary_mode, BinaryMode::AsText)
         {
             return;
         }
-        if self.output.lines.heading() && self.headings.insert(Arc::clone(&event.path)) {
-            self.write_display_path(event.path.as_ref());
+        let path_display = self.output.lines.path_display;
+        if self.output.lines.heading()
+            && self.headings.insert(Arc::from(event.origin.key().as_ref()))
+        {
+            self.write_display_path(event.origin.display(path_display).as_ref());
             self.terminator();
         }
-        if matches!(self.output.mode, PrintMode::OnlyMatching) {
+        if matches!(self.output.mode, SearchMode::Matches) {
             for (index, range) in event.ranges.iter().enumerate() {
                 self.write_prefix(event, range.start);
                 if let Some(replacement) = event.replacement_matches.get(index) {
@@ -129,7 +139,7 @@ impl<'a> EventRenderer<'a> {
         }
         let line = event.replacement.as_deref().unwrap_or(&event.bytes);
         let line = if self.output.lines.trim() {
-            trim_ascii(line)
+            Self::trim_ascii(line)
         } else {
             line
         };
@@ -144,14 +154,14 @@ impl<'a> EventRenderer<'a> {
     }
 
     fn write_text_context(&mut self, event: &ContextEvent) {
-        if !matches!(
-            self.output.mode,
-            PrintMode::Standard | PrintMode::OnlyMatching
-        ) {
+        if !matches!(self.output.mode, SearchMode::Lines | SearchMode::Matches) {
             return;
         }
         self.write_display_prefix(
-            event.path.as_ref(),
+            event
+                .origin
+                .display(self.output.lines.path_display)
+                .as_ref(),
             &self.separators.field_context_separator,
         );
         if self.line_numbers()
@@ -161,7 +171,7 @@ impl<'a> EventRenderer<'a> {
             self.bytes.extend(&self.separators.field_context_separator);
         }
         let bytes = if self.output.lines.trim() {
-            trim_ascii(&event.bytes)
+            Self::trim_ascii(&event.bytes)
         } else {
             &event.bytes
         };
@@ -171,7 +181,13 @@ impl<'a> EventRenderer<'a> {
     }
 
     fn write_prefix(&mut self, event: &MatchEvent, column_offset: usize) {
-        self.write_display_prefix(event.path.as_ref(), &self.separators.field_match_separator);
+        self.write_display_prefix(
+            event
+                .origin
+                .display(self.output.lines.path_display)
+                .as_ref(),
+            &self.separators.field_match_separator,
+        );
         if self.line_numbers()
             && let Some(line) = event.line_number
         {
@@ -191,7 +207,7 @@ impl<'a> EventRenderer<'a> {
         }
     }
 
-    fn write_display_prefix(&mut self, path: &Path, separator: &[u8]) {
+    fn write_display_prefix(&mut self, path: &str, separator: &[u8]) {
         if self.output.lines.heading()
             || matches!(self.output.lines.filename_mode, FilenameMode::Never)
         {
@@ -201,11 +217,9 @@ impl<'a> EventRenderer<'a> {
         self.bytes.extend(separator);
     }
 
-    fn write_display_path(&mut self, path: &Path) {
-        let display = apply_path_separator(
-            path.to_string_lossy().to_string(),
-            self.output.records.path_separator,
-        );
+    fn write_display_path(&mut self, path: &str) {
+        let display =
+            Self::with_path_separator(path.to_owned(), self.output.records.path_separator);
         self.write_hyperlink_start(display.as_str());
         if let Some(color) = self.ansi_for(self.output.records.colors.as_grep().path()) {
             self.bytes.extend(color);
@@ -268,7 +282,7 @@ impl<'a> EventRenderer<'a> {
         if spec.bold() {
             codes.push("1".to_string());
         }
-        if let Some(color) = spec.fg().copied().and_then(ansi_fg) {
+        if let Some(color) = spec.fg().copied().and_then(Self::ansi_fg) {
             codes.push(color.to_string());
         }
         if codes.is_empty() {
@@ -303,12 +317,12 @@ impl<'a> EventRenderer<'a> {
         self.output.lines.line_number() || self.context_requested
     }
 
-    fn write_path_only(&mut self, path: &Path) {
+    fn write_path_only(&mut self, path: &str) {
         self.write_display_path(path);
         self.terminator();
     }
 
-    fn write_path_record(&mut self, path: &Path, value: &str) {
+    fn write_path_record(&mut self, path: &str, value: &str) {
         if matches!(self.output.lines.filename_mode, FilenameMode::Never) {
         } else {
             self.write_display_path(path);
@@ -323,11 +337,9 @@ impl<'a> EventRenderer<'a> {
     }
 
     fn write_binary(&mut self, event: &BinaryEvent) {
-        self.binary_paths.insert(Arc::clone(&event.path));
-        if !matches!(
-            self.output.mode,
-            PrintMode::Standard | PrintMode::OnlyMatching
-        ) {
+        self.binary_paths
+            .insert(Arc::from(event.origin.key().as_ref()));
+        if !matches!(self.output.mode, SearchMode::Lines | SearchMode::Matches) {
             return;
         }
         if matches!(self.output.emission, OutputEmission::Quiet) {
@@ -336,7 +348,12 @@ impl<'a> EventRenderer<'a> {
         if matches!(self.binary_mode, BinaryMode::Quit) && !event.explicit {
             return;
         }
-        self.write_display_path(event.path.as_ref());
+        self.write_display_path(
+            event
+                .origin
+                .display(self.output.lines.path_display)
+                .as_ref(),
+        );
         self.bytes.extend(b": binary file matches");
         self.terminator();
         self.bytes.extend(
@@ -378,7 +395,7 @@ impl<'a> EventRenderer<'a> {
         });
         self.bytes.extend(
             serde_json::to_string(&value)
-                .map_err(sift_core::GrepError::from)?
+                .map_err(sift_core::SearchError::from)?
                 .as_bytes(),
         );
         self.bytes.push(b'\n');
@@ -410,9 +427,10 @@ impl SearchSink for EventRenderer<'_> {
 impl EventRenderer<'_> {
     fn begin(&mut self, event: &FileEvent) -> sift_core::Result<()> {
         if matches!(self.output.format, PrintFormat::Json) {
+            let path = event.origin.display(self.output.lines.path_display);
             let value = serde_json::json!({
                 "type": "begin",
-                "data": { "path": { "text": Self::display_text(&event.path) } }
+                "data": { "path": { "text": Self::display_text(path) } }
             });
             self.write_json(&value)?;
         }
@@ -421,7 +439,10 @@ impl EventRenderer<'_> {
 
     fn matched(&mut self, event: &MatchEvent) -> sift_core::Result<()> {
         if matches!(self.output.format, PrintFormat::Json) {
-            let stats = self.json_stats.entry(Arc::clone(&event.path)).or_default();
+            let stats = self
+                .json_stats
+                .entry(Arc::from(event.origin.key().as_ref()))
+                .or_default();
             stats.matches += event.ranges.len() as u64;
             stats.matched_lines += 1;
             let submatches: Vec<_> = event
@@ -435,10 +456,11 @@ impl EventRenderer<'_> {
                     })
                 })
                 .collect();
+            let path = event.origin.display(self.output.lines.path_display);
             let value = serde_json::json!({
                 "type": "match",
                 "data": {
-                    "path": { "text": Self::display_text(&event.path) },
+                    "path": { "text": Self::display_text(path) },
                     "lines": { "text": String::from_utf8_lossy(&event.bytes).to_string() },
                     "line_number": event.line_number,
                     "absolute_offset": event.absolute_byte_offset,
@@ -459,10 +481,11 @@ impl EventRenderer<'_> {
                 ContextKind::After => "after",
                 ContextKind::Other => "context",
             };
+            let path = event.origin.display(self.output.lines.path_display);
             let value = serde_json::json!({
                 "type": "context",
                 "data": {
-                    "path": { "text": Self::display_text(&event.path) },
+                    "path": { "text": Self::display_text(path) },
                     "lines": { "text": String::from_utf8_lossy(&event.bytes).to_string() },
                     "line_number": event.line_number,
                     "absolute_offset": event.absolute_byte_offset,
@@ -479,11 +502,15 @@ impl EventRenderer<'_> {
 
     fn end(&mut self, event: &FileEvent) -> sift_core::Result<()> {
         if matches!(self.output.format, PrintFormat::Json) {
-            let stats = self.json_stats.remove(&event.path).unwrap_or_default();
+            let stats = self
+                .json_stats
+                .remove(event.origin.key().as_ref())
+                .unwrap_or_default();
+            let path = event.origin.display(self.output.lines.path_display);
             let value = serde_json::json!({
                 "type": "end",
                 "data": {
-                    "path": { "text": Self::display_text(&event.path) },
+                    "path": { "text": Self::display_text(path) },
                     "stats": {
                         "matches": stats.matches,
                         "matched_lines": stats.matched_lines,
@@ -499,45 +526,45 @@ impl EventRenderer<'_> {
     fn write_json(&mut self, value: &serde_json::Value) -> sift_core::Result<()> {
         self.bytes.extend(
             serde_json::to_string(&value)
-                .map_err(sift_core::GrepError::from)?
+                .map_err(sift_core::SearchError::from)?
                 .as_bytes(),
         );
         self.bytes.push(b'\n');
         Ok(())
     }
 
-    fn display_text(path: &Path) -> String {
-        path.to_string_lossy().into_owned()
+    fn display_text(path: impl AsRef<str>) -> String {
+        path.as_ref().to_owned()
     }
-}
 
-fn trim_ascii(bytes: &[u8]) -> &[u8] {
-    let start = bytes
-        .iter()
-        .position(|byte| !byte.is_ascii_whitespace() || *byte == b'\n')
-        .unwrap_or(bytes.len());
-    &bytes[start..]
-}
+    fn trim_ascii(bytes: &[u8]) -> &[u8] {
+        let start = bytes
+            .iter()
+            .position(|byte| !byte.is_ascii_whitespace() || *byte == b'\n')
+            .unwrap_or(bytes.len());
+        &bytes[start..]
+    }
 
-fn apply_path_separator(path: String, separator: Option<u8>) -> String {
-    let Some(separator) = separator else {
-        return path;
-    };
-    let mut buf = [0u8; 4];
-    let separator = (separator as char).encode_utf8(&mut buf);
-    path.replace(std::path::MAIN_SEPARATOR, separator)
-}
+    fn with_path_separator(path: String, separator: Option<u8>) -> String {
+        let Some(separator) = separator else {
+            return path;
+        };
+        let mut buf = [0u8; 4];
+        let separator = (separator as char).encode_utf8(&mut buf);
+        path.replace(std::path::MAIN_SEPARATOR, separator)
+    }
 
-const fn ansi_fg(color: termcolor::Color) -> Option<u8> {
-    match color {
-        termcolor::Color::Black => Some(30),
-        termcolor::Color::Blue => Some(34),
-        termcolor::Color::Green => Some(32),
-        termcolor::Color::Red => Some(31),
-        termcolor::Color::Cyan => Some(36),
-        termcolor::Color::Magenta => Some(35),
-        termcolor::Color::Yellow => Some(33),
-        termcolor::Color::White => Some(37),
-        _ => None,
+    const fn ansi_fg(color: termcolor::Color) -> Option<u8> {
+        match color {
+            termcolor::Color::Black => Some(30),
+            termcolor::Color::Blue => Some(34),
+            termcolor::Color::Green => Some(32),
+            termcolor::Color::Red => Some(31),
+            termcolor::Color::Cyan => Some(36),
+            termcolor::Color::Magenta => Some(35),
+            termcolor::Color::Yellow => Some(33),
+            termcolor::Color::White => Some(37),
+            _ => None,
+        }
     }
 }

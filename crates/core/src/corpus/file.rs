@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-/// How to display a candidate path in output.
+/// How to display a corpus file path in output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PathDisplay {
     #[default]
@@ -9,18 +9,18 @@ pub enum PathDisplay {
     Absolute,
 }
 
-use crate::corpus::filter::CandidateFilter;
+use crate::corpus::filter::FileFilter;
 
-/// A candidate file that might match a query.
+/// An on-disk corpus file (relative + absolute path and walk/index metadata).
 ///
-/// Created by index planning or filesystem walk, then processed through
-/// the candidate pipeline for depth, filesize, and metadata constraints.
-/// The normalized string path is computed lazily on first access.
+/// Created by index planning or filesystem walk, then filtered for depth,
+/// filesize, and metadata constraints. The normalized string path is computed
+/// lazily on first access.
 ///
 /// Fields are accessible via accessor methods to guarantee that the lazy
 /// `rel_str` cache remains consistent with `rel_path`.
 #[derive(Debug, Clone)]
-pub struct Candidate {
+pub struct File {
     /// Path relative to the index root or filter root.
     rel_path: PathBuf,
     /// Absolute filesystem path.
@@ -35,7 +35,7 @@ pub struct Candidate {
     cached_depth: Option<usize>,
 }
 
-impl Candidate {
+impl File {
     #[must_use]
     pub const fn new(rel_path: PathBuf, abs_path: PathBuf) -> Self {
         Self {
@@ -80,19 +80,12 @@ impl Candidate {
             .get_or_init(|| self.rel_path.to_string_lossy().replace('\\', "/"))
     }
 
+    /// Whether this candidate was named explicitly on argv (rel or abs).
     #[must_use]
-    pub fn display_path(&self, display: PathDisplay, path_separator: Option<u8>) -> String {
-        let raw = match display {
-            PathDisplay::Absolute => self.abs_path().display().to_string(),
-            PathDisplay::Relative => self.rel_path().display().to_string(),
-        };
-        if let Some(sep) = path_separator {
-            let mut buf = [0u8; 4];
-            let sep_str = (sep as char).encode_utf8(&mut buf);
-            raw.replace(std::path::MAIN_SEPARATOR, sep_str)
-        } else {
-            raw
-        }
+    pub fn is_explicit(&self, explicit: &[PathBuf]) -> bool {
+        explicit
+            .iter()
+            .any(|path| path == self.rel_path() || path == self.abs_path())
     }
 
     /// Check depth constraint against a filter's max depth.
@@ -136,19 +129,19 @@ impl Candidate {
     #[must_use]
     pub fn matches(
         &self,
-        filter: &CandidateFilter,
+        filter: &FileFilter,
         admission: crate::corpus::filter::FilterAdmission,
     ) -> bool {
         self.within_depth(filter.max_depth())
             && self.within_filesize(filter.max_filesize())
-            && filter.matches_candidate(self, admission)
+            && filter.matches_file(self, admission)
     }
 }
 
-impl PartialEq for Candidate {
+impl PartialEq for File {
     fn eq(&self, other: &Self) -> bool {
         self.rel_path == other.rel_path && self.abs_path == other.abs_path
     }
 }
 
-impl Eq for Candidate {}
+impl Eq for File {}

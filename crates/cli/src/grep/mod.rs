@@ -11,4 +11,4 @@ pub mod pattern;
 pub mod run;
 
 pub use argv::Argv;
-pub use run::{Run, RunConfig, RunMode, RunResult};
+pub use run::{Run, RunConfig, RunResult};

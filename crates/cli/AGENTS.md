@@ -11,7 +11,7 @@ Two-layer flag model:
 1. **`*Decl` structs (clap)** — declare flags for help and parsing.
 2. **Resolved domain types** — effective runtime values from raw argv (ripgrep last-wins ordering).
 
-`Argv` is collected once in `main_entry`. `Cli::run_config(argv)` builds the resolved `RunConfig` (including sort order). `Cli::dispatch` consumes `Cli` into `Run` / `IndexJob`. Domain modules never import `Cli`.
+`Argv` is collected once in `main_entry`. `Cli::run_config(argv)` resolves argv once into `RunConfig` / `IndexJob` (no Decl bags or `Argv` at execute). `Run::execute(daemon)` and `IndexJob::run(daemon)` take no `Argv`. Domain modules never import `Cli`.
 
 ### Module pairing (decl → config → resolve/run)
 
@@ -21,22 +21,22 @@ Two-layer flag model:
 | `grep/ignore.rs` | `Ignore*Decl`, … | `IgnoreResolution` | `IgnoreResolution::resolve` |
 | `grep/pattern.rs` | `PatternArgs`, … | `PatternDecl`, `PatternArgv`, `ResolvedPatterns` | `ResolvedPatterns::resolve`, `PatternDecl::query` |
 | `grep/output.rs` | `LineNumberDecl`, … | `OutputDecl`, `OutputArgv` | `OutputArgv::resolve`, `OutputDecl::print_spec` |
-| `grep/filter.rs` | `FilterDecl`, … | `FilterConfig`, `TypeCatalog` | `FilterConfig::candidate_config` |
+| `grep/filter.rs` | `FilterDecl`, … | `FilterConfig`, `TypeCatalog` | `FilterConfig::file_config` |
 | `grep/paths.rs` | `PathArgs` | `CorpusScope` | `CorpusScope::resolve` |
-| `grep/input.rs` | — | `InputSources`, `ContentTransform` | `InputSources::resolve`, `search_inputs` |
-| `grep/run.rs` | — | `RunConfig`, `Run`, `RunResult` | `Run::execute` |
-| `format/printer.rs` | — | `SearchPrinter`, `PrintSpec` | `SearchPrinter::print` → `Report` |
-| `index/mod.rs` | — | `IndexRequest`, `IndexJob`, `SnapshotRefresh` | `IndexJob::resolve`, `IndexJob::run`, `SnapshotRefresh::run` |
+| `grep/input.rs` | — | `InputSources`, `ContentTransform` | `InputSources::resolve`, `stdin_streams` |
+| `grep/run.rs` | — | `RunConfig`, `Run`, `RunResult` | `Run::execute(daemon)` |
+| `format/printer.rs` | — | `SearchPrinter`, `PrintSpec` (`SearchMode`) | `SearchPrinter::print` → `Report` |
+| `index/mod.rs` | — | `IndexRequest`, `IndexJob`, `SnapshotRefresh` | `IndexJob::resolve`, `IndexJob::run(daemon)`, `SnapshotRefresh::run` |
 | `index/selection.rs` | `IndexDecl` | `IndexSelection` | `IndexSelection::resolve` (argv order for `--index`/`--width`/`--norm`) |
-| `index/daemon/mod.rs` | — | `Daemon`, `ServeConfig`, `DaemonError` | `Daemon::index`, `Daemon::ensure_running`, `Daemon::serve` |
+| `index/daemon/` | — | `Daemon`, `DaemonOrchestrator`, `ServeConfig` | `Daemon::{index,validate_snapshot}`, `DaemonOrchestrator::{start,serve}` (`ipc` / `watcher` / `refresh`) |
 
 ## Search pipeline (CLI)
 
 ```text
 RunConfig → Run::execute
-InputSources → search_inputs → Inputs
-CandidateSource + GrepRequest → Grep::resolve_candidates
-SearchPrinter::print → Report
+InputSources → stdin_streams → Inputs
+Scan + Plan::resolve → Candidates
+Searcher::execute → SearchPrinter::print → Report
 ```
 
 Index lifecycle: `IndexJob::run` → `SnapshotRefresh::run` (build/update snapshot). Daemon debouncing and IPC stay in `index/daemon/`.

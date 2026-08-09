@@ -63,7 +63,13 @@ pub struct Pcre2EngineDecl {
 /// Threading and output-buffering flags.
 #[derive(Args, Clone)]
 pub struct ThreadingDecl {
-    #[arg(short = 'j', long = "threads", value_name = "NUM")]
+    /// Process-global Rayon thread pool size for this process.
+    #[arg(
+        short = 'j',
+        long = "threads",
+        value_name = "NUM",
+        help = "Set the process-global Rayon thread pool size for this process"
+    )]
     pub threads: Option<usize>,
     #[arg(long = "line-buffered")]
     pub line_buffered: bool,

@@ -1,22 +1,22 @@
-use crate::corpus::Candidate;
+use crate::corpus::File;
 use crate::corpus::filter::FilterAdmission;
-use crate::corpus::order::{CandidateOrder, CandidateOrderKey};
+use crate::corpus::order::{FileOrder, FileOrderKey};
 use crate::corpus::walk::FileWalk;
 use crate::index::{FileId, IndexCoverage, IndexedCorpus, Indexes};
-use crate::search::{Narrowing, SearchQuery};
+use crate::search::{Narrowing, Query};
 
+use crate::candidates::scan::Scan;
 use crate::candidates::scope::{Coverage, ScanScope, SnapshotFreshness};
-use crate::candidates::source::CandidateSource;
 
 use super::output::{Candidates, Inner as CandidatesInner};
 
 /// Pure discovery decision for candidate resolution.
 #[must_use]
-pub(crate) struct Plan {
-    pub discovery: Discovery,
-    pub order: CandidateOrder,
-    pub coverage: Coverage,
-    pub query: SearchQuery,
+pub struct Plan {
+    pub(crate) discovery: Discovery,
+    pub(crate) order: FileOrder,
+    pub(crate) coverage: Coverage,
+    pub(crate) query: Query,
 }
 
 /// How candidate discovery will run at resolve time.
@@ -50,11 +50,7 @@ enum SnapshotStatus {
 
 impl Plan {
     /// Pure decision over discovery shape — no index query I/O.
-    pub(crate) fn new(
-        source: &CandidateSource<'_>,
-        query: &SearchQuery,
-        coverage: Coverage,
-    ) -> Self {
+    pub fn new(source: &Scan<'_>, query: &Query, coverage: Coverage) -> Self {
         let scope = source.scope;
         let narrowing = query.narrowing();
         let snapshot_status = Self::snapshot_status(source, scope);
@@ -81,10 +77,7 @@ impl Plan {
     /// # Errors
     ///
     /// Returns an error if filesystem walking or ordering fails.
-    pub(crate) fn resolve<'a>(
-        self,
-        source: &'a CandidateSource<'a>,
-    ) -> crate::Result<Candidates<'a>> {
+    pub fn resolve<'a>(self, source: &'a Scan<'a>) -> crate::Result<Candidates<'a>> {
         let Self {
             discovery,
             order,
@@ -112,14 +105,14 @@ impl Plan {
         Self::order(candidates, order)
     }
 
-    fn file_ids(indexes: &Indexes, query: &SearchQuery, coverage: Coverage) -> Vec<FileId> {
+    fn file_ids(indexes: &Indexes, query: &Query, coverage: Coverage) -> Vec<FileId> {
         match coverage {
             Coverage::Complete => indexes.all_indexed_file_ids(&indexes.indexed_corpus()),
             Coverage::PotentialMatches => indexes.query(query),
         }
     }
 
-    fn snapshot_status(source: &CandidateSource<'_>, scope: ScanScope) -> SnapshotStatus {
+    fn snapshot_status(source: &Scan<'_>, scope: ScanScope) -> SnapshotStatus {
         if !matches!(scope, ScanScope::Index { .. }) {
             return SnapshotStatus::Missing;
         }
@@ -139,7 +132,7 @@ impl Plan {
         }
     }
 
-    fn index_status(source: &CandidateSource<'_>) -> IndexStatus {
+    fn index_status(source: &Scan<'_>) -> IndexStatus {
         match source.indexes {
             Some(indexes) if indexes.queryable() => IndexStatus::Queryable,
             Some(_) | None => IndexStatus::Empty,
@@ -215,13 +208,13 @@ impl Plan {
         }
     }
 
-    fn walk(source: &CandidateSource<'_>) -> crate::Result<Vec<Candidate>> {
+    fn walk(source: &Scan<'_>) -> crate::Result<Vec<File>> {
         let walked = FileWalk::from_filter(source.filter).candidates()?;
         Ok(source.filter.retain(walked, FilterAdmission::Full))
     }
 
     fn merge<'a>(
-        source: &'a CandidateSource<'a>,
+        source: &'a Scan<'a>,
         indexes: &'a Indexes,
         file_ids: Vec<FileId>,
         admission: FilterAdmission,
@@ -239,11 +232,11 @@ impl Plan {
         ))
     }
 
-    fn order(candidates: Candidates<'_>, order: CandidateOrder) -> crate::Result<Candidates<'_>> {
+    fn order(candidates: Candidates<'_>, order: FileOrder) -> crate::Result<Candidates<'_>> {
         if !order.is_sorted() {
             return Ok(candidates);
         }
-        if matches!(order.key, CandidateOrderKey::Path) {
+        if matches!(order.key, FileOrderKey::Path) {
             match candidates.0 {
                 CandidatesInner::Indexed {
                     indexes,
@@ -253,7 +246,7 @@ impl Plan {
                 } => {
                     if matches!(
                         order.direction,
-                        crate::corpus::order::CandidateOrderDirection::Descending
+                        crate::corpus::order::FileOrderDirection::Descending
                     ) {
                         file_ids.reverse();
                     }
