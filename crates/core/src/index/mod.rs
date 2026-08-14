@@ -1,5 +1,5 @@
-pub mod artifacts;
 pub mod config;
+mod disk;
 pub mod error;
 pub mod files;
 mod indexes;
@@ -7,20 +7,16 @@ pub mod kinds;
 pub mod meta;
 pub mod mmap;
 pub mod ngram;
-mod paths;
 pub mod record;
-pub mod snapshot;
 
-pub use artifacts::IndexDestination;
-pub use config::{CorpusKind, CorpusSpec, IndexConfig, IndexWalkConfig};
+pub use config::CorpusKind;
+pub use disk::SnapshotId;
 pub use error::IndexError;
 pub use files::Files;
 pub use indexes::Indexes;
 pub use kinds::FileId;
 pub use meta::{CorpusMeta, FilterMeta, IndexCoverage, StoreMeta, WalkMeta};
-pub use paths::IndexedCorpus;
-pub use record::{Index, IndexRecord};
-pub use snapshot::SnapshotId;
+pub use record::IndexRecord;
 
 #[cfg(test)]
 mod tests {

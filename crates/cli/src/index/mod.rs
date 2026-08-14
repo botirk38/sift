@@ -1,12 +1,11 @@
 //! Index lifecycle (`sift index build`, `sift index update`) and background refresh.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use sift_core::VisibilityConfig;
 use sift_core::{
-    CorpusMeta, FilterMeta, IndexCoverage, IndexError, IndexRecord, Indexes, SnapshotId, StoreMeta,
-    WalkMeta,
+    CorpusMeta, FilterMeta, IndexCoverage, IndexRecord, Indexes, SnapshotId, StoreMeta, WalkMeta,
 };
 
 use std::str::FromStr;
@@ -159,7 +158,7 @@ impl IndexJob {
             return ExitCode::from(2);
         }
 
-        if let Err(e) = SnapshotRefresh::new(&self.sift_dir, &meta).run(&mut indexes) {
+        if let Err(e) = SnapshotRefresh::run(&mut indexes) {
             eprintln!("sift: {e}");
             return ExitCode::from(2);
         }
@@ -285,52 +284,20 @@ impl IndexJob {
     }
 }
 
-/// CLI orchestration for snapshot build or update.
-pub struct SnapshotRefresh<'a> {
-    sift_dir: &'a Path,
-    meta: &'a StoreMeta,
-}
+/// CLI orchestration for a full snapshot rebuild.
+pub struct SnapshotRefresh;
 
-impl<'a> SnapshotRefresh<'a> {
-    #[must_use]
-    pub const fn new(sift_dir: &'a Path, meta: &'a StoreMeta) -> Self {
-        Self { sift_dir, meta }
-    }
-
-    /// Rebuild or update index files for the full configured corpus.
+impl SnapshotRefresh {
+    /// Rebuild index files for the full configured corpus.
     ///
     /// # Errors
     ///
-    /// Propagates build/update failures from the underlying index kinds.
-    pub fn run(self, indexes: &mut Indexes) -> sift_core::Result<ReconcileOutcome> {
-        let build = self.meta.write_config();
-        let catalog = self.meta.catalog();
-        let (snapshot_id, changed) = if indexes.current_id().is_none() {
-            (SnapshotId::new(indexes.build(catalog, &build)?), true)
-        } else {
-            match indexes.update(catalog)? {
-                Some(id) => (SnapshotId::new(id), true),
-                None => (Self::current_snapshot_id(indexes, self.sift_dir)?, false),
-            }
-        };
+    /// Propagates build failures from the underlying index kinds.
+    pub fn run(indexes: &mut Indexes) -> sift_core::Result<ReconcileOutcome> {
+        let snapshot_id = SnapshotId::new(indexes.build()?);
         Ok(ReconcileOutcome {
             snapshot_id,
-            changed,
+            changed: true,
         })
-    }
-
-    fn current_snapshot_id(indexes: &Indexes, sift_dir: &Path) -> sift_core::Result<SnapshotId> {
-        indexes
-            .current_id()
-            .map(|id| SnapshotId::new(id.to_string()))
-            .ok_or_else(|| {
-                sift_core::Error::Index(IndexError::Io {
-                    path: sift_dir.to_path_buf(),
-                    source: std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "no current snapshot after reconcile",
-                    ),
-                })
-            })
     }
 }

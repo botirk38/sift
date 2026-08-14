@@ -1,15 +1,13 @@
-//! Catalog [`IndexRecord`] and opened [`Index`].
+//! Catalog [`IndexRecord`] and private opened kinds.
 
 use std::path::Path;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use super::IndexDestination;
-use super::config::{CorpusKind, IndexConfig};
-use super::kinds::FileId;
+use super::FileId;
+use super::Files;
 use super::ngram::{GramNorm, GramWidth};
-use super::paths::IndexedCorpus;
 
 use crate::search::Query;
 
@@ -85,35 +83,26 @@ impl IndexRecord {
         Ok(Self::Ngram { width, norm })
     }
 
-    /// Create artifacts at `dest` from a full corpus scan under `config`.
+    /// Create kind artifacts under `dir` over shared `files`.
     ///
     /// # Errors
     ///
-    /// Returns an error if walking, extraction, or encoding fails.
-    pub fn build(self, dest: IndexDestination<'_>, config: &IndexConfig<'_>) -> crate::Result<()> {
+    /// Returns an error if extraction or encoding fails.
+    pub fn build(self, dir: &Path, files: &Files) -> crate::Result<()> {
         match self {
-            Self::Ngram { width, norm } => super::ngram::Index::build(width, norm, dest, config),
+            Self::Ngram { width, norm } => super::ngram::Index::build(width, norm, dir, files),
         }
     }
 
-    /// Load a previously persisted index from a namespace directory.
+    /// Load a previously persisted kind from its namespace directory.
     ///
     /// # Errors
     ///
     /// Returns an error if artifacts are missing or malformed.
-    pub fn open(
-        self,
-        dir: &Path,
-        root: &Path,
-        corpus_kind: CorpusKind,
-    ) -> crate::Result<Box<dyn Index>> {
+    pub(crate) fn open(self, dir: &Path, file_count: usize) -> crate::Result<Opened> {
         match self {
-            Self::Ngram { width, norm } => Ok(Box::new(super::ngram::Index::open(
-                width,
-                norm,
-                dir,
-                root,
-                corpus_kind,
+            Self::Ngram { width, norm } => Ok(Opened::Ngram(super::ngram::Index::open(
+                width, norm, dir, file_count,
             )?)),
         }
     }
@@ -127,21 +116,15 @@ impl FromStr for IndexRecord {
     }
 }
 
-/// Opened index: query and incremental update only.
-pub trait Index: Send + Sync {
-    /// File ids that may match. May over-return; must not under-return.
-    /// Cannot narrow → every covered id.
-    fn query(&self, query: &Query) -> Vec<FileId>;
+/// Opened kind ready to narrow [`FileId`]s.
+pub(crate) enum Opened {
+    Ngram(super::ngram::Index),
+}
 
-    fn coverage(&self) -> IndexedCorpus;
-
-    /// Enumerate every indexed file id known to this opened index.
-    fn all_file_ids(&self) -> Vec<FileId>;
-
-    /// Incremental rewrite into `dest`. `true` if artifacts were written.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if walking, extraction, or encoding fails.
-    fn update(&self, dest: IndexDestination<'_>, config: &IndexConfig<'_>) -> crate::Result<bool>;
+impl Opened {
+    pub(crate) fn query(&self, query: &Query) -> Vec<FileId> {
+        match self {
+            Self::Ngram(index) => index.query(query),
+        }
+    }
 }

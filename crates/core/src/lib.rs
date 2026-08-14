@@ -22,15 +22,13 @@ pub use search::{
     SearchSink, Searcher, SpanCount, Stats, StatsMode, ZeroCounts,
 };
 
-pub use index::config::IndexWalkConfig;
 pub use index::meta::StoreMeta;
 pub use index::ngram::{
     Gram, GramNorm, GramWidth, GramWindows, Index as NGramIndex, NGramIndexError,
 };
 pub use index::{
-    CorpusKind, CorpusMeta, CorpusSpec, FileId, Files, FilterMeta, Index, IndexConfig,
-    IndexCoverage, IndexDestination, IndexError, IndexRecord, IndexedCorpus, Indexes, SnapshotId,
-    WalkMeta,
+    CorpusKind, CorpusMeta, FileId, Files, FilterMeta, IndexCoverage, IndexError, IndexRecord,
+    Indexes, SnapshotId, WalkMeta,
 };
 
 use thiserror::Error;

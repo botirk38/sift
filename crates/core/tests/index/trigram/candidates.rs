@@ -7,7 +7,7 @@ use tempfile::TempDir;
 
 use super::super::common::{
     build_indexes, index_candidates, make_filter_corpus, make_parity_corpus, open_indexes,
-    sample_store_meta, standard_build_config,
+    sample_store_meta,
 };
 
 #[test]
@@ -217,10 +217,7 @@ fn dual_indexes_intersect_identity_all_with_ascii_lower_matched() {
     let meta = sample_store_meta(root, records.to_vec());
     let mut indexes = Indexes::open(&sift_dir, &meta).expect("open indexes");
     indexes.refresh_meta(&meta).expect("refresh meta");
-    let config = standard_build_config(&corpus, &[]);
-    indexes
-        .build(&records, &config)
-        .expect("build dual indexes");
+    indexes.build().expect("build dual indexes");
 
     let indexes = open_indexes(&sift_dir);
     let pattern = "ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT".to_string();

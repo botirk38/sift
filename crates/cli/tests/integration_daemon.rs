@@ -122,9 +122,11 @@ where
 
 fn path_indexed(sift_dir: &Path, rel: &str) -> bool {
     StoreMeta::read(sift_dir).ok().is_some_and(|meta| {
-        Indexes::open(sift_dir, &meta)
-            .ok()
-            .is_some_and(|indexes| indexes.indexed_corpus().contains(Path::new(rel)))
+        Indexes::open(sift_dir, &meta).ok().is_some_and(|indexes| {
+            indexes
+                .files()
+                .is_some_and(|files| files.contains(Path::new(rel)))
+        })
     })
 }
 

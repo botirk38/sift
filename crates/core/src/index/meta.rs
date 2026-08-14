@@ -5,11 +5,12 @@ use serde::{Deserialize, Serialize};
 use crate::corpus::filter::{FileFilter, VisibilityConfig};
 
 use super::IndexError;
-use super::config::{CorpusKind, CorpusSpec, IndexConfig, IndexWalkConfig};
+use super::config::CorpusKind;
 use super::record::IndexRecord;
 
 const META_FILE: &str = "meta.json";
-const STORE_VERSION: u32 = 1;
+/// Store format version. Bump when `.sift` layout or meta shape breaks.
+pub const STORE_VERSION: u32 = 2;
 
 /// Persistent store manifest (`.sift/meta.json`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,12 +97,29 @@ impl StoreMeta {
     pub fn read(dir: &Path) -> crate::Result<Self> {
         let meta_path = Self::path(dir);
         let raw = std::fs::read_to_string(&meta_path)?;
-        serde_json::from_str(&raw).map_err(|e| {
+        let meta: Self = serde_json::from_str(&raw).map_err(|e| {
             crate::Error::Index(IndexError::InvalidManifest {
                 path: meta_path,
                 source: e,
             })
-        })
+        })?;
+        meta.validate_version()?;
+        Ok(meta)
+    }
+
+    /// Reject unsupported store versions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `version` is not [`STORE_VERSION`].
+    pub const fn validate_version(&self) -> crate::Result<()> {
+        if self.version != STORE_VERSION {
+            return Err(crate::Error::Index(IndexError::UnsupportedVersion {
+                found: self.version,
+                expected: STORE_VERSION,
+            }));
+        }
+        Ok(())
     }
 
     /// Write to `dir/meta.json`.
@@ -121,33 +139,7 @@ impl StoreMeta {
         Ok(())
     }
 
-    /// Map persisted metadata to a runtime write configuration.
-    #[must_use]
-    pub fn write_config(&self) -> IndexConfig<'_> {
-        IndexConfig {
-            corpus: CorpusSpec {
-                root: &self.corpus.root,
-                kind: self.corpus.kind,
-                follow_links: self.walk.follow_links,
-                include_paths: &self.corpus.include_paths,
-                exclude_paths: &self.corpus.exclude_paths,
-            },
-            walk: IndexWalkConfig {
-                follow_links: self.walk.follow_links,
-                one_file_system: self.walk.one_file_system,
-                max_depth: self.walk.max_depth,
-                max_filesize: self.walk.max_filesize,
-            },
-            visibility: self.filters.visibility.clone(),
-        }
-    }
-
-    /// Instantiate the catalog of opened-index handles described by
-    /// [`Self::indexes`].
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any record's kind or params are invalid.
+    /// Catalog of index kinds this store should build.
     #[must_use]
     pub fn catalog(&self) -> &[IndexRecord] {
         &self.indexes

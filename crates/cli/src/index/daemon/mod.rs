@@ -136,7 +136,7 @@ impl DaemonOrchestrator {
         let mut phase = Phase::idle(idle_timeout);
         let mut ingest = IngestTracker::from_reconcile(
             Indexes::open(&sift_dir, &meta)
-                .and_then(|mut indexes| SnapshotRefresh::new(&sift_dir, &meta).run(&mut indexes))?,
+                .and_then(|mut indexes| SnapshotRefresh::run(&mut indexes))?,
         );
 
         let ipc_tx = tx.clone();
@@ -610,7 +610,10 @@ impl DaemonRuntime<'_> {
                     .ok()
                     .and_then(|meta| Indexes::open(self.store.raw, &meta).ok())
                 {
-                    Some(indexes) => indexes.indexed_corpus().retain_unindexed(paths),
+                    Some(indexes) => match indexes.files() {
+                        Some(files) => files.retain_unindexed(paths),
+                        None => paths,
+                    },
                     None => paths,
                 };
                 self.refresh.apply_index(

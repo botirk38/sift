@@ -10,8 +10,8 @@ use std::path::Path;
 use bitpacking::{BitPacker, BitPacker4x};
 use integer_encoding::VarInt;
 
+use super::ArtifactData;
 use crate::index::ngram::storage::format::POSTINGS_MAGIC;
-use crate::index::snapshot::ArtifactData;
 
 use super::read_u32_le;
 use crate::index::mmap::mmap_open;

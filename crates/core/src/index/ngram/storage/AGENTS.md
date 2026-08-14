@@ -1,14 +1,16 @@
 # AGENTS.md -- index/ngram/storage/
 
-Binary persistence format for N-gram index tables. Read/write `files.bin`, `lexicon.bin`, `postings.bin`, and `grams.bin` with zero-copy memory-mapped access.
+Binary persistence format for N-gram kind artifacts. Read/write `lexicon.bin`
+and `postings.bin` with zero-copy memory-mapped access.
 
 ## Key Types
 
 - `LexiconEntry`: gram + postings offset + length.
 - `Lexicon`: memory-mapped lexicon with binary-search lookup.
 - `Postings`: memory-mapped postings blob.
-- `GramSet`: sorted unique grams for one file.
-- `GramSets`: memory-mapped per-file gram sets for incremental updates.
+
+The shared `files.bin` belongs to `index/files.rs` at the snapshot root, not
+this module. There is no `grams.bin`, `GramSet`, or incremental update format.
 
 ## Conventions
 

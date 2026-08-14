@@ -2,7 +2,7 @@ use crate::corpus::File;
 use crate::corpus::filter::FilterAdmission;
 use crate::corpus::order::{FileOrder, FileOrderKey};
 use crate::corpus::walk::FileWalk;
-use crate::index::{FileId, IndexCoverage, IndexedCorpus, Indexes};
+use crate::index::{FileId, Files, IndexCoverage, Indexes};
 use crate::search::{Narrowing, Query};
 
 use crate::candidates::scan::Scan;
@@ -97,8 +97,10 @@ impl Plan {
                 || Ok(Candidates::empty()),
                 |indexes| {
                     let file_ids = Self::file_ids(indexes, &query, coverage);
-                    let indexed_corpus = indexes.indexed_corpus();
-                    Self::merge(source, indexes, file_ids, admission, &indexed_corpus)
+                    indexes.files().map_or_else(
+                        || Ok(Candidates::empty()),
+                        |files| Self::merge(source, indexes, file_ids, admission, files),
+                    )
                 },
             )?,
         };
@@ -107,7 +109,7 @@ impl Plan {
 
     fn file_ids(indexes: &Indexes, query: &Query, coverage: Coverage) -> Vec<FileId> {
         match coverage {
-            Coverage::Complete => indexes.all_indexed_file_ids(&indexes.indexed_corpus()),
+            Coverage::Complete => indexes.all_indexed_file_ids(),
             Coverage::PotentialMatches => indexes.query(query),
         }
     }
@@ -218,10 +220,9 @@ impl Plan {
         indexes: &'a Indexes,
         file_ids: Vec<FileId>,
         admission: FilterAdmission,
-        indexed_corpus: &IndexedCorpus,
+        files: &Files,
     ) -> crate::Result<Candidates<'a>> {
-        let walked = FileWalk::from_filter(source.filter)
-            .candidates_matching(indexed_corpus.unindexed_files())?;
+        let walked = FileWalk::from_filter(source.filter).candidates_matching(files.unindexed())?;
         let unindexed = source.filter.retain(walked, FilterAdmission::Full);
         Ok(Candidates::mixed(
             indexes,

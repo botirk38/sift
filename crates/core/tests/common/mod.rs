@@ -6,10 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use sift_core::{
-    CorpusKind, CorpusMeta, CorpusSpec, File, FileFilter, FileFilterConfig, FileOrder,
-    FilterAdmission, FilterMeta, GramNorm, GramWidth, IgnoreConfig, IndexConfig, IndexCoverage,
-    IndexDestination, IndexRecord, IndexWalkConfig, Indexes, NGramIndex, Plan, Query, Scan,
-    ScanScope, SearchOptions, SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta,
+    CorpusKind, CorpusMeta, File, FileFilter, FileFilterConfig, FileOrder, Files, FilterAdmission,
+    FilterMeta, GramNorm, GramWidth, IgnoreConfig, IndexCoverage, IndexRecord, Indexes, NGramIndex,
+    Plan, Query, Scan, ScanScope, SearchOptions, SnapshotFreshness, StoreMeta, VisibilityConfig,
+    WalkMeta,
 };
 
 pub fn sample_store_meta(root: PathBuf, indexes: Vec<IndexRecord>) -> StoreMeta {
@@ -32,6 +32,15 @@ pub fn sample_store_meta(root: PathBuf, indexes: Vec<IndexRecord>) -> StoreMeta 
         },
         indexes,
     )
+}
+
+pub fn sample_store_meta_no_ignore(root: PathBuf, indexes: Vec<IndexRecord>) -> StoreMeta {
+    let mut meta = sample_store_meta(root, indexes);
+    meta.filters.visibility = VisibilityConfig {
+        ignore: IgnoreConfig::disabled(),
+        ..VisibilityConfig::default()
+    };
+    meta
 }
 
 pub fn make_parity_corpus(root: &Path) {
@@ -63,37 +72,6 @@ pub fn make_filter_corpus(root: &Path) {
     fs::write(root.join(".ignore"), "also_skip/**\n").expect("write ignore");
 }
 
-pub fn standard_build_config<'a>(root: &'a Path, exclude_paths: &'a [PathBuf]) -> IndexConfig<'a> {
-    IndexConfig {
-        corpus: CorpusSpec {
-            root,
-            kind: CorpusKind::Directory,
-            follow_links: false,
-            include_paths: &[],
-            exclude_paths,
-        },
-        walk: IndexWalkConfig::new(false),
-        visibility: VisibilityConfig::default(),
-    }
-}
-
-pub fn no_ignore_build_config<'a>(root: &'a Path, exclude_paths: &'a [PathBuf]) -> IndexConfig<'a> {
-    IndexConfig {
-        corpus: CorpusSpec {
-            root,
-            kind: CorpusKind::Directory,
-            follow_links: false,
-            include_paths: &[],
-            exclude_paths,
-        },
-        walk: IndexWalkConfig::new(false),
-        visibility: VisibilityConfig {
-            ignore: IgnoreConfig::disabled(),
-            ..VisibilityConfig::default()
-        },
-    }
-}
-
 pub fn build_indexes(corpus: &Path, sift_dir: &Path) -> Indexes {
     let root = corpus
         .canonicalize()
@@ -101,9 +79,7 @@ pub fn build_indexes(corpus: &Path, sift_dir: &Path) -> Indexes {
     let meta = sample_store_meta(root, vec![IndexRecord::ngram(GramWidth::TRIGRAM)]);
     let mut indexes = Indexes::open(sift_dir, &meta).expect("open indexes");
     indexes.refresh_meta(&meta).expect("refresh meta");
-    let config = standard_build_config(corpus, &[]);
-    let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
-    indexes.build(&catalog, &config).expect("build index");
+    indexes.build().expect("build index");
     indexes
 }
 
@@ -163,31 +139,34 @@ pub fn build_trigram_in_dir(corpus: &Path, trigram_dir: &Path) -> NGramIndex {
     } else {
         (corpus, CorpusKind::Directory, vec![])
     };
-    let config = IndexConfig {
-        corpus: CorpusSpec {
-            root,
-            kind,
-            follow_links: false,
-            include_paths: &include_paths,
-            exclude_paths: &[],
-        },
-        walk: IndexWalkConfig::new(false),
-        visibility: VisibilityConfig::default(),
-    };
-    NGramIndex::build(
-        GramWidth::TRIGRAM,
-        GramNorm::Identity,
-        IndexDestination::Directory(trigram_dir),
-        &config,
-    )
-    .expect("build trigram index");
     let abs_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let meta = StoreMeta::new(
+        CorpusMeta {
+            root: abs_root,
+            kind,
+            include_paths,
+            exclude_paths: Vec::new(),
+        },
+        IndexCoverage::Complete,
+        WalkMeta {
+            follow_links: false,
+            one_file_system: false,
+            max_depth: None,
+            max_filesize: None,
+        },
+        FilterMeta {
+            visibility: VisibilityConfig::default(),
+        },
+        vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
+    );
+    let files = Files::build(&meta).expect("files");
+    NGramIndex::build(GramWidth::TRIGRAM, GramNorm::Identity, trigram_dir, &files)
+        .expect("build trigram index");
     NGramIndex::open(
         GramWidth::TRIGRAM,
         GramNorm::Identity,
         trigram_dir,
-        &abs_root,
-        kind,
+        files.len(),
     )
     .expect("open trigram index")
 }

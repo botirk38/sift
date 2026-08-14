@@ -2,10 +2,10 @@
 
 use std::path::Path;
 
+use super::ArtifactData;
 use crate::index::mmap::mmap_open;
 use crate::index::ngram::gram::{Gram, GramWidth};
 use crate::index::ngram::storage::format::LEXICON_MAGIC;
-use crate::index::snapshot::ArtifactData;
 
 use super::{read_u32_le, read_u64_le};
 

@@ -11,32 +11,33 @@ Indexes::open (lifecycle) / Indexes::load → Option (search)
 Plan::new (pure) → Plan::resolve (query I/O) → Searcher::execute
 ```
 
-- `Indexes` — build/update/publish and query/hydrate over one store (`load` is `None` when absent)
-- `Snapshot` — shared `Files` + opened `Box<dyn Index>` vec for a committed snapshot
+- `Indexes` — builds, publishes, queries, and hydrates one store (`load` is `None` when absent)
+- `Files` — shared `FileId → File` table for the current committed snapshot
 - `Plan` — pure discovery decision; `resolve` owns index query I/O
 - `Searcher` — match execution over resolved candidates and streams
 - `Query` — patterns + options; owns narrowing policy
 - `File` / `Origin` — path identity (`Origin::{File, Stream { label }}`)
 
-Today the default index is `ngram::Index` opened from an `IndexRecord` (trigram width).
+Today the default catalog record is N-gram width 3. `record.rs` privately opens
+kinds through its `Opened` enum.
 
 ## Public API
 
 Search (re-exported from `lib.rs`):
 
 - `Query`, `Searcher`, `Report`, `Origin`, `SearchMode`
-- `Indexes`, `IndexedCorpus`, `SnapshotId`, `Files`
-- `Index`, `IndexRecord`, `IndexConfig`, `IndexDestination`, `ngram::Index`, `GramWidth`
+- `StoreMeta`, `IndexRecord`, `Indexes`, `SnapshotId`, `Files`, `CorpusKind`
+- `ngram::Index`, `GramWidth`, `GramNorm`
 - `Candidates`, `Plan`, `Scan`, `ScanScope`, `SnapshotFreshness`, `Coverage`
 
 ## Source map
 
 | Module | Responsibility |
 |--------|----------------|
-| `index/indexes.rs` | `Indexes` build/update + query/hydrate |
-| `index/record.rs` | `IndexRecord`, opened `Index` |
+| `index/indexes.rs` | `Indexes` open/load/build + query/hydrate |
+| `index/record.rs` | `IndexRecord`, private `Opened` dispatch |
 | `index/files.rs` | Snapshot-owned `Files` |
-| `index/snapshot/` | `Snapshot`, persistence |
+| `index/disk.rs` | Snapshot persistence |
 | `index/ngram/` | N-gram implementation (artifact names live here) |
 | `index/mmap.rs` | Sole `unsafe` in the crate (`mmap_open`) |
 | `search/` | `Query`, `Searcher`, `Report`, events |
@@ -59,7 +60,7 @@ Planning is pure; `Plan::resolve` is the only candidate I/O boundary.
 ## Invariants
 
 - Conservative narrowing: indexes may over-return, never under-return.
-- Multi-index intersection in `Indexes::query`, not per-caller.
+- Multi-kind intersection happens in `Indexes::query`, not per-caller.
 - No free helper functions — logic lives on the owning type.
 - No callback/`FnOnce` APIs.
 - No `unsafe` outside `index/mmap.rs`.

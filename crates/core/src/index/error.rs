@@ -17,8 +17,8 @@ pub enum IndexError {
         source: std::io::Error,
     },
 
-    #[error("unknown index configuration: {0}")]
-    UnknownIndexConfig(String),
+    #[error("unsupported store version {found}; expected {expected}")]
+    UnsupportedVersion { found: u32, expected: u32 },
 
     #[error("invalid snapshot manifest at {path}: {source}")]
     InvalidManifest {

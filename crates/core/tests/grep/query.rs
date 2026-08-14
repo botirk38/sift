@@ -2,12 +2,10 @@ use std::fs;
 use std::path::Path;
 
 use sift_core::{
-    CorpusKind, CorpusMeta, FileId, FilterMeta, IndexCoverage, IndexRecord, Indexes, StoreMeta,
-    VisibilityConfig, WalkMeta,
+    CorpusKind, CorpusMeta, FileId, Files, FilterMeta, GramNorm, GramWidth, IndexCoverage,
+    IndexRecord, Indexes, NGramIndex, StoreMeta, VisibilityConfig, WalkMeta,
 };
 use tempfile::TempDir;
-
-use crate::common::build_trigram_in_dir;
 
 fn default_meta() -> StoreMeta {
     StoreMeta::new(
@@ -67,12 +65,39 @@ fn single_file_corpus_indexes_correctly() {
     let file = corpus.join("one.txt");
     fs::write(&file, "alpha\nbeta needle\n").expect("write");
 
-    let index = build_trigram_in_dir(&file, &tmp.path().join("trigram"));
-    assert_eq!(index.corpus_kind(), CorpusKind::SingleFile);
-    assert!(index.file_path(FileId::new(0)).is_some());
-    assert!(index.file_path(FileId::new(1)).is_none());
-    assert_eq!(
-        index.file_path(FileId::new(0)).expect("path"),
-        Path::new("one.txt")
+    let root = corpus.canonicalize().expect("canonicalize");
+    let meta = StoreMeta::new(
+        CorpusMeta {
+            root,
+            kind: CorpusKind::SingleFile,
+            include_paths: vec![Path::new("one.txt").to_path_buf()],
+            exclude_paths: Vec::new(),
+        },
+        IndexCoverage::Complete,
+        WalkMeta {
+            follow_links: false,
+            one_file_system: false,
+            max_depth: None,
+            max_filesize: None,
+        },
+        FilterMeta {
+            visibility: VisibilityConfig::default(),
+        },
+        vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
     );
+    let files = Files::build(&meta).expect("files");
+    let trigram_dir = tmp.path().join("trigram");
+    NGramIndex::build(GramWidth::TRIGRAM, GramNorm::Identity, &trigram_dir, &files).expect("build");
+    let index = NGramIndex::open(
+        GramWidth::TRIGRAM,
+        GramNorm::Identity,
+        &trigram_dir,
+        files.len(),
+    )
+    .expect("open");
+
+    assert_eq!(meta.corpus.kind, CorpusKind::SingleFile);
+    assert_eq!(index.file_count(), 1);
+    assert_eq!(files.rel_path(FileId::new(0)), Some("one.txt"));
+    assert!(files.rel_path(FileId::new(1)).is_none());
 }

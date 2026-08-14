@@ -1,5 +1,4 @@
 mod build;
-pub(crate) mod files;
 pub mod gram;
 pub mod storage;
 
@@ -10,21 +9,16 @@ mod literals;
 pub use gram::{Gram, GramNorm, GramWidth, GramWindows};
 pub use index::{Index, NGramIndexError};
 
-pub(crate) const FILES_BIN: &str = "files.bin";
 pub(crate) const LEXICON_BIN: &str = "lexicon.bin";
 pub(crate) const POSTINGS_BIN: &str = "postings.bin";
-pub(crate) const GRAMS_BIN: &str = "grams.bin";
 
 #[cfg(test)]
 mod candidate_tests {
-    use std::path::Path;
 
     use crate::index::ngram::storage::postings::Postings;
     use crate::search::{CaseMode, InputEncoding, Query, SearchFlags, SearchOptions};
 
     use super::*;
-
-    use super::gram::GramNorm;
 
     fn trigram() -> GramWidth {
         GramWidth::TRIGRAM
@@ -278,113 +272,5 @@ mod candidate_tests {
         };
         let built = built_query(&patterns, options);
         assert!(Index::extract_literal_arms(trigram(), &built).is_some());
-    }
-
-    #[test]
-    fn open_tables_accepts_count_mismatch() {
-        use crate::index::ngram::storage::format::{
-            FILES_MAGIC, GRAMS_MAGIC, LEXICON_MAGIC, POSTINGS_MAGIC,
-        };
-        use tempfile::TempDir;
-
-        let tmp = TempDir::new().expect("create temp dir");
-        let dir = tmp.path().join("index");
-        std::fs::create_dir(&dir).expect("create index dir");
-
-        let mut files = FILES_MAGIC.to_vec();
-        files.extend_from_slice(&0u32.to_le_bytes());
-        std::fs::write(dir.join("files.bin"), &files).expect("write files");
-
-        let mut lex = LEXICON_MAGIC.to_vec();
-        lex.extend_from_slice(&3u32.to_le_bytes());
-        lex.extend_from_slice(&1u32.to_le_bytes());
-        lex.extend_from_slice(&0u32.to_le_bytes());
-        lex.extend_from_slice(b"abc");
-        lex.extend_from_slice(&0u64.to_le_bytes());
-        lex.extend_from_slice(&3u32.to_le_bytes());
-        std::fs::write(dir.join("lexicon.bin"), &lex).expect("write lexicon");
-
-        let posting_payload = Postings::encode_list(&[0, 1]);
-        let mut pb = POSTINGS_MAGIC.to_vec();
-        pb.extend_from_slice(&u32::try_from(posting_payload.len()).unwrap().to_le_bytes());
-        pb.extend_from_slice(&posting_payload);
-        std::fs::write(dir.join("postings.bin"), &pb).expect("write postings");
-
-        let mut grams = GRAMS_MAGIC.to_vec();
-        grams.extend_from_slice(&3u32.to_le_bytes());
-        grams.extend_from_slice(&0u32.to_le_bytes());
-        grams.extend_from_slice(&0u32.to_le_bytes());
-        std::fs::write(dir.join(GRAMS_BIN), &grams).expect("write grams");
-
-        // Posting count mismatches are caught at build time.
-        // The open path skips content-level validation for speed.
-        let result = Index::open(
-            GramWidth::TRIGRAM,
-            GramNorm::Identity,
-            &dir,
-            Path::new("/root"),
-            crate::index::CorpusKind::Directory,
-        );
-        assert!(result.is_ok());
-    }
-}
-
-#[cfg(test)]
-mod persistence_tests {
-    use std::path::PathBuf;
-
-    use super::files::FileFingerprint;
-    use super::*;
-
-    #[test]
-    fn validate_file_paths_accepts_normal_relative_paths() {
-        let fps = vec![
-            FileFingerprint {
-                path: PathBuf::from("a.txt"),
-                mtime_secs: 0,
-                size: 0,
-            },
-            FileFingerprint {
-                path: PathBuf::from("sub/b.txt"),
-                mtime_secs: 0,
-                size: 0,
-            },
-        ];
-        let result = Index::validate_file_paths(&fps);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn validate_file_paths_rejects_absolute_paths() {
-        let abs = std::env::current_dir().unwrap().join("a.txt");
-        let fps = vec![FileFingerprint {
-            path: abs,
-            mtime_secs: 0,
-            size: 0,
-        }];
-        let result = Index::validate_file_paths(&fps);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn validate_file_paths_rejects_empty_paths() {
-        let fps = vec![FileFingerprint {
-            path: PathBuf::from(""),
-            mtime_secs: 0,
-            size: 0,
-        }];
-        let result = Index::validate_file_paths(&fps);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn validate_file_paths_rejects_parent_dir_paths() {
-        let fps = vec![FileFingerprint {
-            path: PathBuf::from("../escape.txt"),
-            mtime_secs: 0,
-            size: 0,
-        }];
-        let result = Index::validate_file_paths(&fps);
-        assert!(result.is_err());
     }
 }

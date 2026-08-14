@@ -66,7 +66,7 @@ impl PendingIndex {
     ) -> Option<ReconcileOutcome> {
         let paths = self.take()?;
         let result = Indexes::open(sift_dir, meta)
-            .and_then(|mut indexes| SnapshotRefresh::new(sift_dir, meta).run(&mut indexes));
+            .and_then(|mut indexes| SnapshotRefresh::run(&mut indexes));
         match result {
             Ok(outcome) => Some(outcome),
             Err(e) => {
@@ -133,9 +133,8 @@ impl IndexRefresh<'_> {
             };
             let mut outcome = None;
             if matches!(scope, RefreshScope::CorpusAndPending) {
-                let result = Indexes::open(&sift_dir, &meta).and_then(|mut indexes| {
-                    SnapshotRefresh::new(&sift_dir, &meta).run(&mut indexes)
-                });
+                let result = Indexes::open(&sift_dir, &meta)
+                    .and_then(|mut indexes| SnapshotRefresh::run(&mut indexes));
                 match result {
                     Ok(committed) => outcome = Some(committed),
                     Err(e) => {

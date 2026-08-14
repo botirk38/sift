@@ -10,47 +10,37 @@ An N-gram index is an inverted index mapping each fixed-width byte sequence foun
 
 | File | Description |
 |------|-------------|
-| [`index.rs`](index.rs) | Opened `Index` (required storage); build/open/update |
+| [`index.rs`](index.rs) | Opened N-gram kind; build/open |
 | [`gram.rs`](gram.rs) | `GramWidth`, `Gram`, runtime-width gram window iteration |
-| [`build.rs`](build.rs) | `IndexTables`: shared `FileWalk` usage, gram extraction, incremental table construction |
-| [`files.rs`](files.rs) | File ID to relative path + fingerprint mapping |
-| [`storage/`](storage/) | Binary persistence format (lexicon, postings, gram sets, file table) |
+| [`build.rs`](build.rs) | `IndexTables`: gram extraction and postings construction |
+| [`storage/`](storage/) | Binary persistence format (lexicon and postings) |
 
 ## On-Disk Format
 
-Each table file starts with an 8-byte magic header:
+`Files` is shared by every kind and is written once at the snapshot root:
 
 | File | Magic | Contents |
 |------|-------|----------|
-| `files.bin` | `SIFTFIL1` | Offset table + length-prefixed UTF-8 paths with fingerprints (mtime, size) |
+| `files.bin` | `SIFTFIL2` | Offset table + length-prefixed UTF-8 relative paths and file sizes |
+
+This N-gram kind writes only its namespace artifacts:
+
+| File | Magic | Contents |
+|------|-------|----------|
 | `lexicon.bin` | `SIFTLEX2` | Width-aware sorted gram entries with postings offsets |
-| `postings.bin` | `SIFTPST1` | Flat array of `u32` file IDs referenced by lexicon |
-| `grams.bin` | `SIFTGRM1` | Per-file sorted unique gram sets for incremental rebuild |
+| `postings.bin` | `SIFTPST3` | Encoded sorted file-ID posting lists referenced by the lexicon |
 
 All integers are little-endian. Width-bearing files reject mismatched gram widths at open time.
 
 ## API
 
 ```rust
-use sift_core::{
-    GramNorm, GramWidth, IndexDestination, IndexRecord, Indexes, NGramIndex,
-};
+use sift_core::Indexes;
 
-// Preferred: build through Indexes + IndexRecord.
-indexes.build(&[IndexRecord::ngram(GramWidth::TRIGRAM)], &config)?;
-
-// Lower-level directory write (tests/benches).
-NGramIndex::build(
-    GramWidth::TRIGRAM,
-    GramNorm::Identity,
-    IndexDestination::Directory(&index_dir),
-    &config,
-)?;
-let reopened = NGramIndex::open(
-    GramWidth::TRIGRAM,
-    GramNorm::Identity,
-    &index_dir,
-    &root,
-    corpus_kind,
-)?;
+let mut indexes = Indexes::open(&sift_dir, &meta)?;
+indexes.build()?;
 ```
+
+`IndexRecord` invokes `ngram::Index::build(width, norm, dir, &Files)` for its
+namespace. At search time the parent layer privately opens the kind with
+`Index::open(width, norm, dir, file_count)`.

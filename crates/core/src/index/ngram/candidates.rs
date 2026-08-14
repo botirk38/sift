@@ -73,7 +73,7 @@ impl Index {
             LiteralNarrowing::TooShort => None,
             LiteralNarrowing::Covering => {
                 // Union postings for every width-gram that contains `lit`.
-                let file_count = storage.files.len();
+                let file_count = storage.file_count;
                 let mut window = vec![0u8; width];
                 let mut slices: Vec<&[u8]> = Vec::new();
                 for wild_pos in 0..width {
@@ -119,7 +119,7 @@ impl Index {
                     if ids.is_empty() { None } else { Some(ids) }
                 }
                 GramMatch::AsciiCase => {
-                    let file_count = storage.files.len();
+                    let file_count = storage.file_count;
                     let mut window = vec![0u8; width];
                     let mut cur: Option<Vec<u32>> = None;
                     for offset in 0..=lit.len() - width {

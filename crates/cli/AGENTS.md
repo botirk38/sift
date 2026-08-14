@@ -39,7 +39,9 @@ Scan + Plan::resolve → Candidates
 Searcher::execute → SearchPrinter::print → Report
 ```
 
-Index lifecycle: `IndexJob::run` → `SnapshotRefresh::run` (build/update snapshot). Daemon debouncing and IPC stay in `index/daemon/`.
+Index lifecycle: `IndexJob::run` → `SnapshotRefresh::run` (full rebuild from
+stored metadata). `SnapshotRefresh::run(&mut Indexes)` always calls
+`Indexes::build()`; daemon debouncing and IPC stay in `index/daemon/`.
 
 ## Structure
 

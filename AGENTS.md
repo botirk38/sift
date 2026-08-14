@@ -6,7 +6,11 @@ Guidelines for AI agents working on the sift codebase.
 
 Sift is an indexed code search engine written in Rust, built around **composable on-disk indexes**. It builds indexes tuned to the search workload, then uses them to narrow candidate files before running the full regex engine.
 
-The core architecture treats code search like database query execution: every kind implements one `Index` trait; `Indexes` orchestrates build/update/search and intersects `query` results. File resolution goes through `Plan::resolve`. Today the default index is runtime-width N-gram (trigram default).
+The core architecture treats code search like database query execution:
+`StoreMeta` configures a catalog of `IndexRecord`s; `Indexes` builds snapshots
+and intersects private kind queries. File resolution goes through
+`Plan::resolve`. Today the default index is runtime-width N-gram (trigram
+default).
 
 The candidate pipeline is **plan (pure) → resolve (I/O) → search**: `Plan::new` decides discovery without querying indexes; `Plan::resolve` is the single I/O boundary (query + walk + order); `Searcher` consumes lazy `Candidates` (`into_vec()` materializes all).
 
@@ -40,8 +44,8 @@ evidence for performance PRs.
 |------|------|
 | `crates/core/` | `sift-core`: composable index registry, query planning, candidate narrowing, search engine |
 | `crates/core/src/candidates/` | Index-agnostic candidate description, planning, and resolution |
-| `crates/core/src/index/` | `Index` trait, `IndexRecord`, `Indexes` orchestrator, `Snapshot` |
-| `crates/core/src/index/ngram/` | N-gram `Index` impl (first shipped kind) |
+| `crates/core/src/index/` | `StoreMeta`, `IndexRecord`, `Files`, disk snapshots, `Indexes` |
+| `crates/core/src/index/ngram/` | N-gram kind implementation (first shipped kind) |
 | `crates/core/src/search/` | Query, Searcher, Origin, SearchMode, report/events |
 | `crates/core/src/corpus/` | `File`, `FileFilter`, `FileOrder`, walk |
 | `crates/cli/` | `sift-grep`: `sift` / `sift-daemon` binaries (clap CLI over core) |
@@ -55,11 +59,11 @@ evidence for performance PRs.
 
 | Type | Module | Role |
 |------|--------|------|
-| `Indexes` | `index` | `.sift` directory: meta + current snapshot; `open` / `load` / `build` / `update` |
-| `Snapshot` | `index/snapshot` | Committed opened indexes, lease, and `Files` |
+| `Indexes` | `index` | `.sift` directory: meta + current snapshot; `open` / `load` / `build` |
 | `Files` | `index` | Snapshot-owned `FileId → File` map |
-| `Index` | `index` trait + `ngram` | Opened index only |
-| `IndexRecord` | `index` | Catalog knobs; `build` / `open` → `Box<dyn Index>` |
+| `StoreMeta` | `index` | Persistent corpus, walk, filter, coverage, and catalog configuration |
+| `IndexRecord` | `index` | Typed catalog record; builds kind artifacts and privately opens a kind |
+| `SnapshotId` | `index` | Opaque committed snapshot identity |
 | `Plan` | `candidates` | Pure discovery decision |
 | `Candidates` | `candidates` | Output of `Plan::resolve` |
 | `Query` | `search` | Patterns + options |
@@ -71,7 +75,9 @@ evidence for performance PRs.
 | `IndexJob` | `cli/index` | Resolved index lifecycle; `run` |
 | `Daemon` | `cli/index/daemon` | Background work; modules `ipc`, `watcher`, `refresh` |
 
-Values (not aggregates): `StoreMeta`, `IndexConfig`, `SearchMode`, `StatsMode`, `Scan` / `ScanScope`, `FileFilter`, `FileOrder`, `Coverage`. Printing stays under `cli/format`.
+Values (not aggregates): `StoreMeta`, `SearchMode`, `StatsMode`, `Scan` /
+`ScanScope`, `FileFilter`, `FileOrder`, `Coverage`. Printing stays under
+`cli/format`.
 
 ## Key Conventions
 
@@ -99,21 +105,30 @@ Use short, descriptive kebab-case with a type prefix:
 
 ## Core API Entry Points
 
-`Indexes::open(dir, meta)` (lifecycle) / `Indexes::load(dir) -> Result<Option<Indexes>>` (search) → `build` / `update` → `Plan::resolve` → `Searcher::execute`. CLI: `IndexJob::run` / `SnapshotRefresh::run` for lifecycle; `Run::execute` for search; `Daemon` / `DaemonOrchestrator` for background refresh. See `crates/core/README.md`.
+`Indexes::open(dir, meta)` (lifecycle) / `Indexes::load(dir) ->
+Result<Option<Indexes>>` (search) → `build()` → `Plan::resolve` →
+`Searcher::execute`. CLI: `IndexJob::run` / `SnapshotRefresh::run` for
+lifecycle; `Run::execute` for search; `Daemon` / `DaemonOrchestrator` for
+background refresh. See `crates/core/README.md`.
 
 ## Index layer
 
 | Type | Role |
 |------|------|
-| `Index` trait | Opened kind only: `query` / `coverage` / `all_file_ids` / `update` |
-| `IndexRecord` | Typed catalog knobs; `build` / `open` |
-| `IndexConfig` | Corpus/walk/visibility for a write |
-| `IndexDestination` | Directory or snapshot write target |
-| `Indexes` | Build/update + query/hydrate orchestrator |
+| `StoreMeta` | Persistent corpus, walk, filtering, coverage, and catalog configuration |
+| `IndexRecord` | Typed catalog record; builds kind artifacts and privately opens a kind |
+| `Indexes` | Open/load/build + query/hydrate orchestrator |
 | `Files` | Snapshot-owned `FileId → File` map |
-| `StoreMeta` | Store metadata |
+| `SnapshotId` | Opaque committed snapshot identity |
 
-**Do not add to core:** `from_single`, `Indexes::candidates(Query)`, `reconcile`, `unindexed_hit_paths`, or other caller-specific helpers. Callers compose `Indexes::open`, `indexed_corpus().retain_unindexed`, and `Plan::resolve`.
+`record.rs` owns the private `Opened` enum that dispatches queries. There is no
+public `Index` trait or public `Snapshot` type. Snapshot-root `files.bin`
+(`SIFTFIL2`) is shared by all kinds; kind artifacts live beneath
+`snapshots/<id>/<kind-name>/`.
+
+**Do not add to core:** `from_single`, `Indexes::candidates(Query)`, `reconcile`,
+`unindexed_hit_paths`, or other caller-specific helpers. Callers compose
+`Indexes::open`, `Files::retain_unindexed`, and `Plan::resolve`.
 
 ## Architecture & Design
 
@@ -271,36 +286,13 @@ Examples of **good** names that describe the domain action:
 - `build_index_metadata`
 - `posting_ids` with a `GramMatch` (or similar) argument
 
-When a lifecycle function needs to write to either a directory or a
-snapshot store, use a destination enum instead of `*_to_dir` / `*_into` variants:
-
-```rust
-// Do this:
-fn build(&self, dest: IndexDestination<'_>, config: &IndexConfig<'_>) -> Result<()>;
-
-// NOT this (parallel variants):
-fn build(config, output_dir) -> Result;     // directory
-fn build_into(config, writer, ns) -> Result; // snapshot
-```
-
-## IndexDestination
-
-Index writes take a destination and corpus config:
-
-- `IndexDestination` — `Directory(&Path)` or `Snapshot { writer, namespace }`.
-- `build(dest, config)` / `update(dest, config)` — full corpus from `config`.
-- Open is path-only: `IndexRecord::open(dir, root, corpus_kind)`.
-
-See `crates/core/src/index/artifacts.rs`, `record.rs`, and `ngram/`.
-
 ## Module Organization
 
 Organize modules by domain responsibility, not by Rust item category. Avoid
 catch-all files such as `types.rs`, `traits.rs`, `helpers.rs`, or `utils.rs`
 unless the domain itself is genuinely that narrow. Prefer file/module names that
 describe the behavior or concept they own. Use nested modules when a domain has
-clear subdomains, such as `snapshot/store/disk.rs` and
-`snapshot/store/memory.rs`.
+clear subdomains, such as `index/ngram/storage/`.
 
 ## CLI Crate
 
@@ -357,8 +349,12 @@ Clap parses `*Decl` flag groups; **`Argv` resolves effective runtime values**
 - Prefer printer/JSON rendering via match on `Origin` variants; do not Path-force stream labels for API uniformity.
 - Prefer enums over bools for real alternatives (`Quiet`, `InvertMatch`, `MatchEmissionMode`, `ZeroCounts`).
 - Minimize helper methods as well as free functions—only when absolutely justified.
+- Prefer first-principles entity design: few entities with clear responsibilities; treat extra code and abstractions as liability unless explicitly justified.
+- Keep index orchestration and on-disk storage/versioning index-kind-agnostic; kind-specific logic stays under the kind module (e.g. `ngram/`) so new indexes are easy to add.
+- When planning architecture work, prefer deep critique and a cleaned plan for easy review before implementation.
 
 ## Learned Workspace Facts
 
 - Core search lives under `crates/core/src/search/` (`Query`, `Searcher`, `Origin`, `SearchInputs`, `SearchError`); `Plan` lives under `candidates/`. There is no `sift_core::grep` module or `Grep` facade. The CLI keeps a local `grep` module for `Run`.
 - Daemon IPC is enum-shaped (`DaemonRequest` / `DaemonResponse`); accept loop forwards `Event::Client` — no `FnMut` handler API.
+- Snapshot composition is meant to share one corpus `FileId` → path table per snapshot; kinds return `FileId`s and write only kind artifacts under their namespace.
