@@ -59,6 +59,7 @@ sift --json "pattern"      # JSON output
 | `integration_ignore.rs` | `.gitignore`, `--no-ignore`, hidden files |
 | `integration_json.rs` | `--json` output format |
 | `integration_stats.rs` | `--stats` flag |
+| `integration_debug.rs` | `--debug` stderr diagnostics |
 | `integration_modes.rs` | `-c`, `-l`, `-L`, `-o`, `--count-matches` |
 | `integration_null_color.rs` | `-0`/`--null`, `--color` |
 

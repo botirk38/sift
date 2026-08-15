@@ -6,8 +6,9 @@ use crate::format::{
 };
 use clap::{ArgAction, Args};
 use sift_core::SearchMode;
-use sift_core::search::Stats;
-use std::path::PathBuf;
+use sift_core::candidates::{ScanScope, SnapshotFreshness};
+use sift_core::search::{Narrowing, Stats};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Describes the filename display context for deciding whether to show paths.
@@ -168,6 +169,80 @@ pub struct StatsDecl {
     pub stats_flag: bool,
 }
 
+/// Declares `--debug` for clap.
+#[derive(Args)]
+pub struct DebugDecl {
+    #[arg(long = "debug", action = ArgAction::SetTrue)]
+    pub debug_flag: bool,
+}
+
+/// Values printed by `--debug` on stderr (not stdout).
+pub struct Debug<'a> {
+    pub sift_dir: &'a Path,
+    pub corpus_root: &'a Path,
+    pub indexes: Option<&'a sift_core::Indexes>,
+    pub mode: SearchMode,
+    pub patterns: &'a [String],
+    pub scan: ScanScope,
+    pub narrowing: Narrowing,
+    pub transform: bool,
+    pub candidates: usize,
+    pub streams: usize,
+}
+
+impl Debug<'_> {
+    pub fn write(&self) {
+        eprintln!("DEBUG sift-dir: {}", self.sift_dir.display());
+        eprintln!("DEBUG corpus-root: {}", self.corpus_root.display());
+        match self.indexes {
+            None => eprintln!("DEBUG index: absent"),
+            Some(indexes) if indexes.queryable() => {
+                eprintln!("DEBUG index: loaded (queryable)");
+            }
+            Some(_) => eprintln!("DEBUG index: loaded (not queryable)"),
+        }
+        eprintln!("DEBUG search-mode: {:?}", self.mode);
+        eprintln!(
+            "DEBUG patterns: {} {:?}",
+            self.patterns.len(),
+            self.patterns
+        );
+        let scan = match self.scan {
+            ScanScope::StreamsOnly => "streams-only",
+            ScanScope::Walk { .. } => "walk",
+            ScanScope::Index {
+                freshness: SnapshotFreshness::Current,
+                ..
+            } => "index (freshness=current)",
+            ScanScope::Index {
+                freshness: SnapshotFreshness::Stale,
+                ..
+            } => "index (freshness=stale)",
+        };
+        eprintln!("DEBUG scan-scope: {scan}");
+        eprintln!("DEBUG candidates: {} (upper bound)", self.candidates);
+        eprintln!("DEBUG streams: {}", self.streams);
+        if matches!(self.narrowing, Narrowing::Disabled) {
+            eprintln!("DEBUG note: index narrowing disabled");
+        }
+        if matches!(
+            self.scan,
+            ScanScope::Index {
+                freshness: SnapshotFreshness::Stale,
+                ..
+            }
+        ) {
+            eprintln!("DEBUG note: snapshot stale");
+        }
+        if matches!(self.scan, ScanScope::StreamsOnly) {
+            eprintln!("DEBUG note: scan scope is streams-only");
+        }
+        if self.transform {
+            eprintln!("DEBUG note: content transform active; candidates searched as streams");
+        }
+    }
+}
+
 // ── Argv-order resolution ──
 
 /// Output-related flags resolved from raw argv (ripgrep last-wins).
@@ -192,6 +267,7 @@ pub struct OutputArgv {
     pub buffering: OutputBuffering,
     pub line_number: Option<bool>,
     pub with_filename: Option<bool>,
+    pub debug: bool,
 }
 
 impl OutputArgv {
@@ -212,6 +288,7 @@ impl OutputArgv {
             buffering: Self::buffering(tokens),
             line_number: Self::line_number(tokens),
             with_filename: Self::with_filename(tokens),
+            debug: Self::debug(tokens),
         }
     }
 
@@ -297,6 +374,18 @@ impl OutputArgv {
         let mut result = false;
         for (i, arg) in args.iter().enumerate() {
             if arg == "--stats" && i >= last_idx {
+                last_idx = i;
+                result = true;
+            }
+        }
+        result
+    }
+
+    fn debug(args: &[String]) -> bool {
+        let mut last_idx = 0usize;
+        let mut result = false;
+        for (i, arg) in args.iter().enumerate() {
+            if arg == "--debug" && i >= last_idx {
                 last_idx = i;
                 result = true;
             }
@@ -644,6 +733,12 @@ mod tests {
     #[test]
     fn output_argv_json_toggle() {
         assert!(!out_argv(&["sift", "--json", "--no-json", "pat"]).mode.json);
+    }
+
+    #[test]
+    fn output_argv_debug_flag() {
+        assert!(out_argv(&["sift", "--debug", "pat"]).debug);
+        assert!(!out_argv(&["sift", "pat"]).debug);
     }
 
     #[test]

@@ -25,6 +25,7 @@
 | `-A` / `-B` / `-C` | Context lines |
 | `--json` | JSON Lines output |
 | `--stats` | Summary on stderr |
+| `--debug` | Search diagnostics on stderr (sift-dir, index, mode, candidates) |
 | `-0` / `--null` | NUL-separated paths |
 | `--no-filename` | Omit path prefix (not `-h`) |
 | `-j N` / `--threads N` | Rayon thread count |

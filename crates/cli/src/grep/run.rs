@@ -2,9 +2,7 @@ use std::path::PathBuf;
 
 use sift_core::candidates::{Scan, ScanScope, SnapshotFreshness};
 use sift_core::search::{Query, SearchInputs, SearchMode, SearchOptions, Searcher};
-use sift_core::{
-    Candidates, FileFilter, FileOrder, IndexCoverage, Narrowing, Plan, TypeFilterRule,
-};
+use sift_core::{FileFilter, FileOrder, IndexCoverage, Narrowing, Plan, TypeFilterRule};
 
 use crate::index::daemon::Daemon;
 
@@ -138,9 +136,7 @@ impl Run {
         let sources = InputSources::from_paths(&self.config.search_paths);
         let pattern_argv = &self.config.pattern_argv;
         let output_argv = &self.config.output_argv;
-
         let line_number_override = self.line_number_override();
-
         let session = self.prepare_session(&sources.paths)?;
         let indexes_empty = session
             .indexes
@@ -148,7 +144,6 @@ impl Run {
             .is_none_or(|indexes| !indexes.queryable());
         let sources = sources.resolve(patterns.input, indexes_empty)?;
         let transform = self.config.content.transform()?;
-
         let filename_ctx = Self::filename_context(mode, &sources);
         let print_spec = self
             .config
@@ -165,9 +160,6 @@ impl Run {
         let freshness = Self::snapshot_freshness(&session, daemon);
         let scan_scope = self.scan_scope(freshness, sources.resolve_candidates());
         let scan = Self::scan(&session, scan_scope);
-
-        // Collect stats for `--stats` (human lines) and for `--json` (summary /
-        // end events). Human stderr lines are text-only (`--stats` without JSON).
         let format = OutputDecl::format(output_argv, mode);
         let print_stats = OutputDecl::print_stats(output_argv, format);
         let stats = if print_stats || matches!(format, PrintFormat::Json) {
@@ -175,41 +167,35 @@ impl Run {
         } else {
             sift_core::StatsMode::Off
         };
-        let query = {
-            let query = if matches!(mode, SearchMode::Paths) {
-                Query::new(vec![".".to_string()], SearchOptions::default())
-                    .map_err(|e| anyhow::anyhow!("{e}"))?
-                    .with_narrowing(Narrowing::Disabled)
-            } else {
-                self.config
-                    .pattern
-                    .query(patterns.patterns, pattern_argv)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?
-            };
-            match transform {
-                Some(_) => query.with_narrowing(Narrowing::Disabled),
-                None => query,
-            }
-        };
+        let query = self.query(mode, patterns.patterns, transform.is_some())?;
         let explicit_files = Self::explicit_files(&session);
-        let mut streams = sources.stdin_streams();
+        let streams = sources.stdin_streams();
         let searcher = Searcher::new(query).map_err(|e| anyhow::anyhow!("{e}"))?;
         let resolved = Plan::new(&scan, searcher.query(), mode.coverage())
             .resolve(&scan)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let candidate_bound = resolved.bound();
         let (candidates, streams) = match transform.as_ref() {
-            Some(transform) => {
-                for candidate in resolved.into_vec() {
-                    let bytes = transform
-                        .read_candidate(&candidate)
-                        .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    let is_explicit = candidate.is_explicit(&explicit_files);
-                    streams.push_file_bytes(candidate, bytes, is_explicit);
-                }
-                (Candidates::empty(), streams)
-            }
+            Some(transform) => transform
+                .to_streams(resolved, streams, &explicit_files)
+                .map_err(|e| anyhow::anyhow!("{e}"))?,
             None => (resolved, streams),
         };
+        if output_argv.debug {
+            super::output::Debug {
+                sift_dir: &self.config.sift_dir,
+                corpus_root: &session.scope.filter_root,
+                indexes: session.indexes.as_ref(),
+                mode,
+                patterns: searcher.query().patterns(),
+                scan: scan_scope,
+                narrowing: searcher.query().narrowing(),
+                transform: transform.is_some(),
+                candidates: candidate_bound,
+                streams: streams.len(),
+            }
+            .write();
+        }
         let report = print_spec
             .print(
                 &searcher,
@@ -223,8 +209,6 @@ impl Run {
                 &separators,
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-        // Ripgrep emits no human `--stats` for `--files`; path listing is not a search.
         if print_stats
             && !matches!(mode, SearchMode::Paths)
             && let Some(s) = report.stats.as_ref()
@@ -234,6 +218,30 @@ impl Run {
         let selected = report.found();
         Self::queue_lazy_hits(daemon, &session, report.listed.corpus_hit_paths());
         Ok(selected)
+    }
+
+    /// Paths listing uses a dummy pattern; content transforms disable index narrowing.
+    fn query(
+        &self,
+        mode: SearchMode,
+        patterns: Vec<String>,
+        transform: bool,
+    ) -> anyhow::Result<Query> {
+        let query = if matches!(mode, SearchMode::Paths) {
+            Query::new(vec![".".to_string()], SearchOptions::default())
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+                .with_narrowing(Narrowing::Disabled)
+        } else {
+            self.config
+                .pattern
+                .query(patterns, &self.config.pattern_argv)
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+        };
+        Ok(if transform {
+            query.with_narrowing(Narrowing::Disabled)
+        } else {
+            query
+        })
     }
 
     const fn line_number_override(&self) -> Option<bool> {

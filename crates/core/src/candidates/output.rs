@@ -96,6 +96,23 @@ impl<'a> Candidates<'a> {
         }
     }
 
+    /// Cheap upper bound on candidates before hydration / admission filtering.
+    ///
+    /// For index-backed rows this is the id count (some ids may still drop during
+    /// iteration). Walk rows are exact.
+    #[must_use]
+    pub const fn bound(&self) -> usize {
+        match &self.0 {
+            Origin::Walk(items) => items.len(),
+            Origin::Index { file_ids, .. } => file_ids.len(),
+            Origin::Merge {
+                file_ids,
+                unindexed,
+                ..
+            } => file_ids.len().saturating_add(unindexed.len()),
+        }
+    }
+
     /// Materialize every candidate. Index-backed rows open in parallel.
     #[must_use = "materialized candidates are consumed by search"]
     pub fn into_vec(self) -> Vec<File> {

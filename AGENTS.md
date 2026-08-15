@@ -347,9 +347,10 @@ Clap parses `*Decl` flag groups; **`Argv` resolves effective runtime values**
 - Treat narrowly crate-restricted `pub(in crate::...)` wrapper enums as a smell; prefer domain types with clear ownership.
 - Prefer search identity as `Origin::{File, Stream}` (not `Candidate`); stream identity is a string `label`, not a filesystem `Path`.
 - Prefer printer/JSON rendering via match on `Origin` variants; do not Path-force stream labels for API uniformity.
-- Prefer enums over bools for real alternatives (`Quiet`, `InvertMatch`, `MatchEmissionMode`, `ZeroCounts`).
+- Prefer enums over bools when modeling domain entities with distinct cases (`MatchEmissionMode`, `ZeroCounts`, `SearchMode`). Plain on/off switches stay `bool` — do not invent `Off`/`On` entity enums for them (and do not extend the existing `Quiet` / `InvertMatch` Off/On pattern to new flags). Do not reify `Option` / emptiness checks into parallel state enums.
+- Name types and methods after the domain concept with short, clear words; avoid mechanism names, `_for_*` restatements, and probe/context bags.
 - Minimize helper methods as well as free functions—only when absolutely justified.
-- Prefer first-principles entity design: few entities with clear responsibilities; treat extra code and abstractions as liability unless explicitly justified.
+- Prefer first-principles entity design: few entities with clear responsibilities; treat extra code and abstractions as liability unless explicitly justified. Do not promote configuration switches or transient probe state into domain entities.
 - Keep index orchestration and on-disk storage/versioning index-kind-agnostic; kind-specific logic stays under the kind module (e.g. `ngram/`) so new indexes are easy to add.
 - When planning architecture work, prefer deep critique and a cleaned plan for easy review before implementation.
 

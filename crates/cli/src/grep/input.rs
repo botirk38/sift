@@ -5,7 +5,7 @@ use std::process::Command;
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use grep_cli::DecompressionReaderBuilder;
-use sift_core::File;
+use sift_core::{Candidates, File};
 
 #[derive(Debug, Clone, Default)]
 pub struct ContentTransformConfig {
@@ -48,6 +48,25 @@ pub struct ContentTransform {
 }
 
 impl ContentTransform {
+    /// Search transformed file bytes as streams (zip / `--pre`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if transformed content cannot be read.
+    pub fn to_streams<'a>(
+        &self,
+        resolved: Candidates<'a>,
+        mut streams: sift_core::Inputs<'a>,
+        explicit: &[PathBuf],
+    ) -> sift_core::Result<(Candidates<'a>, sift_core::Inputs<'a>)> {
+        for candidate in resolved.into_vec() {
+            let bytes = self.read_candidate(&candidate)?;
+            let is_explicit = candidate.is_explicit(explicit);
+            streams.push_file_bytes(candidate, bytes, is_explicit);
+        }
+        Ok((Candidates::empty(), streams))
+    }
+
     /// Read transformed bytes for one candidate.
     ///
     /// # Errors
