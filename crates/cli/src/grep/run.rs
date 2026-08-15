@@ -141,12 +141,12 @@ impl Run {
         } else {
             ResolvedPatterns::resolve(&self.config.pattern)?
         };
-        let sources = InputSources::from_paths(&self.config.search_paths);
+        let sources =
+            InputSources::from_paths(&self.config.search_paths).resolve(patterns.input)?;
         let pattern_argv = &self.config.pattern_argv;
         let output_argv = &self.config.output_argv;
         let line_number_override = self.line_number_override();
         let session = self.prepare_session(&sources.paths)?;
-        let sources = sources.resolve(patterns.input, session.queryable())?;
         let transform = self.config.content.transform()?;
         let filename_ctx = Self::filename_context(mode, &sources);
         let print_spec = self
@@ -162,7 +162,7 @@ impl Run {
             .map_err(|e| anyhow::anyhow!(e))?;
         let separators = self.config.output.separators();
         let freshness = Self::snapshot_freshness(&session, daemon);
-        let scan_scope = self.scan_scope(&session, freshness, sources.resolve_candidates());
+        let scan_scope = self.scan_scope(&session, freshness, &sources);
         let scan = Self::scan(&session, scan_scope);
         let format = OutputDecl::format(output_argv, mode);
         let print_stats = OutputDecl::print_stats(output_argv, format);
@@ -260,9 +260,9 @@ impl Run {
         &self,
         session: &SearchSession,
         freshness: SnapshotFreshness,
-        resolve_candidates: bool,
+        sources: &InputSources,
     ) -> ScanScope {
-        if !resolve_candidates {
+        if !sources.resolve_candidates() {
             return ScanScope::StreamsOnly;
         }
         if !session.queryable() || matches!(self.config.search_mode, SearchMode::Paths) {

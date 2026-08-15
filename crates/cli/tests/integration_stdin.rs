@@ -50,8 +50,22 @@ fn empty_piped_stdin_still_searches_walk_corpus() {
 }
 
 #[test]
-fn piped_stdin_does_not_replace_indexed_default_corpus() {
-    let p = TestProject::new("stdin-indexed-default-corpus");
+fn piped_stdin_with_index_searches_pipe_not_corpus() {
+    let p = TestProject::new("stdin-indexed-pipe");
+    p.write("a.txt", "corpus_only_needle\n");
+    p.build_index();
+    let mut cmd = p.sift();
+    cmd.arg("--sift-dir").arg(p.sift_dir());
+
+    let out = output_with_stdin(cmd, ["only_stdin_marker_xyz"], b"only_stdin_marker_xyz\n");
+
+    assert_success(&out);
+    assert_stdout_eq(&out, "only_stdin_marker_xyz\n");
+}
+
+#[test]
+fn piped_stdin_with_index_ignores_corpus_hits() {
+    let p = TestProject::new("stdin-indexed-ignores-corpus");
     p.write("a.txt", "needle\n");
     p.build_index();
     let mut cmd = p.sift();
@@ -59,8 +73,8 @@ fn piped_stdin_does_not_replace_indexed_default_corpus() {
 
     let out = output_with_stdin(cmd, ["needle"], b"no-match\n");
 
-    assert_success(&out);
-    assert_eq!(normalize_stdout(&out), "a.txt:needle\n");
+    assert_exit_code(&out, 1);
+    assert_stdout_eq(&out, "");
 }
 
 #[test]
@@ -70,6 +84,24 @@ fn explicit_dash_searches_stdin() {
 
     assert_success(&out);
     assert_stdout_eq(&out, "needle\n");
+}
+
+#[test]
+fn explicit_dash_with_index_searches_stdin() {
+    let p = TestProject::new("stdin-explicit-indexed");
+    p.write("a.txt", "corpus_needle\n");
+    p.build_index();
+    let mut cmd = p.sift();
+    cmd.arg("--sift-dir").arg(p.sift_dir());
+
+    let out = output_with_stdin(
+        cmd,
+        ["only_stdin_marker_xyz", "-"],
+        b"only_stdin_marker_xyz\n",
+    );
+
+    assert_success(&out);
+    assert_stdout_eq(&out, "only_stdin_marker_xyz\n");
 }
 
 #[test]
