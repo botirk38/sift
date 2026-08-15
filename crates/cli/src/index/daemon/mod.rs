@@ -12,13 +12,12 @@ use std::time::{Duration, Instant};
 
 use fslock::LockFile;
 use sift_core::{
-    CorpusKind, CorpusMeta, FilterMeta, IndexCoverage, IndexRecord, Indexes, SnapshotId, StoreMeta,
-    WalkMeta,
+    CorpusMeta, FilterMeta, IndexCoverage, IndexRecord, Indexes, SnapshotId, StoreMeta, WalkMeta,
 };
 use thiserror::Error;
 
 use crate::grep::paths::CorpusScope;
-use crate::index::{ReconcileOutcome, SnapshotRefresh};
+use crate::index::ReconcileOutcome;
 
 use ipc::{DaemonRequest, DaemonResponse};
 use refresh::{IndexRefresh, PendingIndex, RefreshResult, RefreshScope};
@@ -136,7 +135,7 @@ impl DaemonOrchestrator {
         let mut phase = Phase::idle(idle_timeout);
         let mut ingest = IngestTracker::from_reconcile(
             Indexes::open(&sift_dir, &meta)
-                .and_then(|mut indexes| SnapshotRefresh::run(&mut indexes))?,
+                .and_then(|mut indexes| ReconcileOutcome::rebuild(&mut indexes))?,
         );
 
         let ipc_tx = tx.clone();
@@ -187,7 +186,6 @@ impl DaemonOrchestrator {
                 Ok(StoreMeta::new(
                     CorpusMeta {
                         root: root.clone(),
-                        kind: CorpusKind::Directory,
                         include_paths: Vec::new(),
                         exclude_paths: CorpusScope::excluded_paths(&root, sift_dir),
                     },
@@ -823,7 +821,6 @@ mod tests {
         let meta = StoreMeta::new(
             CorpusMeta {
                 root: dir.path().join("does-not-exist"),
-                kind: CorpusKind::Directory,
                 include_paths: Vec::new(),
                 exclude_paths: Vec::new(),
             },
@@ -853,7 +850,6 @@ mod tests {
         let meta = StoreMeta::new(
             CorpusMeta {
                 root: dir.path().to_path_buf(),
-                kind: CorpusKind::Directory,
                 include_paths: Vec::new(),
                 exclude_paths: Vec::new(),
             },
@@ -892,7 +888,6 @@ mod tests {
             &StoreMeta::new(
                 CorpusMeta {
                     root: old_root.clone(),
-                    kind: CorpusKind::Directory,
                     include_paths: Vec::new(),
                     exclude_paths: Vec::new(),
                 },
@@ -919,7 +914,6 @@ mod tests {
             &StoreMeta::new(
                 CorpusMeta {
                     root: new_root.clone(),
-                    kind: CorpusKind::Directory,
                     include_paths: Vec::new(),
                     exclude_paths: Vec::new(),
                 },
@@ -951,7 +945,6 @@ mod tests {
         let meta = StoreMeta::new(
             CorpusMeta {
                 root: dir.path().to_path_buf(),
-                kind: CorpusKind::Directory,
                 include_paths: Vec::new(),
                 exclude_paths: Vec::new(),
             },
@@ -1023,7 +1016,6 @@ mod tests {
         let meta = StoreMeta::new(
             CorpusMeta {
                 root: dir.path().to_path_buf(),
-                kind: CorpusKind::Directory,
                 include_paths: Vec::new(),
                 exclude_paths: Vec::new(),
             },

@@ -8,7 +8,7 @@ run regex or fixed-string queries with automatic candidate narrowing.
 `StoreMeta` defines the corpus and catalog. `Indexes::build()` walks that
 corpus, writes one shared `files.bin`, builds each `IndexRecord` beneath its
 snapshot namespace, and atomically publishes `CURRENT`. Query dispatch uses the
-private `Opened` enum in `record.rs`; `Indexes` intersects kind results.
+private `Kind` enum in `record.rs`; `Indexes` intersects kind results.
 
 The current store format is version 2. Each committed snapshot has
 `files.bin` (`SIFTFIL2`) and `manifest.json` at its root; each kind writes only

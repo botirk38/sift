@@ -19,14 +19,14 @@ Plan::new (pure) → Plan::resolve (query I/O) → Searcher::execute
 - `File` / `Origin` — path identity (`Origin::{File, Stream { label }}`)
 
 Today the default catalog record is N-gram width 3. `record.rs` privately opens
-kinds through its `Opened` enum.
+kinds through its `Kind` enum.
 
 ## Public API
 
 Search (re-exported from `lib.rs`):
 
 - `Query`, `Searcher`, `Report`, `Origin`, `SearchMode`
-- `StoreMeta`, `IndexRecord`, `Indexes`, `SnapshotId`, `Files`, `CorpusKind`
+- `StoreMeta`, `IndexRecord`, `Indexes`, `SnapshotId`, `Files`
 - `ngram::Index`, `GramWidth`, `GramNorm`
 - `Candidates`, `Plan`, `Scan`, `ScanScope`, `SnapshotFreshness`, `Coverage`
 
@@ -35,7 +35,7 @@ Search (re-exported from `lib.rs`):
 | Module | Responsibility |
 |--------|----------------|
 | `index/indexes.rs` | `Indexes` open/load/build + query/hydrate |
-| `index/record.rs` | `IndexRecord`, private `Opened` dispatch |
+| `index/record.rs` | `IndexRecord`, private `Kind` dispatch |
 | `index/files.rs` | Snapshot-owned `Files` |
 | `index/disk.rs` | Snapshot persistence |
 | `index/ngram/` | N-gram implementation (artifact names live here) |

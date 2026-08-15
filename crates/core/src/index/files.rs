@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use crate::corpus::File;
-use crate::corpus::walk::{FileWalk, LinkTraversal, WalkFile, WalkSelector};
+use crate::corpus::walk::{FileWalk, LinkTraversal};
 use crate::index::FileId;
 use crate::index::meta::StoreMeta;
 use crate::index::mmap::mmap_open;
@@ -59,9 +59,8 @@ impl Files {
                 source,
             })
         })?;
-        let paths = walk_paths(meta)?;
-        let rows = collect_rows(&root, &paths)?;
-        let bytes = FileTable::encode(&rows).map_err(crate::Error::Io)?;
+        let files = Self::walk(meta, &root)?;
+        let bytes = FileTable::encode(&files).map_err(crate::Error::Io)?;
         let table = FileTable::from_bytes(bytes).map_err(crate::Error::Io)?;
         Ok(Self {
             root,
@@ -113,10 +112,10 @@ impl Files {
     /// One indexed row as a [`File`]. Missing id → `None`.
     #[must_use]
     pub fn file(&self, id: FileId) -> Option<File> {
-        let row = self.table.row(id.get()).ok()?;
-        let rel = PathBuf::from(row.path);
+        let (rel, size) = self.table.entry(id.get()).ok()?;
+        let rel = PathBuf::from(rel);
         let abs = self.root.join(&rel);
-        Some(File::with_metadata(rel, abs, Some(row.size), None))
+        Some(File::with_metadata(rel, abs, Some(size), None))
     }
 
     /// Every file id in this table.
@@ -140,50 +139,40 @@ impl Files {
             .collect()
     }
 
-    /// Walk selector that keeps only paths absent from this table.
-    #[must_use]
-    pub const fn unindexed(&self) -> Unindexed<'_> {
-        Unindexed { files: self }
-    }
-
     /// Corpus-relative path for `id`, if present.
     #[must_use]
     pub fn rel_path(&self, id: FileId) -> Option<&str> {
-        self.table.row(id.get()).ok().map(|row| row.path)
+        self.table.entry(id.get()).ok().map(|(path, _)| path)
     }
 
     fn path_set(&self) -> &HashSet<PathBuf> {
         self.paths.get_or_init(|| {
             (0..self.table.len())
-                .filter_map(|id| self.table.row(id).ok().map(|row| PathBuf::from(row.path)))
+                .filter_map(|id| {
+                    self.table
+                        .entry(id)
+                        .ok()
+                        .map(|(path, _)| PathBuf::from(path))
+                })
                 .collect()
         })
     }
-}
 
-/// Walk selector for paths not present in [`Files`].
-#[derive(Clone, Copy)]
-pub struct Unindexed<'a> {
-    files: &'a Files,
-}
-
-impl WalkSelector for Unindexed<'_> {
-    fn includes(&self, rel_path: &Path) -> bool {
-        !self.files.contains(rel_path)
+    fn walk(meta: &StoreMeta, root: &Path) -> crate::Result<Vec<File>> {
+        FileWalk::new(root)
+            .scopes(&meta.corpus.include_paths)
+            .excludes(&meta.corpus.exclude_paths)
+            .visibility(meta.filters.visibility.clone())
+            .links(if meta.walk.follow_links {
+                LinkTraversal::Follow
+            } else {
+                LinkTraversal::DoNotFollow
+            })
+            .one_file_system(meta.walk.one_file_system)
+            .max_depth(meta.walk.max_depth)
+            .max_filesize(meta.walk.max_filesize)
+            .candidates()
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct FileRowOwned {
-    path: PathBuf,
-    size: u64,
-}
-
-/// Borrowed file row from the on-disk table.
-#[derive(Debug, Clone, Copy)]
-struct FileRow<'a> {
-    path: &'a str,
-    size: u64,
 }
 
 struct FileTable {
@@ -204,17 +193,16 @@ impl FileTable {
     /// Bytes after the path: `size` (8).
     const SIZE_LEN: usize = 8;
 
-    fn encode(rows: &[FileRowOwned]) -> std::io::Result<Vec<u8>> {
-        let count = rows.len();
+    fn encode(files: &[File]) -> std::io::Result<Vec<u8>> {
+        let count = files.len();
         let offset_table_start = FILES_MAGIC.len() + 4;
         let blob_start = offset_table_start + count * 4;
 
         let mut offsets = Vec::<u32>::with_capacity(count);
         let mut blob = Vec::<u8>::new();
 
-        for row in rows {
-            let path_bytes = row.path.to_string_lossy();
-            let path_bytes = path_bytes.as_bytes();
+        for file in files {
+            let path_bytes = file.rel_str().as_bytes();
             let path_len = u32::try_from(path_bytes.len()).map_err(|_| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
@@ -227,10 +215,16 @@ impl FileTable {
                     "files blob offset exceeds u32::MAX",
                 )
             })?;
+            let size = file.cached_size().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "file missing size for files.bin encode",
+                )
+            })?;
             offsets.push(abs_off);
             blob.extend_from_slice(&path_len.to_le_bytes());
             blob.extend_from_slice(path_bytes);
-            blob.extend_from_slice(&row.size.to_le_bytes());
+            blob.extend_from_slice(&size.to_le_bytes());
         }
 
         let mut out = Vec::with_capacity(blob_start + blob.len());
@@ -290,7 +284,7 @@ impl FileTable {
                 "unexpected files table magic",
             ));
         }
-        let count = read_u32_le(bytes, magic_len) as usize;
+        let count = Self::read_u32_le(bytes, magic_len) as usize;
         let offset_table_start = magic_len + 4;
         let blob_start = offset_table_start + count * 4;
         if bytes.len() < blob_start {
@@ -300,7 +294,7 @@ impl FileTable {
             ));
         }
         for i in 0..count {
-            let off = read_u32_le(bytes, offset_table_start + i * 4) as usize;
+            let off = Self::read_u32_le(bytes, offset_table_start + i * 4) as usize;
             if off < blob_start {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -313,7 +307,7 @@ impl FileTable {
                     format!("offset table[{i}] path_len prefix extends past end"),
                 ));
             }
-            let path_len = read_u32_le(bytes, off) as usize;
+            let path_len = Self::read_u32_le(bytes, off) as usize;
             let entry_end = off + 4 + path_len + Self::SIZE_LEN;
             if entry_end > bytes.len() {
                 return Err(std::io::Error::new(
@@ -325,7 +319,7 @@ impl FileTable {
         Ok((count, offset_table_start))
     }
 
-    fn row(&self, id: usize) -> std::io::Result<FileRow<'_>> {
+    fn entry(&self, id: usize) -> std::io::Result<(&str, u64)> {
         if id >= self.count {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -333,8 +327,8 @@ impl FileTable {
             ));
         }
         let bytes = self.bytes();
-        let off = read_u32_le(bytes, self.offset_table_start + id * 4) as usize;
-        let path_len = read_u32_le(bytes, off) as usize;
+        let off = Self::read_u32_le(bytes, self.offset_table_start + id * 4) as usize;
+        let path_len = Self::read_u32_le(bytes, off) as usize;
         let path_start = off + 4;
         let path_end = path_start + path_len;
         let path = bytes.get(path_start..path_end).ok_or_else(|| {
@@ -349,14 +343,14 @@ impl FileTable {
                 format!("path {id} is not valid UTF-8: {err}"),
             )
         })?;
-        let size = read_u64_le(bytes, path_end);
-        Ok(FileRow { path, size })
+        let size = Self::read_u64_le(bytes, path_end);
+        Ok((path, size))
     }
 
     fn validate_paths(&self) -> std::io::Result<()> {
         for id in 0..self.count {
-            let row = self.row(id)?;
-            let path = row.path.as_bytes();
+            let (path, _) = self.entry(id)?;
+            let path = path.as_bytes();
             if path.is_empty()
                 || path.starts_with(b"/")
                 || path
@@ -371,72 +365,22 @@ impl FileTable {
         }
         Ok(())
     }
-}
 
-fn walk_paths(meta: &StoreMeta) -> crate::Result<Vec<PathBuf>> {
-    use crate::index::config::CorpusKind;
-
-    match meta.corpus.kind {
-        CorpusKind::SingleFile => {
-            if meta.corpus.include_paths.is_empty() {
-                return Err(crate::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "SingleFile corpus must specify the file in include_paths",
-                )));
-            }
-            Ok(meta.corpus.include_paths.clone())
-        }
-        CorpusKind::Directory => {
-            let paths = FileWalk::new(&meta.corpus.root)
-                .scopes(&meta.corpus.include_paths)
-                .excludes(&meta.corpus.exclude_paths)
-                .visibility(meta.filters.visibility.clone())
-                .links(if meta.walk.follow_links {
-                    LinkTraversal::Follow
-                } else {
-                    LinkTraversal::DoNotFollow
-                })
-                .one_file_system(meta.walk.one_file_system)
-                .max_depth(meta.walk.max_depth)
-                .max_filesize(meta.walk.max_filesize)
-                .files()?
-                .into_iter()
-                .map(WalkFile::into_rel_path)
-                .collect();
-            Ok(paths)
-        }
+    fn read_u32_le(bytes: &[u8], offset: usize) -> u32 {
+        u32::from_le_bytes(
+            bytes[offset..offset + 4]
+                .try_into()
+                .expect("slice is exactly 4 bytes"),
+        )
     }
-}
 
-fn collect_rows(root: &Path, paths: &[PathBuf]) -> crate::Result<Vec<FileRowOwned>> {
-    use rayon::prelude::*;
-    paths
-        .par_iter()
-        .map(|rel| {
-            let abs = root.join(rel);
-            let meta = std::fs::metadata(&abs)?;
-            Ok(FileRowOwned {
-                path: rel.clone(),
-                size: meta.len(),
-            })
-        })
-        .collect()
-}
-
-fn read_u32_le(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(
-        bytes[offset..offset + 4]
-            .try_into()
-            .expect("slice is exactly 4 bytes"),
-    )
-}
-
-fn read_u64_le(bytes: &[u8], offset: usize) -> u64 {
-    u64::from_le_bytes(
-        bytes[offset..offset + 8]
-            .try_into()
-            .expect("slice is exactly 8 bytes"),
-    )
+    fn read_u64_le(bytes: &[u8], offset: usize) -> u64 {
+        u64::from_le_bytes(
+            bytes[offset..offset + 8]
+                .try_into()
+                .expect("slice is exactly 8 bytes"),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -446,22 +390,24 @@ mod tests {
 
     #[test]
     fn encode_open_round_trip() {
-        let rows = vec![
-            FileRowOwned {
-                path: PathBuf::from("a.txt"),
-                size: 42,
-            },
-            FileRowOwned {
-                path: PathBuf::from("sub/b.txt"),
-                size: 100,
-            },
+        let root = PathBuf::from("/tmp");
+        let files = vec![
+            File::with_metadata(PathBuf::from("a.txt"), root.join("a.txt"), Some(42), None),
+            File::with_metadata(
+                PathBuf::from("sub/b.txt"),
+                root.join("sub/b.txt"),
+                Some(100),
+                None,
+            ),
         ];
-        let bytes = FileTable::encode(&rows).expect("encode");
+        let bytes = FileTable::encode(&files).expect("encode");
         let table = FileTable::from_bytes(bytes).expect("decode");
         assert_eq!(table.len(), 2);
-        assert_eq!(table.row(0).expect("row0").path, "a.txt");
-        assert_eq!(table.row(0).expect("row0").size, 42);
-        assert_eq!(table.row(1).expect("row1").path, "sub/b.txt");
+        let (path0, size0) = table.entry(0).expect("row0");
+        assert_eq!(path0, "a.txt");
+        assert_eq!(size0, 42);
+        let (path1, _) = table.entry(1).expect("row1");
+        assert_eq!(path1, "sub/b.txt");
     }
 
     #[test]
@@ -472,7 +418,6 @@ mod tests {
         let meta = StoreMeta::new(
             crate::index::meta::CorpusMeta {
                 root: root.clone(),
-                kind: crate::index::config::CorpusKind::Directory,
                 include_paths: Vec::new(),
                 exclude_paths: Vec::new(),
             },

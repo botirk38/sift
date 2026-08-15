@@ -144,7 +144,6 @@ fn bench_walk_search(c: &mut Criterion) {
         sift_core::StoreMeta::new(
             sift_core::CorpusMeta {
                 root: sift_dir.clone(),
-                kind: sift_core::CorpusKind::Directory,
                 include_paths: Vec::new(),
                 exclude_paths: Vec::new(),
             },

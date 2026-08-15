@@ -12,8 +12,8 @@
 
 use libfuzzer_sys::fuzz_target;
 use sift_core::{
-    CorpusKind, CorpusMeta, Files, FilterMeta, GramNorm, GramWidth, IndexCoverage, IndexRecord,
-    NGramIndex, StoreMeta, VisibilityConfig, WalkMeta,
+    CorpusMeta, Files, FilterMeta, GramNorm, GramWidth, IndexCoverage, IndexRecord, NGramIndex,
+    StoreMeta, VisibilityConfig, WalkMeta,
 };
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -40,7 +40,6 @@ fn harness() -> &'static Harness {
         let meta = StoreMeta::new(
             CorpusMeta {
                 root: corpus.clone(),
-                kind: CorpusKind::Directory,
                 include_paths: Vec::new(),
                 exclude_paths: Vec::new(),
             },

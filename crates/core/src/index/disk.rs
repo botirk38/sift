@@ -299,15 +299,15 @@ impl Drop for SnapshotTxn {
     }
 }
 
-/// Opened current snapshot directory, soft-pinned by a lease file.
-pub struct OpenedSnapshot {
+/// Handle to the current committed snapshot, soft-pinned by a lease file.
+pub struct SnapshotHandle {
     id: SnapshotId,
     dir: PathBuf,
     manifest: SnapshotManifest,
     lease_path: PathBuf,
 }
 
-impl OpenedSnapshot {
+impl SnapshotHandle {
     #[must_use]
     pub const fn id(&self) -> &SnapshotId {
         &self.id
@@ -340,12 +340,12 @@ impl OpenedSnapshot {
         Ok(lease_path)
     }
 
-    /// Open the current committed snapshot, if any.
+    /// Open a handle to the current committed snapshot, if any.
     ///
     /// # Errors
     ///
     /// Returns an error if the manifest is invalid or the snapshot disappears mid-open.
-    pub fn open_current(sift_dir: &Path) -> crate::Result<Option<Self>> {
+    pub fn current(sift_dir: &Path) -> crate::Result<Option<Self>> {
         for attempt in 0..2 {
             let Some(current_id) = DiskStore::read_current_id(sift_dir)? else {
                 return Ok(None);
@@ -399,7 +399,7 @@ impl OpenedSnapshot {
     }
 }
 
-impl Drop for OpenedSnapshot {
+impl Drop for SnapshotHandle {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.lease_path);
     }

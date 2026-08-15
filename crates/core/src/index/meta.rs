@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use crate::corpus::filter::{FileFilter, VisibilityConfig};
 
 use super::IndexError;
-use super::config::CorpusKind;
 use super::record::IndexRecord;
 
 const META_FILE: &str = "meta.json";
@@ -38,7 +37,6 @@ pub enum IndexCoverage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CorpusMeta {
     pub root: PathBuf,
-    pub kind: CorpusKind,
     #[serde(default)]
     pub include_paths: Vec<PathBuf>,
     #[serde(default)]
@@ -186,7 +184,6 @@ mod tests {
         let meta = StoreMeta::new(
             CorpusMeta {
                 root: PathBuf::from("/some/root"),
-                kind: CorpusKind::Directory,
                 include_paths: vec![PathBuf::from("only.rs")],
                 exclude_paths: vec![PathBuf::from(".sift")],
             },
@@ -210,7 +207,6 @@ mod tests {
         let loaded = StoreMeta::read(tmp.path()).expect("read meta");
         assert_eq!(loaded.version, meta.version);
         assert_eq!(loaded.corpus.root, meta.corpus.root);
-        assert_eq!(loaded.corpus.kind, meta.corpus.kind);
         assert_eq!(loaded.corpus.include_paths, meta.corpus.include_paths);
         assert_eq!(loaded.coverage, meta.coverage);
         assert_eq!(loaded.walk, meta.walk);

@@ -45,7 +45,7 @@ sift --sift-dir .sift index build --indexes trigram .
 - `index build` and `index update` are both async via daemon by default; use `--wait` for blocking.
 - Search queues background indexing for unindexed hit paths (when the daemon is enabled).
 
-- `PATH` defaults to `.`; can be a single file (indexes parent directory).
+- `PATH` defaults to `.` and must be a directory.
 - `--indexes` selects index kinds (default: all; shipped: `trigram`).
 - Search paths must lie under the indexed **corpus root** when an index exists.
 

@@ -1,8 +1,8 @@
 use std::fs;
 
 use sift_core::{
-    CorpusKind, CorpusMeta, Files, FilterMeta, GramNorm, GramWidth, IndexCoverage, IndexRecord,
-    NGramIndex, StoreMeta, VisibilityConfig, WalkMeta,
+    CorpusMeta, Files, FilterMeta, GramNorm, GramWidth, IndexCoverage, IndexRecord, NGramIndex,
+    StoreMeta, VisibilityConfig, WalkMeta,
 };
 use tempfile::TempDir;
 
@@ -19,7 +19,6 @@ fn persisted_index_reopens_with_same_file_count() {
     let meta = StoreMeta::new(
         CorpusMeta {
             root,
-            kind: CorpusKind::Directory,
             include_paths: Vec::new(),
             exclude_paths: Vec::new(),
         },

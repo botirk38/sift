@@ -3,10 +3,9 @@ use std::path::PathBuf;
 use sift_core::candidates::{Scan, ScanScope, SnapshotFreshness};
 use sift_core::search::{Query, SearchInputs, SearchMode, SearchOptions, Searcher};
 use sift_core::{
-    Candidates, CorpusKind, FileFilter, FileOrder, IndexCoverage, Narrowing, Plan, TypeFilterRule,
+    Candidates, FileFilter, FileOrder, IndexCoverage, Narrowing, Plan, TypeFilterRule,
 };
 
-use crate::format::SearchPrinter;
 use crate::index::daemon::Daemon;
 
 use super::filter::{FilterConfig, FilterResolution};
@@ -148,7 +147,7 @@ impl Run {
         let sources = sources.resolve(patterns.input, indexes_empty)?;
         let transform = self.config.content.transform()?;
 
-        let filename_ctx = Self::filename_context(mode, &sources, &session);
+        let filename_ctx = Self::filename_context(mode, &sources);
         let print_spec = self
             .config
             .output
@@ -206,19 +205,19 @@ impl Run {
             }
             None => (resolved, streams),
         };
-        let report = SearchPrinter::print(
-            &searcher,
-            SearchInputs {
-                candidates,
-                streams,
-                explicit: &explicit_files,
-            },
-            mode,
-            stats,
-            print_spec,
-            &separators,
-        )
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let report = print_spec
+            .print(
+                &searcher,
+                SearchInputs {
+                    candidates,
+                    streams,
+                    explicit: &explicit_files,
+                },
+                mode,
+                stats,
+                &separators,
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         if let Some(s) = report.stats.as_ref() {
             OutputDecl::write_stats(s);
@@ -268,24 +267,13 @@ impl Run {
         }
     }
 
-    fn filename_context(
-        mode: SearchMode,
-        sources: &InputSources,
-        session: &SearchSession,
-    ) -> FilenameContext {
+    const fn filename_context(mode: SearchMode, sources: &InputSources) -> FilenameContext {
         if mode.is_path_mode() {
             FilenameContext::PathMode
         } else if !sources.stdin_bytes.is_empty() && sources.paths.is_empty() {
-            FilenameContext::SingleFileCorpus
+            FilenameContext::SingleStream
         } else {
-            match session
-                .indexes
-                .as_ref()
-                .map(sift_core::Indexes::corpus_kind)
-            {
-                Some(CorpusKind::SingleFile) => FilenameContext::SingleFileCorpus,
-                Some(_) | None => FilenameContext::DirectoryCorpus,
-            }
+            FilenameContext::DirectoryCorpus
         }
     }
 

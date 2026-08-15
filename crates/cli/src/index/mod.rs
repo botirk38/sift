@@ -27,6 +27,20 @@ pub struct ReconcileOutcome {
     pub changed: bool,
 }
 
+impl ReconcileOutcome {
+    /// Rebuild the configured corpus into a new committed snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Propagates build failures from the underlying index kinds.
+    pub fn rebuild(indexes: &mut Indexes) -> sift_core::Result<Self> {
+        Ok(Self {
+            snapshot_id: SnapshotId::new(indexes.build()?),
+            changed: true,
+        })
+    }
+}
+
 /// Which index subcommand was requested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexOperation {
@@ -62,7 +76,6 @@ pub struct IndexJob {
     pub build_coverage: IndexCoverage,
     pub root: PathBuf,
     pub include_paths: Vec<PathBuf>,
-    pub corpus_kind: sift_core::CorpusKind,
     pub indexes: Vec<IndexRecord>,
     pub follow_links: bool,
     pub one_file_system: bool,
@@ -78,21 +91,20 @@ impl IndexJob {
     ///
     /// # Errors
     ///
-    /// Returns an error if the index path cannot be canonicalised.
+    /// Returns an error if the index path cannot be canonicalised or is not a directory.
     pub fn resolve(req: IndexRequest, ignore: IgnoreResolution) -> anyhow::Result<Self> {
         let canonical = req.path.canonicalize()?;
-        let (root, include_paths, corpus_kind) = if canonical.is_file() {
-            let parent = canonical.parent().unwrap_or(&canonical).to_path_buf();
-            let filename = PathBuf::from(canonical.file_name().unwrap_or_default());
-            (parent, vec![filename], sift_core::CorpusKind::SingleFile)
-        } else {
-            (canonical, Vec::new(), sift_core::CorpusKind::Directory)
-        };
+        if !canonical.is_dir() {
+            anyhow::bail!(
+                "index build requires a directory, not {}",
+                canonical.display()
+            );
+        }
         let indexes: Vec<IndexRecord> = req
             .indexes
             .clone()
             .unwrap_or_else(IndexRecord::default_catalog);
-        let exclude_paths = CorpusScope::excluded_paths(&root, &req.sift_dir);
+        let exclude_paths = CorpusScope::excluded_paths(&canonical, &req.sift_dir);
         let max_filesize = req
             .max_filesize
             .as_ref()
@@ -102,9 +114,8 @@ impl IndexJob {
             operation: req.operation,
             execution: req.execution,
             build_coverage: req.build_coverage,
-            root,
-            include_paths,
-            corpus_kind,
+            root: canonical,
+            include_paths: Vec::new(),
             indexes,
             follow_links: req.follow_links,
             one_file_system: req.one_file_system,
@@ -158,7 +169,7 @@ impl IndexJob {
             return ExitCode::from(2);
         }
 
-        if let Err(e) = SnapshotRefresh::run(&mut indexes) {
+        if let Err(e) = ReconcileOutcome::rebuild(&mut indexes) {
             eprintln!("sift: {e}");
             return ExitCode::from(2);
         }
@@ -258,7 +269,6 @@ impl IndexJob {
         StoreMeta::new(
             CorpusMeta {
                 root: self.root.clone(),
-                kind: self.corpus_kind,
                 include_paths: self.include_paths.clone(),
                 exclude_paths: self.exclude_paths.clone(),
             },
@@ -281,23 +291,5 @@ impl IndexJob {
             },
             self.indexes.clone(),
         )
-    }
-}
-
-/// CLI orchestration for a full snapshot rebuild.
-pub struct SnapshotRefresh;
-
-impl SnapshotRefresh {
-    /// Rebuild index files for the full configured corpus.
-    ///
-    /// # Errors
-    ///
-    /// Propagates build failures from the underlying index kinds.
-    pub fn run(indexes: &mut Indexes) -> sift_core::Result<ReconcileOutcome> {
-        let snapshot_id = SnapshotId::new(indexes.build()?);
-        Ok(ReconcileOutcome {
-            snapshot_id,
-            changed: true,
-        })
     }
 }

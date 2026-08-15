@@ -13,7 +13,7 @@ use std::io::Write;
 use std::path::Path;
 
 use sift_core::{
-    CorpusKind, CorpusMeta, FilterMeta, GramWidth, IndexCoverage, IndexRecord, Indexes, StoreMeta,
+    CorpusMeta, FilterMeta, GramWidth, IndexCoverage, IndexRecord, Indexes, StoreMeta,
     VisibilityConfig, WalkMeta,
 };
 
@@ -84,7 +84,6 @@ fn build_index_store(corpus: &Path, sift_dir: &Path) {
     let meta = StoreMeta::new(
         CorpusMeta {
             root,
-            kind: CorpusKind::Directory,
             include_paths: Vec::new(),
             exclude_paths: Vec::new(),
         },

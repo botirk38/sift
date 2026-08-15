@@ -1,4 +1,4 @@
-//! Opened N-gram index: lexicon and postings over a shared [`Files`] id space.
+//! Runtime N-gram index: lexicon and postings over a shared [`Files`] id space.
 
 use std::path::{Path, PathBuf};
 
@@ -22,7 +22,7 @@ pub enum NGramIndexError {
     Io(#[from] std::io::Error),
 }
 
-/// Opened runtime-width N-gram index (kind artifacts only).
+/// Runtime-width N-gram index (kind artifacts only).
 #[derive(Debug)]
 pub struct Index {
     pub(crate) width: GramWidth,
@@ -154,7 +154,7 @@ impl Index {
     ///
     /// Returns an error if extraction or encoding fails.
     pub fn build(width: GramWidth, norm: GramNorm, dir: &Path, files: &Files) -> crate::Result<()> {
-        let tables = IndexTables::build(width, norm, files)?;
+        let tables = IndexTables::assemble(width, norm, files)?;
         Self::write_tables(width, &tables, dir)?;
         Ok(())
     }
@@ -212,7 +212,7 @@ impl Index {
     ///
     /// Returns an error if extraction or encoding fails.
     pub fn build_opened(width: GramWidth, norm: GramNorm, files: &Files) -> crate::Result<Self> {
-        let tables = IndexTables::build(width, norm, files)?;
+        let tables = IndexTables::assemble(width, norm, files)?;
         let (lr, pr) = rayon::join(
             || Lexicon::encode(width, &tables.lexicon),
             || Postings::encode(&tables.postings),

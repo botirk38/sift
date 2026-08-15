@@ -1,23 +1,23 @@
-//! Store facade: open / load / build / query over shared [`Files`] and opened kinds.
+//! Store facade: open / load / build / query over shared [`Files`] and runtime kinds.
 
 use std::path::{Path, PathBuf};
 
-use super::disk::{DiskStore, OpenedSnapshot, SnapshotId, SnapshotManifest};
+use super::disk::{DiskStore, SnapshotHandle, SnapshotId, SnapshotManifest};
 use super::files::Files;
 use super::kinds::FileId;
 use super::meta::{STORE_VERSION, StoreMeta};
-use super::record::Opened;
+use super::record::Kind;
 
 use crate::corpus::File;
 use crate::corpus::filter::{FileFilter, FilterAdmission};
 use crate::search::Query;
 
-/// Committed snapshot state held open for search.
-struct Current {
+/// Committed snapshot held for search.
+struct Snapshot {
     files: Files,
-    opened: Vec<Opened>,
-    /// Lease + manifest for the on-disk snapshot directory.
-    lease: OpenedSnapshot,
+    kinds: Vec<Kind>,
+    /// On-disk snapshot directory + soft pin.
+    handle: SnapshotHandle,
 }
 
 /// Composable snapshot store and query registry.
@@ -25,7 +25,7 @@ pub struct Indexes {
     sift_dir: PathBuf,
     store: DiskStore,
     meta: StoreMeta,
-    current: Option<Current>,
+    current: Option<Snapshot>,
 }
 
 impl Indexes {
@@ -62,7 +62,7 @@ impl Indexes {
     pub fn load(sift_dir: &Path) -> crate::Result<Option<Self>> {
         if !StoreMeta::path(sift_dir).exists() {
             if DiskStore::read_current_id(sift_dir)?.is_some() {
-                let _ = OpenedSnapshot::open_current(sift_dir)?;
+                let _ = SnapshotHandle::current(sift_dir)?;
             }
             return Ok(None);
         }
@@ -81,21 +81,21 @@ impl Indexes {
         })
     }
 
-    fn load_current(sift_dir: &Path, root: &Path) -> crate::Result<Option<Current>> {
-        let Some(lease) = OpenedSnapshot::open_current(sift_dir)? else {
+    fn load_current(sift_dir: &Path, root: &Path) -> crate::Result<Option<Snapshot>> {
+        let Some(handle) = SnapshotHandle::current(sift_dir)? else {
             return Ok(None);
         };
-        let files = Files::open(lease.dir(), root.to_path_buf())?;
+        let files = Files::open(handle.dir(), root.to_path_buf())?;
         let file_count = files.len();
-        let mut opened = Vec::with_capacity(lease.manifest().indexes.len());
-        for record in &lease.manifest().indexes {
-            let ns = lease.dir().join(record.name());
-            opened.push(record.open(&ns, file_count)?);
+        let mut kinds = Vec::with_capacity(handle.manifest().indexes.len());
+        for record in &handle.manifest().indexes {
+            let ns = handle.dir().join(record.name());
+            kinds.push(record.open(&ns, file_count)?);
         }
-        Ok(Some(Current {
+        Ok(Some(Snapshot {
             files,
-            opened,
-            lease,
+            kinds,
+            handle,
         }))
     }
 
@@ -119,7 +119,7 @@ impl Indexes {
 
     #[must_use]
     pub fn current_id(&self) -> Option<&str> {
-        self.current.as_ref().map(|c| c.lease.id().as_str())
+        self.current.as_ref().map(|c| c.handle.id().as_str())
     }
 
     #[must_use]
@@ -131,7 +131,7 @@ impl Indexes {
     pub fn queryable(&self) -> bool {
         self.current
             .as_ref()
-            .is_some_and(|c| !c.files.is_empty() && !c.opened.is_empty())
+            .is_some_and(|c| !c.files.is_empty() && !c.kinds.is_empty())
     }
 
     #[must_use]
@@ -140,13 +140,8 @@ impl Indexes {
     }
 
     #[must_use]
-    pub const fn corpus_kind(&self) -> crate::index::config::CorpusKind {
-        self.meta.corpus.kind
-    }
-
-    #[must_use]
     pub fn snapshot_id(&self) -> Option<&SnapshotId> {
-        self.current.as_ref().map(|c| c.lease.id())
+        self.current.as_ref().map(|c| c.handle.id())
     }
 
     #[must_use]
@@ -193,14 +188,14 @@ impl Indexes {
         let Some(current) = &self.current else {
             return Vec::new();
         };
-        if current.opened.is_empty() {
+        if current.kinds.is_empty() {
             return Vec::new();
         }
-        if current.opened.len() == 1 {
-            return current.opened[0].query(query);
+        if current.kinds.len() == 1 {
+            return current.kinds[0].query(query);
         }
         let mut plans: Vec<Vec<FileId>> =
-            current.opened.iter().map(|idx| idx.query(query)).collect();
+            current.kinds.iter().map(|idx| idx.query(query)).collect();
         plans.sort_by_key(Vec::len);
         let mut cur = plans.remove(0);
         for next in plans {

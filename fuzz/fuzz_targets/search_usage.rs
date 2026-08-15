@@ -6,8 +6,8 @@ use sift_core::search::{
     Events, Query, SearchFlags, SearchInputs, SearchMode, SearchOptions, Searcher, StatsMode,
 };
 use sift_core::{
-    CorpusKind, CorpusMeta, FileFilter, FileFilterConfig, FilterMeta, GramWidth, IndexCoverage,
-    IndexRecord, Indexes, Inputs, Plan, StoreMeta, VisibilityConfig, WalkMeta,
+    CorpusMeta, FileFilter, FileFilterConfig, FilterMeta, GramWidth, IndexCoverage, IndexRecord,
+    Indexes, Inputs, Plan, StoreMeta, VisibilityConfig, WalkMeta,
 };
 use std::fs;
 use std::sync::OnceLock;
@@ -33,7 +33,6 @@ fn indexed() -> &'static IndexHolder {
         let meta = StoreMeta::new(
             CorpusMeta {
                 root: corpus.clone(),
-                kind: CorpusKind::Directory,
                 include_paths: Vec::new(),
                 exclude_paths: Vec::new(),
             },

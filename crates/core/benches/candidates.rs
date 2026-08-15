@@ -7,9 +7,9 @@ use std::hint::black_box;
 use std::path::Path;
 
 use sift_core::{
-    CorpusKind, CorpusMeta, FileFilter, FileFilterConfig, FileOrder, FilterMeta, GramWidth,
-    IndexCoverage, IndexRecord, Indexes, Plan, Query, Scan, ScanScope, SearchMode, SearchOptions,
-    Searcher, SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta, ZeroCounts,
+    CorpusMeta, FileFilter, FileFilterConfig, FileOrder, FilterMeta, GramWidth, IndexCoverage,
+    IndexRecord, Indexes, Plan, Query, Scan, ScanScope, SearchMode, SearchOptions, Searcher,
+    SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta, ZeroCounts,
 };
 
 mod common;
@@ -36,7 +36,6 @@ fn store_meta(root: &Path, coverage: IndexCoverage) -> StoreMeta {
     StoreMeta::new(
         CorpusMeta {
             root: root.to_path_buf(),
-            kind: CorpusKind::Directory,
             include_paths: Vec::new(),
             exclude_paths: Vec::new(),
         },

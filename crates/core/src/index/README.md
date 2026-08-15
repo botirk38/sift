@@ -13,7 +13,7 @@ Store metadata, snapshot persistence, and search orchestration.
 
 ```
 index/
-  record.rs    -- IndexRecord and private Opened query dispatch
+  record.rs    -- IndexRecord and private Kind query dispatch
   indexes.rs   -- Indexes: open/load/build + query/hydrate
   files.rs     -- Snapshot-owned FileId → File map
   disk.rs      -- atomic persistence, leases, manifests
@@ -24,12 +24,11 @@ index/
 
 | Module | Description |
 |--------|-------------|
-| [`record.rs`](record.rs) | `IndexRecord`, private `Opened` |
+| [`record.rs`](record.rs) | `IndexRecord`, private `Kind` |
 | [`indexes.rs`](indexes.rs) | `Indexes` orchestrator |
 | [`files.rs`](files.rs) | Snapshot `Files` |
 | [`disk.rs`](disk.rs) | Snapshot persistence |
 | [`kinds.rs`](kinds.rs) | `FileId` |
-| [`config.rs`](config.rs) | `CorpusKind` |
 | [`meta.rs`](meta.rs) | `StoreMeta` |
 | [`ngram/`](ngram/) | N-gram implementation |
 
@@ -48,11 +47,11 @@ own namespace, and atomically publishes `CURRENT`. `files.bin` uses
 `SIFTFIL2`; the store format version is 2.
 
 `Indexes::load` opens an existing store for search. Querying is dispatched
-through the private `Opened` enum in `record.rs`; `Files` hydrates the returned
+through the private `Kind` enum in `record.rs`; `Files` hydrates the returned
 IDs. Resolve candidates through `Plan::resolve`.
 
 ## Adding a New Index Kind
 
 1. Add a typed arm on `IndexRecord` with `build` / `open`.
-2. Add a private `Opened` arm and its query dispatch.
+2. Add a private `Kind` arm and its query dispatch.
 3. Add a sibling module under `index/`.

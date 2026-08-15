@@ -6,17 +6,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use sift_core::{
-    CorpusKind, CorpusMeta, File, FileFilter, FileFilterConfig, FileOrder, Files, FilterAdmission,
-    FilterMeta, GramNorm, GramWidth, IgnoreConfig, IndexCoverage, IndexRecord, Indexes, NGramIndex,
-    Plan, Query, Scan, ScanScope, SearchOptions, SnapshotFreshness, StoreMeta, VisibilityConfig,
-    WalkMeta,
+    CorpusMeta, File, FileFilter, FileFilterConfig, FileOrder, FilterAdmission, FilterMeta,
+    GramWidth, IgnoreConfig, IndexCoverage, IndexRecord, Indexes, Plan, Query, Scan, ScanScope,
+    SearchOptions, SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta,
 };
 
 pub fn sample_store_meta(root: PathBuf, indexes: Vec<IndexRecord>) -> StoreMeta {
     StoreMeta::new(
         CorpusMeta {
             root,
-            kind: CorpusKind::Directory,
             include_paths: Vec::new(),
             exclude_paths: Vec::new(),
         },
@@ -129,46 +127,6 @@ pub fn index_candidates(
     .resolve(&source)
     .expect("candidates")
     .into_vec()
-}
-
-pub fn build_trigram_in_dir(corpus: &Path, trigram_dir: &Path) -> NGramIndex {
-    let (root, kind, include_paths) = if corpus.is_file() {
-        let parent = corpus.parent().unwrap_or(corpus);
-        let filename = corpus.file_name().map(PathBuf::from).unwrap_or_default();
-        (parent, CorpusKind::SingleFile, vec![filename])
-    } else {
-        (corpus, CorpusKind::Directory, vec![])
-    };
-    let abs_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let meta = StoreMeta::new(
-        CorpusMeta {
-            root: abs_root,
-            kind,
-            include_paths,
-            exclude_paths: Vec::new(),
-        },
-        IndexCoverage::Complete,
-        WalkMeta {
-            follow_links: false,
-            one_file_system: false,
-            max_depth: None,
-            max_filesize: None,
-        },
-        FilterMeta {
-            visibility: VisibilityConfig::default(),
-        },
-        vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
-    );
-    let files = Files::build(&meta).expect("files");
-    NGramIndex::build(GramWidth::TRIGRAM, GramNorm::Identity, trigram_dir, &files)
-        .expect("build trigram index");
-    NGramIndex::open(
-        GramWidth::TRIGRAM,
-        GramNorm::Identity,
-        trigram_dir,
-        files.len(),
-    )
-    .expect("open trigram index")
 }
 
 pub fn dir_size(path: &Path) -> u64 {

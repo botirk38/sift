@@ -14,28 +14,18 @@ pub(super) enum Matcher {
     Pcre2(Pcre2Matcher),
 }
 
-pub(super) struct MatcherBuilder<'a> {
-    query: &'a Query,
-}
-
-impl<'a> MatcherBuilder<'a> {
-    pub(super) const fn new(query: &'a Query) -> Self {
-        Self { query }
-    }
-
-    pub(super) fn build(self) -> Result<Matcher, SearchError> {
-        match self.query.options.regex_engine {
-            RegexEngine::Rust => rust::build(self.query).map(Matcher::Rust),
-            RegexEngine::Pcre2 => pcre2::build(self.query).map(Matcher::Pcre2),
-            RegexEngine::Auto => rust::build(self.query).map_or_else(
-                |_| pcre2::build(self.query).map(Matcher::Pcre2),
-                |matcher| Ok(Matcher::Rust(matcher)),
+impl Matcher {
+    pub(super) fn compile(query: &Query) -> Result<Self, SearchError> {
+        match query.options.regex_engine {
+            RegexEngine::Rust => rust::build(query).map(Self::Rust),
+            RegexEngine::Pcre2 => pcre2::build(query).map(Self::Pcre2),
+            RegexEngine::Auto => rust::build(query).map_or_else(
+                |_| pcre2::build(query).map(Self::Pcre2),
+                |matcher| Ok(Self::Rust(matcher)),
             ),
         }
     }
-}
 
-impl Matcher {
     pub(super) const fn resolved_engine(&self) -> RegexEngine {
         match self {
             Self::Rust(_) => RegexEngine::Rust,

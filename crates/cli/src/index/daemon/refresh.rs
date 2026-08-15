@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 
 use sift_core::{Indexes, StoreMeta};
 
-use crate::index::{ReconcileOutcome, SnapshotRefresh};
+use crate::index::ReconcileOutcome;
 
 use super::ipc::DaemonResponse;
 use super::watcher::CorpusWatcher;
@@ -66,7 +66,7 @@ impl PendingIndex {
     ) -> Option<ReconcileOutcome> {
         let paths = self.take()?;
         let result = Indexes::open(sift_dir, meta)
-            .and_then(|mut indexes| SnapshotRefresh::run(&mut indexes));
+            .and_then(|mut indexes| ReconcileOutcome::rebuild(&mut indexes));
         match result {
             Ok(outcome) => Some(outcome),
             Err(e) => {
@@ -134,7 +134,7 @@ impl IndexRefresh<'_> {
             let mut outcome = None;
             if matches!(scope, RefreshScope::CorpusAndPending) {
                 let result = Indexes::open(&sift_dir, &meta)
-                    .and_then(|mut indexes| SnapshotRefresh::run(&mut indexes));
+                    .and_then(|mut indexes| ReconcileOutcome::rebuild(&mut indexes));
                 match result {
                     Ok(committed) => outcome = Some(committed),
                     Err(e) => {

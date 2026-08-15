@@ -1,4 +1,3 @@
-pub mod config;
 mod disk;
 pub mod error;
 pub mod files;
@@ -9,7 +8,6 @@ pub mod mmap;
 pub mod ngram;
 pub mod record;
 
-pub use config::CorpusKind;
 pub use disk::SnapshotId;
 pub use error::IndexError;
 pub use files::Files;
@@ -28,7 +26,6 @@ mod tests {
         StoreMeta::new(
             CorpusMeta {
                 root,
-                kind: CorpusKind::Directory,
                 include_paths: Vec::new(),
                 exclude_paths: Vec::new(),
             },

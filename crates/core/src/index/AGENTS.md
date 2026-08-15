@@ -14,7 +14,7 @@ Store metadata, snapshot persistence, and query orchestration via
 | Snapshot storage | `SnapshotId`, `Files` | Committed artifact layout and shared file IDs |
 | Kind impl | `ngram::Index` | Kind artifacts and query narrowing |
 
-CLI owns daemon orchestration (`SnapshotRefresh`, path debouncing). Core does
+CLI owns daemon orchestration (`ReconcileOutcome::rebuild`, path debouncing). Core does
 not expose `reconcile`, `unindexed_hit_paths`, or walk-merge helpers on
 `Indexes`.
 
@@ -26,7 +26,7 @@ not expose `reconcile`, `unindexed_hit_paths`, or walk-merge helpers on
 - `Files` — snapshot-owned `FileId → File` hydration
 - `SnapshotId` — opaque committed snapshot identity
 
-`Opened` in `record.rs` is private. It dispatches queries to opened kinds; there
+`Kind` in `record.rs` is private. It dispatches queries to runtime kinds; there
 is no public index trait or public snapshot type.
 
 ## Conventions
@@ -46,7 +46,7 @@ is no public index trait or public snapshot type.
 ## Adding a new index kind
 
 1. Add a typed `IndexRecord` arm with `build` / `open` / `name`.
-2. Add an `Opened` arm and dispatch its query operation in `record.rs`.
+2. Add a `Kind` arm and dispatch its query operation in `record.rs`.
 3. Sibling module under `index/`.
 
 ## Do NOT

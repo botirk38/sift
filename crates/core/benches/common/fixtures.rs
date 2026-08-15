@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use sift_core::{
-    CorpusKind, CorpusMeta, Files, FilterMeta, GramNorm, GramWidth, IndexCoverage, IndexRecord,
-    NGramIndex, StoreMeta, VisibilityConfig, WalkMeta,
+    CorpusMeta, Files, FilterMeta, GramNorm, GramWidth, IndexCoverage, IndexRecord, NGramIndex,
+    StoreMeta, VisibilityConfig, WalkMeta,
 };
 
 /// Dimensions of a synthetic on-disk corpus.
@@ -144,19 +144,13 @@ pub fn materialize_scale(root: &Path, scale: CorpusScale) {
 
 /// Trigram-specialized N-gram tables written directly under `idx_dir`.
 pub fn build_index(corpus: &Path, idx_dir: &Path) -> NGramIndex {
-    let (root, kind, include_paths) = if corpus.is_file() {
-        let parent = corpus.parent().unwrap_or(corpus);
-        let filename = corpus.file_name().map(PathBuf::from).unwrap_or_default();
-        (parent.to_path_buf(), CorpusKind::SingleFile, vec![filename])
-    } else {
-        (corpus.to_path_buf(), CorpusKind::Directory, vec![])
-    };
-    let abs_root = root.canonicalize().unwrap_or(root);
+    let abs_root = corpus
+        .canonicalize()
+        .unwrap_or_else(|_| corpus.to_path_buf());
     let meta = StoreMeta::new(
         CorpusMeta {
             root: abs_root,
-            kind,
-            include_paths,
+            include_paths: Vec::new(),
             exclude_paths: Vec::new(),
         },
         IndexCoverage::Complete,
@@ -253,7 +247,6 @@ pub fn open_large_index() -> (PathBuf, NGramIndex) {
             let files = Files::build(&StoreMeta::new(
                 CorpusMeta {
                     root: paths.corpus.clone(),
-                    kind: CorpusKind::Directory,
                     include_paths: Vec::new(),
                     exclude_paths: Vec::new(),
                 },

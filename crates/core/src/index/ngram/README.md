@@ -10,7 +10,7 @@ An N-gram index is an inverted index mapping each fixed-width byte sequence foun
 
 | File | Description |
 |------|-------------|
-| [`index.rs`](index.rs) | Opened N-gram kind; build/open |
+| [`index.rs`](index.rs) | Runtime N-gram kind; build/open |
 | [`gram.rs`](gram.rs) | `GramWidth`, `Gram`, runtime-width gram window iteration |
 | [`build.rs`](build.rs) | `IndexTables`: gram extraction and postings construction |
 | [`storage/`](storage/) | Binary persistence format (lexicon and postings) |

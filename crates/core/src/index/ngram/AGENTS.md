@@ -21,7 +21,7 @@ file table belong to the parent index layer.
 - Gram extraction is parallelized via Rayon.
 - A kind writes only `lexicon.bin` and `postings.bin` in its own snapshot
   namespace. Do not add `files.bin`, `grams.bin`, or incremental-update state.
-- `Index` is opened only. `Opened` is private to `record.rs`; there is no
+- `Index` is opened only. `Kind` is private to `record.rs`; there is no
   shared `Index` trait.
 - Generic behavior is runtime-width. Do not add specialization layers until a
   measured hot path justifies them.

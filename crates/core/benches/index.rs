@@ -9,28 +9,21 @@ use std::hint::black_box;
 use std::path::{Path, PathBuf};
 
 use sift_core::{
-    CaseMode, CorpusKind, CorpusMeta, FileFilter, FileFilterConfig, FileOrder, Files, FilterMeta,
-    GramNorm, GramWidth, IndexCoverage, IndexRecord, Indexes, NGramIndex, Plan, Query, Scan,
-    ScanScope, SearchMode, SearchOptions, Searcher, SnapshotFreshness, StoreMeta, VisibilityConfig,
-    WalkMeta,
+    CaseMode, CorpusMeta, FileFilter, FileFilterConfig, FileOrder, Files, FilterMeta, GramNorm,
+    GramWidth, IndexCoverage, IndexRecord, Indexes, NGramIndex, Plan, Query, Scan, ScanScope,
+    SearchMode, SearchOptions, Searcher, SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta,
 };
 
 mod common;
 
 fn build_files(corpus: &Path) -> Files {
-    let (root, kind, include_paths) = if corpus.is_file() {
-        let parent = corpus.parent().unwrap_or(corpus);
-        let filename = corpus.file_name().map(PathBuf::from).unwrap_or_default();
-        (parent.to_path_buf(), CorpusKind::SingleFile, vec![filename])
-    } else {
-        (corpus.to_path_buf(), CorpusKind::Directory, vec![])
-    };
-    let abs_root = root.canonicalize().unwrap_or(root);
+    let abs_root = corpus
+        .canonicalize()
+        .unwrap_or_else(|_| corpus.to_path_buf());
     let meta = StoreMeta::new(
         CorpusMeta {
             root: abs_root,
-            kind,
-            include_paths,
+            include_paths: Vec::new(),
             exclude_paths: Vec::new(),
         },
         IndexCoverage::Complete,
@@ -97,7 +90,6 @@ fn default_meta(root: std::path::PathBuf) -> StoreMeta {
     StoreMeta::new(
         CorpusMeta {
             root,
-            kind: CorpusKind::Directory,
             include_paths: Vec::new(),
             exclude_paths: Vec::new(),
         },
@@ -146,7 +138,7 @@ fn make_parity_corpus(root: &Path) {
     fs::write(root.join("b/y.txt"), "gamma delta\n").unwrap();
 }
 
-fn make_single_file_corpus(root: &Path) {
+fn make_one_file_directory(root: &Path) {
     fs::create_dir_all(root).unwrap();
     fs::write(
         root.join("single.rs"),
@@ -185,7 +177,6 @@ fn build_index_via_store(corpus: &Path, sift_dir: &Path) {
     let meta = StoreMeta::new(
         CorpusMeta {
             root,
-            kind: CorpusKind::Directory,
             include_paths: Vec::new(),
             exclude_paths: Vec::new(),
         },
@@ -211,11 +202,11 @@ fn build_index_via_store(corpus: &Path, sift_dir: &Path) {
 fn bench_index_build(c: &mut Criterion) {
     let mut g = c.benchmark_group("index_build");
 
-    g.bench_function("single_file", |b| {
+    g.bench_function("one_file_directory", |b| {
         b.iter(|| {
             let tmp = tempfile::tempdir().unwrap();
             let corpus = tmp.path().join("corpus");
-            make_single_file_corpus(&corpus);
+            make_one_file_directory(&corpus);
             let idx = tmp.path().join(".sift");
             build_index_via_store(&corpus, &idx);
         });
@@ -387,7 +378,6 @@ fn bench_indexes_open(c: &mut Criterion) {
             let meta = StoreMeta::new(
                 CorpusMeta {
                     root,
-                    kind: CorpusKind::Directory,
                     include_paths: Vec::new(),
                     exclude_paths: Vec::new(),
                 },

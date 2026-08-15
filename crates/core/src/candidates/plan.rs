@@ -8,7 +8,7 @@ use crate::search::{Narrowing, Query};
 use crate::candidates::scan::Scan;
 use crate::candidates::scope::{Coverage, ScanScope, SnapshotFreshness};
 
-use super::output::{Candidates, Inner as CandidatesInner};
+use super::output::{Candidates, Origin as CandidatesOrigin};
 
 /// Pure discovery decision for candidate resolution.
 #[must_use]
@@ -33,37 +33,12 @@ pub(crate) enum Discovery {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IndexStatus {
-    Empty,
-    Queryable,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SnapshotStatus {
-    Missing,
-    FilterMismatch,
-    TrustedComplete,
-    TrustedLazy,
-    StaleComplete,
-}
-
 impl Plan {
     /// Pure decision over discovery shape — no index query I/O.
     pub fn new(source: &Scan<'_>, query: &Query, coverage: Coverage) -> Self {
         let scope = source.scope;
         let narrowing = query.narrowing();
-        let snapshot_status = Self::snapshot_status(source, scope);
-        let index_status = Self::index_status(source);
-        let freshness = scope.freshness().unwrap_or(SnapshotFreshness::Current);
-        let discovery = Self::discovery(
-            scope,
-            coverage,
-            narrowing,
-            index_status,
-            snapshot_status,
-            freshness,
-        );
+        let discovery = Self::discovery(source, coverage, narrowing);
         Self {
             discovery,
             order: scope.order(),
@@ -90,7 +65,7 @@ impl Plan {
             Discovery::Index { admission } => {
                 source.indexes.map_or_else(Candidates::empty, |indexes| {
                     let file_ids = Self::file_ids(indexes, &query, coverage);
-                    Candidates::indexed(indexes, file_ids, source.filter, admission)
+                    Candidates::index(indexes, file_ids, source.filter, admission)
                 })
             }
             Discovery::Merge { admission } => source.indexes.map_or_else(
@@ -114,99 +89,63 @@ impl Plan {
         }
     }
 
-    fn snapshot_status(source: &Scan<'_>, scope: ScanScope) -> SnapshotStatus {
-        if !matches!(scope, ScanScope::Index { .. }) {
-            return SnapshotStatus::Missing;
-        }
-        let freshness = scope.freshness().unwrap_or(SnapshotFreshness::Current);
-        let Some(meta) = source.store_meta else {
-            return SnapshotStatus::Missing;
-        };
-        if !meta.covers_candidate_filter(source.filter) {
-            return SnapshotStatus::FilterMismatch;
-        }
-        match meta.coverage {
-            IndexCoverage::Complete if freshness == SnapshotFreshness::Stale => {
-                SnapshotStatus::StaleComplete
-            }
-            IndexCoverage::Complete => SnapshotStatus::TrustedComplete,
-            IndexCoverage::Lazy => SnapshotStatus::TrustedLazy,
-        }
-    }
-
-    fn index_status(source: &Scan<'_>) -> IndexStatus {
-        match source.indexes {
-            Some(indexes) if indexes.queryable() => IndexStatus::Queryable,
-            Some(_) | None => IndexStatus::Empty,
-        }
-    }
-
-    const fn discovery(
-        scope: ScanScope,
-        coverage: Coverage,
-        narrowing: Narrowing,
-        index_status: IndexStatus,
-        snapshot_status: SnapshotStatus,
-        freshness: SnapshotFreshness,
-    ) -> Discovery {
-        match scope {
+    fn discovery(source: &Scan<'_>, coverage: Coverage, narrowing: Narrowing) -> Discovery {
+        match source.scope {
             ScanScope::StreamsOnly => Discovery::Empty,
             ScanScope::Walk { .. } => Discovery::Walk,
             ScanScope::Index { .. } => match coverage {
-                Coverage::Complete => Self::complete_discovery(index_status, snapshot_status),
-                Coverage::PotentialMatches => {
-                    Self::potential_discovery(index_status, narrowing, snapshot_status, freshness)
-                }
+                Coverage::Complete => Self::complete_discovery(source),
+                Coverage::PotentialMatches => Self::potential_discovery(source, narrowing),
             },
         }
     }
 
-    const fn complete_discovery(
-        index_status: IndexStatus,
-        snapshot_status: SnapshotStatus,
-    ) -> Discovery {
-        match (index_status, snapshot_status) {
-            (IndexStatus::Empty, _)
-            | (
-                _,
-                SnapshotStatus::FilterMismatch
-                | SnapshotStatus::TrustedLazy
-                | SnapshotStatus::StaleComplete,
-            ) => Discovery::Walk,
-            (_, _) => Discovery::Index {
-                admission: Self::admission(snapshot_status),
+    fn complete_discovery(source: &Scan<'_>) -> Discovery {
+        let Some(indexes) = source.indexes else {
+            return Discovery::Walk;
+        };
+        if !indexes.queryable() {
+            return Discovery::Walk;
+        }
+        let Some(meta) = source.store_meta else {
+            return Discovery::Index {
+                admission: FilterAdmission::Full,
+            };
+        };
+        if !meta.covers_candidate_filter(source.filter) {
+            return Discovery::Walk;
+        }
+        match (meta.coverage, source.scope.freshness()) {
+            (IndexCoverage::Lazy, _)
+            | (IndexCoverage::Complete, Some(SnapshotFreshness::Stale)) => Discovery::Walk,
+            (IndexCoverage::Complete, _) => Discovery::Index {
+                admission: FilterAdmission::Indexed,
             },
         }
     }
 
-    const fn potential_discovery(
-        index_status: IndexStatus,
-        narrowing: Narrowing,
-        snapshot_status: SnapshotStatus,
-        freshness: SnapshotFreshness,
-    ) -> Discovery {
-        match (index_status, narrowing, freshness) {
-            (IndexStatus::Empty, _, _) | (_, Narrowing::Disabled, _) => Discovery::Walk,
-            (IndexStatus::Queryable, Narrowing::Allowed, _) => match snapshot_status {
-                SnapshotStatus::TrustedLazy => Discovery::Merge {
-                    admission: Self::admission(snapshot_status),
-                },
-                SnapshotStatus::FilterMismatch => Discovery::Walk,
-                SnapshotStatus::Missing
-                | SnapshotStatus::TrustedComplete
-                | SnapshotStatus::StaleComplete => Discovery::Index {
-                    admission: Self::admission(snapshot_status),
-                },
-            },
+    fn potential_discovery(source: &Scan<'_>, narrowing: Narrowing) -> Discovery {
+        let Some(indexes) = source.indexes else {
+            return Discovery::Walk;
+        };
+        if !indexes.queryable() || matches!(narrowing, Narrowing::Disabled) {
+            return Discovery::Walk;
         }
-    }
-
-    const fn admission(snapshot_status: SnapshotStatus) -> FilterAdmission {
-        match snapshot_status {
-            SnapshotStatus::TrustedComplete
-            | SnapshotStatus::TrustedLazy
-            | SnapshotStatus::StaleComplete => FilterAdmission::Indexed,
-            SnapshotStatus::Missing | SnapshotStatus::FilterMismatch => FilterAdmission::Full,
+        let Some(meta) = source.store_meta else {
+            return Discovery::Index {
+                admission: FilterAdmission::Full,
+            };
+        };
+        if !meta.covers_candidate_filter(source.filter) {
+            return Discovery::Walk;
+        }
+        match meta.coverage {
+            IndexCoverage::Complete => Discovery::Index {
+                admission: FilterAdmission::Indexed,
+            },
+            IndexCoverage::Lazy => Discovery::Merge {
+                admission: FilterAdmission::Indexed,
+            },
         }
     }
 
@@ -222,9 +161,13 @@ impl Plan {
         admission: FilterAdmission,
         files: &Files,
     ) -> crate::Result<Candidates<'a>> {
-        let walked = FileWalk::from_filter(source.filter).candidates_matching(files.unindexed())?;
+        let walked: Vec<_> = FileWalk::from_filter(source.filter)
+            .candidates()?
+            .into_iter()
+            .filter(|file| !files.contains(file.rel_path()))
+            .collect();
         let unindexed = source.filter.retain(walked, FilterAdmission::Full);
-        Ok(Candidates::mixed(
+        Ok(Candidates::merge(
             indexes,
             file_ids,
             source.filter,
@@ -239,7 +182,7 @@ impl Plan {
         }
         if matches!(order.key, FileOrderKey::Path) {
             match candidates.0 {
-                CandidatesInner::Indexed {
+                CandidatesOrigin::Index {
                     indexes,
                     mut file_ids,
                     filter,
@@ -251,7 +194,7 @@ impl Plan {
                     ) {
                         file_ids.reverse();
                     }
-                    return Ok(Candidates(CandidatesInner::Indexed {
+                    return Ok(Candidates(CandidatesOrigin::Index {
                         indexes,
                         file_ids,
                         filter,

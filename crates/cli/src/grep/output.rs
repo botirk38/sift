@@ -15,7 +15,7 @@ use std::process::Command;
 pub enum FilenameContext {
     PathMode,
     DirectoryCorpus,
-    SingleFileCorpus,
+    SingleStream,
 }
 
 use super::argv::Argv;
@@ -585,7 +585,7 @@ impl OutputDecl {
         if matches!(context, FilenameContext::PathMode) || matches!(with_filename, Some(true)) {
             FilenameMode::Always
         } else if matches!(with_filename, Some(false))
-            || matches!(context, FilenameContext::SingleFileCorpus)
+            || matches!(context, FilenameContext::SingleStream)
         {
             FilenameMode::Never
         } else {
@@ -658,9 +658,9 @@ mod tests {
     }
 
     #[test]
-    fn filename_mode_single_file_defaults_to_never() {
+    fn filename_mode_single_stream_defaults_to_never() {
         assert!(matches!(
-            OutputDecl::filename_mode(None, FilenameContext::SingleFileCorpus),
+            OutputDecl::filename_mode(None, FilenameContext::SingleStream),
             FilenameMode::Never
         ));
     }

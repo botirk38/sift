@@ -107,7 +107,7 @@ Use short, descriptive kebab-case with a type prefix:
 
 `Indexes::open(dir, meta)` (lifecycle) / `Indexes::load(dir) ->
 Result<Option<Indexes>>` (search) → `build()` → `Plan::resolve` →
-`Searcher::execute`. CLI: `IndexJob::run` / `SnapshotRefresh::run` for
+`Searcher::execute`. CLI: `IndexJob::run` / `ReconcileOutcome::rebuild` for
 lifecycle; `Run::execute` for search; `Daemon` / `DaemonOrchestrator` for
 background refresh. See `crates/core/README.md`.
 
@@ -121,7 +121,7 @@ background refresh. See `crates/core/README.md`.
 | `Files` | Snapshot-owned `FileId → File` map |
 | `SnapshotId` | Opaque committed snapshot identity |
 
-`record.rs` owns the private `Opened` enum that dispatches queries. There is no
+`record.rs` owns the private `Kind` enum that dispatches queries. There is no
 public `Index` trait or public `Snapshot` type. Snapshot-root `files.bin`
 (`SIFTFIL2`) is shared by all kinds; kind artifacts live beneath
 `snapshots/<id>/<kind-name>/`.

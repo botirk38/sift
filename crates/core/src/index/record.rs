@@ -1,4 +1,4 @@
-//! Catalog [`IndexRecord`] and private opened kinds.
+//! Catalog [`IndexRecord`] and private runtime kinds.
 
 use std::path::Path;
 use std::str::FromStr;
@@ -99,9 +99,9 @@ impl IndexRecord {
     /// # Errors
     ///
     /// Returns an error if artifacts are missing or malformed.
-    pub(crate) fn open(self, dir: &Path, file_count: usize) -> crate::Result<Opened> {
+    pub(crate) fn open(self, dir: &Path, file_count: usize) -> crate::Result<Kind> {
         match self {
-            Self::Ngram { width, norm } => Ok(Opened::Ngram(super::ngram::Index::open(
+            Self::Ngram { width, norm } => Ok(Kind::Ngram(super::ngram::Index::open(
                 width, norm, dir, file_count,
             )?)),
         }
@@ -116,12 +116,12 @@ impl FromStr for IndexRecord {
     }
 }
 
-/// Opened kind ready to narrow [`FileId`]s.
-pub(crate) enum Opened {
+/// Runtime index kind ready to query.
+pub(crate) enum Kind {
     Ngram(super::ngram::Index),
 }
 
-impl Opened {
+impl Kind {
     pub(crate) fn query(&self, query: &Query) -> Vec<FileId> {
         match self {
             Self::Ngram(index) => index.query(query),
