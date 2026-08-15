@@ -18,7 +18,7 @@ fn bench_binary_mode(g: &mut criterion::BenchmarkGroup<'_, criterion::measuremen
         sift_grep::pattern::PatternArgv::resolve(&argv_text, sift_core::ZeroCounts::Omit);
 
     g.bench_function("binary_mode/default", |b| {
-        let config = cli_default.pattern_config();
+        let config = cli_default.pattern_config(sift_core::SearchMode::Lines).0;
         b.iter(|| {
             black_box(
                 config
@@ -31,7 +31,7 @@ fn bench_binary_mode(g: &mut criterion::BenchmarkGroup<'_, criterion::measuremen
         });
     });
     g.bench_function("binary_mode/text", |b| {
-        let config = cli_text.pattern_config();
+        let config = cli_text.pattern_config(sift_core::SearchMode::Lines).0;
         b.iter(|| {
             black_box(
                 config

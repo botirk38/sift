@@ -232,6 +232,53 @@ fn files_respects_glob_filter() {
     assert!(!stdout.contains("b.rs"), "should not list b.rs");
 }
 
+#[test]
+fn files_path_scopes_listing_indexed() {
+    let p = TestProject::new("files-path-scope-index");
+    p.mkdir("a");
+    p.mkdir("b");
+    p.write("a/x.txt", "content\n");
+    p.write("b/y.txt", "content\n");
+    p.build_index();
+
+    let out = p.index_output(["--files", "a"]);
+    assert_success(&out);
+    let stdout = normalize_stdout(&out);
+    assert_eq!(stdout, "a/x.txt\n", "unexpected stdout: {stdout}");
+}
+
+#[test]
+fn files_path_scopes_listing_walk() {
+    let p = TestProject::new("files-path-scope-walk");
+    p.mkdir("a");
+    p.mkdir("b");
+    p.write("a/x.txt", "content\n");
+    p.write("b/y.txt", "content\n");
+
+    let out = p.walk_output(["--files", "a"]);
+    assert_success(&out);
+    let stdout = normalize_stdout(&out);
+    assert_eq!(stdout, "a/x.txt\n", "unexpected stdout: {stdout}");
+}
+
+#[test]
+fn files_multiple_paths_union() {
+    let p = TestProject::new("files-multi-path");
+    p.mkdir("a");
+    p.mkdir("b");
+    p.mkdir("c");
+    p.write("a/x.txt", "content\n");
+    p.write("b/y.txt", "content\n");
+    p.write("c/z.txt", "content\n");
+    p.build_index();
+
+    let out = p.index_output(["--files", "a", "b"]);
+    assert_success(&out);
+    let stdout = normalize_stdout(&out);
+    assert!(stdout.contains("a/x.txt") && stdout.contains("b/y.txt"));
+    assert!(!stdout.contains("c/z.txt"), "unexpected stdout: {stdout}");
+}
+
 // ─── --type / --type-not / --type-list / --type-add / --type-clear ───────────
 
 #[test]

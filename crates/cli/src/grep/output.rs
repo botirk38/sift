@@ -586,12 +586,7 @@ impl OutputDecl {
                     self.effective_line_number(line_number_override, output_format),
                     self.column.column || vimgrep,
                 ),
-                path_display: if matches!(mode, SearchMode::Paths) {
-                    // Match prior `--files` listing: absolute paths under the filter root.
-                    sift_core::PathDisplay::Absolute
-                } else {
-                    CorpusScope::path_display(&self.search_paths)
-                },
+                path_display: CorpusScope::path_display(&self.search_paths),
                 columns: self.columns.max_columns.map(|max| ColumnLimit {
                     max,
                     overflow: if self.columns.max_columns_preview {
