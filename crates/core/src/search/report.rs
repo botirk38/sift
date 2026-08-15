@@ -61,7 +61,12 @@ impl Report {
                     MatchTotals::Lines(match_lines)
                 }
             },
-            files_with_matches,
+            // Path listing marks every row `matched` for Listing emission; that is
+            // not a pattern hit. Do not count listed paths as files with matches.
+            files_with_matches: match summary.mode {
+                SearchMode::Paths => 0,
+                _ => files_with_matches,
+            },
             files_searched: summary.inputs_len,
             bytes_printed: 0,
             bytes_searched: summary.bytes_searched,

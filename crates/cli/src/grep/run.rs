@@ -181,14 +181,14 @@ impl Run {
         let scan = Self::scan(&session, scan_scope);
 
         // Collect stats for `--stats` (human lines) and for `--json` (summary /
-        // end events). Human stderr lines stay opt-in via `--stats` only.
-        let print_stats = OutputDecl::print_stats(output_argv);
-        let stats =
-            if print_stats || matches!(OutputDecl::format(output_argv, mode), PrintFormat::Json) {
-                sift_core::StatsMode::On
-            } else {
-                sift_core::StatsMode::Off
-            };
+        // end events). Human stderr lines are text-only (`--stats` without JSON).
+        let format = OutputDecl::format(output_argv, mode);
+        let print_stats = OutputDecl::print_stats(output_argv, format);
+        let stats = if print_stats || matches!(format, PrintFormat::Json) {
+            sift_core::StatsMode::On
+        } else {
+            sift_core::StatsMode::Off
+        };
         let pattern_summary = patterns.patterns.clone();
         let query = self.search_query(mode, patterns.patterns, transform.is_some())?;
         let explicit_files = Self::explicit_files(&session);
@@ -225,7 +225,11 @@ impl Run {
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-        if print_stats && let Some(s) = report.stats.as_ref() {
+        // Ripgrep emits no human `--stats` for `--files`; path listing is not a search.
+        if print_stats
+            && !matches!(mode, SearchMode::Paths)
+            && let Some(s) = report.stats.as_ref()
+        {
             OutputDecl::write_stats(s);
         }
         let selected = report.found();

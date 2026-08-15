@@ -655,11 +655,12 @@ impl OutputDecl {
 
     /// Whether to print human `--stats` lines after the search.
     ///
-    /// Independent of [`Self::format`]: `--json` still collects summary stats for
-    /// JSON events, but does not print these lines unless `--stats` is set.
+    /// JSON output never prints these lines (ripgrep 15): stats belong only in
+    /// JSON `summary` / per-file `end` objects. Callers still enable stats
+    /// collection for JSON summary events when `--json` is set.
     #[must_use]
-    pub const fn print_stats(output_argv: &OutputArgv) -> bool {
-        output_argv.mode.stats
+    pub const fn print_stats(output_argv: &OutputArgv, format: PrintFormat) -> bool {
+        output_argv.mode.stats && matches!(format, PrintFormat::Text)
     }
 
     pub fn write_stats(stats: &Stats) {

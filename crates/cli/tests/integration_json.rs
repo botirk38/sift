@@ -83,7 +83,7 @@ fn json_does_not_imply_human_stats_on_stderr() {
 }
 
 #[test]
-fn json_with_stats_prints_human_stats_on_stderr() {
+fn json_with_stats_keeps_stderr_quiet() {
     let p = TestProject::new("json-with-stats-stderr");
     p.write("a.txt", "x\n");
     p.build_index();
@@ -92,8 +92,22 @@ fn json_with_stats_prints_human_stats_on_stderr() {
     assert_success(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("matches") && stderr.contains("bytes searched"),
-        "expected human --stats lines on stderr with --json --stats, got: {stderr:?}"
+        stderr.trim().is_empty(),
+        "expected quiet stderr with --json --stats (stats only in JSON), got: {stderr:?}"
+    );
+    let lines = json_lines(&output);
+    let summary = lines
+        .iter()
+        .rev()
+        .find(|line| line["type"] == "summary")
+        .expect("expected JSON summary event");
+    assert!(
+        summary["data"]["stats"]["matches"].as_u64().unwrap() >= 1,
+        "JSON summary must still carry stats with --json --stats: {summary}"
+    );
+    assert!(
+        summary["data"]["stats"]["bytes_searched"].as_u64().unwrap() > 0,
+        "JSON summary must still carry bytes_searched with --json --stats: {summary}"
     );
 }
 
