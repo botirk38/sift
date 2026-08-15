@@ -50,15 +50,24 @@ fi
 
 echo "Releasing ${TAG}..."
 
+# Portable in-place sed (GNU vs BSD/macOS).
+sed_i() {
+	if sed --version >/dev/null 2>&1; then
+		sed -i "$@"
+	else
+		sed -i '' "$@"
+	fi
+}
+
 # 1. Bump workspace version in Cargo.toml and path-dep version pins.
-sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
-sed -i "s/sift-core = { version = \"[^\"]*\"/sift-core = { version = \"${VERSION}\"/" crates/cli/Cargo.toml
+sed_i "s/^version = \".*\"/version = \"${VERSION}\"/" Cargo.toml
+sed_i "s/sift-core = { version = \"[^\"]*\"/sift-core = { version = \"${VERSION}\"/" crates/cli/Cargo.toml
 
 # 2. Regenerate Cargo.lock.
 cargo check --workspace --quiet 2>/dev/null || cargo check --workspace
 
 # 3. Update install.sh fallback version.
-sed -i "s/SIFT_DEFAULT_VERSION=\"[^\"]*\"/SIFT_DEFAULT_VERSION=\"${VERSION}\"/" scripts/install.sh
+sed_i "s/SIFT_DEFAULT_VERSION=\"[^\"]*\"/SIFT_DEFAULT_VERSION=\"${VERSION}\"/" scripts/install.sh
 
 # 4. Generate changelog (prepend new version, keep history).
 git-cliff --config cliff.toml --tag "$TAG" -o CHANGELOG.md

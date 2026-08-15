@@ -1,136 +1,194 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.7.0](https://github.com/botirk38/sift/releases/tag/v0.7.0) — 2026-08-15
 
-## Unreleased
+### Bug Fixes
 
-### Breaking
-
-- Replace `IndexAvailability` / `CandidateSelection` / `IndexFallback` with `ScanScope`, `SnapshotFreshness`, and `IndexNarrowing` on `CandidateSource`
-- Remove `GrepBuilder`, `InputConversion::for_candidates`, in-memory `Snapshot` constructors (`from_ngram`), and public `IndexSession`
-- Replace mechanism-named `IndexedCorpus::{from_paths,from_indexes}` with `new` / `intersection`; `Indexes::from_snapshot` → `Indexes::new`
-- `Indexes::{usable, corpus_root, corpus_kind, snapshot_id}` replaces session accessors; `IndexedCorpus` is public for path-set filtering
-- `Grep` compiles queries once via internal `compile()`; `GrepRequest` no longer carries `selection`
-
-### Refactor
-
-- Rename `selection.rs` → `scope.rs`; `IndexQuery` → `PrefilterNarrowing`
-- CLI: `PreparedCandidateSource` → `SearchSession`; `InputSources::search_inputs`; `run_files` routes through `Grep::resolve_candidates`
-- Delegate standard, summary, and JSON printing to `grep-printer`; remove Sift-owned matcher/searcher/output rendering wrappers.
-- Replace `grep/pattern` with simple `grep/search` query, compiler, run, and hit modules; remove `PatternCompiler`.
-- Replace public `CompiledQuery`, `Session`, and candidate-policy APIs with query-owned preparation plus `CandidateSource` and `CandidateRequest`.
-
-## [0.7.0](https://github.com/botirk38/sift/releases/tag/v0.7.0) — 2026-07-01
-
-### Breaking
-
-- Grep entity APIs: `CompiledQuery::report` replaces internal `search_inputs` and `Query::search_with`; `SearcherConfig::searcher` replaces `Query::build_searcher`; `CandidatePolicyConfig::policy` replaces `CandidatePolicy::from_compiled`
-- Grep architecture revamp: rename core types (`Session`, `Query`, `Report`, `Inputs`, `CandidatePolicy`, `SearchOptions`, …) and remove legacy adapters (`GrepContext`, `ResolvedGrep`, `GrepInput`, `Stream`, `PreparedFile`, `ScanSummary`)
-- `Query` owns `candidates(session, policy)` and `search(inputs, stats_mode)`; `Session` is data-only
-- CLI orchestration renamed (`Run`, `RunConfig`, `InputSources`, `SearchPrinter`, `PrintSpec`, `PrintExtras`)
-- Replace bool-bag policy/request pairs with typed enums (`CorpusState`, `IndexFallback`, `StatsMode`)
-- Split core into layered modules: `index/`, `grep/` (public search API), internal `corpus/` and `query/`
-
-### Refactor
-
-- Single compile path: `query.compile()` once, then `CandidatePolicyConfig::policy`
-- `CompiledQuery::match_input` for per-input matching; `CompiledQuery::report` / `Query::search` for library reports; `SearcherConfig::searcher` builds ripgrep searchers; `SearchPrinter::print` owns CLI formatting
-- Query layer renames: `ResolutionStrategy`, `ResolutionConfig`, `ResolutionPlan`
-- Split `index/ngram/mod.rs` into focused submodules (config, index, lifecycle, literals, candidates)
-
-## [0.6.0](https://github.com/botirk38/sift/releases/tag/v0.6.0) — 2026-06-24
-
-### Breaking
-
-- Replace the old `search` module boundary with a grep-owned architecture under `sift_core::grep`
-- Rename grep-domain public types from `Search*` to `Grep*` and expose `Grep::run` as the single grep entrypoint
-- Replace query-owned execution and scan/request modules with `CandidateResolver`, `GrepInputs`, and `GrepRunner`
-- Replace boolean grep/index modes with `GrepMode`, `UnindexedStrategy`, and `IndexWalkConfig` domain types
-- Change CLI dispatch to consume `Cli` during routing
-
-### Performance
-
-- Cache candidate file size and directory depth from walk/index metadata, reducing repeated filesystem metadata calls
-- Skip total file byte accounting unless stats are requested
-
-### Fixes
-
-- Use `bitflags::set()` in `PatternCompiler` so disabled flags are applied correctly
-- Replace unchecked storage reads with explicit little-endian read helpers
-
-### Docs
-
-- Revamp README installation and usage documentation
-- Add benchmark chart generation and benchmark result images
-- Add implementation and review plans for the architecture cleanup
-
-### Deps
-
-- Bump `memmap2` from 0.9.10 to 0.9.11
-- Bump `actions/checkout` from 6 to 7
-
-## [0.5.1](https://github.com/botirk38/sift/releases/tag/v0.5.1) — 2026-06-22
-
-### Features
-
-- `sift index build` now delegates to the daemon (async) by default, matching `sift index update` behavior; use `--wait` to opt into synchronous builds
-- Remove `--lazy` flag (async is now the default)
-
-### Fixes
-
-- `install.sh` success output for legacy releases and cargo fallback
-
-### Docs
-
-- Communicate composable index vision across README, AGENTS.md, and rustdoc
-
-## [0.5.0](https://github.com/botirk38/sift/releases/tag/v0.5.0) — 2026-06-20
-
-### Breaking
-
-- Replace `Daemon::send` with `Daemon::index`; remove public `DaemonOp` export
-- `Daemon::serve` takes `ServeConfig` instead of loose arguments
-
-### Features
-
-- Ship `sift-daemon` in GitHub release assets and `install.sh`
-- Collapse daemon into `index/daemon/mod.rs` with inline `Daemon::serve` event loop
-
-### Refactor
-
-- Tighten daemon API: `Daemon::bootstrap`, `Daemon::executable`, domain methods on grouped serve types (#100)
-
-## [0.4.0](https://github.com/botirk38/sift/releases/tag/v0.4.0) — 2026-06-18
-
-### Breaking
-
-- `meta.json` layout changed (`corpus` / `walk` / `filters` nesting). Re-run `sift index build` after upgrading; old stores are not migrated automatically.
-- Daemon IPC types moved from `sift_core::DaemonOp` to `sift_grep::index::daemon::{Daemon, DaemonOp, DaemonError}`; core no longer exports daemon types.
-
-### Features
-
-- Modular index daemon with async `index update`, `--lazy` build, and search-triggered background indexing
-- MR-SW snapshot index store with unified `reconcile` and partial-path updates
-- Walk unindexed corpus paths during daemon-enabled search for files not yet in the snapshot
-
-### Refactor
-
-- Migrate grep/filter helpers to domain-type impls (`PatternConfig::grep_options`, `FilterConfig::candidate_config`, `OutputConfig::separators`, `ByteSize`)
-- Migrate core search helpers to domain types (`CandidateFilter::collect`, `WalkOptions::discover_files`, `IgnoreConfig::matcher`)
-- Consolidate daemon into CLI-only `index/daemon.rs` (`Daemon::send`, `Daemon::serve`, `Daemon::ensure_running`); remove `Serve`, coordinator, and core IPC types
-- Remove no-op `DaemonOp::Watch` IPC opcode; reload store metadata before daemon reconciles; fail `serve` on startup reconcile errors; rebind filesystem watcher when corpus root changes
-- Unify `TrigramIndex::build(config, dir, paths)` API (empty paths = full corpus)
+- search load must not create store; error on dangling CURRENT
+- default focused tools; restore ref after --ab (#218)
+- narrow -c count when zero files are omitted (#170)
+- keep index narrowing under default Auto encoding (#169)
+- avoid unused matcher clone (#142)
+- delegate matcher fast paths (#141)
 
 ### Documentation
 
-- Add LICENSE-MIT, LICENSE-APACHE-2.0, CONTRIBUTING.md, SECURITY.md
-- Add crate metadata and README release-scope section
-- Expand rg compatibility matrix and integration test coverage
+- never allow free helpers or FnOnce callback APIs (#188)
+- prefer sweeping architecture fixes over backward compat (#185)
+- strengthen composition and simplicity rules in AGENTS.md (#168)
+- add Cursor Cloud setup notes to AGENTS.md (#145)
+
+### Features
+
+- pure Plan resolve and Option Indexes::load (#229)
+- typed IndexRecord, Snapshot Files, domain index modules
+- pure Plan resolve and Option Indexes::load
+- SearchQuery owns index narrowing (#228)
+- opt-in GramNorm::AsciiLower on ngram Index (#216)
+- unify Index trait and merge IndexStore into Indexes
+- mode-shaped Listing report + deferred hydrate + Arc event paths (#219)
+- generalize trigram index to ngram (#125)
+- add lazy index coverage (#112)
+
+### Miscellaneous
+
+- drop profile/update/bench wrappers; keep essential scripts (#227)
+- backup local WIP before Mac handoff
+- expand profile.sh for cloud VM system profilers (#212)
+- add scripts/profile.sh for system profiler workflow (#206)
+- remove junk markdown
+
+### Performance
+
+- borrow Index::rel_path instead of allocating PathBuf (#217)
+- reuse display path for relative InputIdentity hit paths (#213)
+- skip per-file path filter for single-index AllIndexed ids (#211)
+- skip Searcher compile in Grep::resolve_candidates (#210)
+- avoid HashSet clone in single-index IndexedCorpus intersection (#209)
+- attach IndexedCorpus coverage to candidate plans (#199)
+- count match spans without building Match values when discarding (#201)
+- drop merge dedup HashSet for unindexed walk paths (#200)
+- move query into Searcher without cloning in Grep::execute (#197)
+- defer indexed candidate materialization for FirstMatch (#194)
+- materialize FirstMatch inputs progressively (#193)
+- discard search events for summary print modes (#192)
+- skip MatchSink path clone for discarded presence counts (#191)
+- filter during indexed materialize in one pass (#189)
+- reuse RegexSearcher per rayon worker (#190)
+- skip search event construction when discarding (#187)
+- skip ignore re-check for trusted indexed candidates (#186)
+- defer candidate materialization to resolve (#184)
+- narrow short literals via covering N-grams (#183)
+- skip MatchSink span scan for presence and line counts (#181)
+- defer files.bin fingerprint decode until needed (#180)
+- parallelize ngram candidate materialization (#179)
+- bitset-union ASCII case-fold posting windows (#178)
+- halt file scan after first hit for -l/-L (#173)
+- stop quiet search after the first selected hit (#172)
+- defer indexed path coverage until needed (#171)
+- ASCII case-fold grams for -i candidate narrowing (#167)
+- pack posting sort key into u64 for width<=4 (#158)
+- dedup grams before sorting in GramSet::collect (#157)
+- SIMD-bitpack posting lists in 128-value blocks (#156)
+- decode posting varints by index, presize output (#155)
+- borrow matcher in sink instead of cloning per file (#154)
+- parallelize posting assembly with packed sort key (#153)
+- skip walk for validated index snapshots (#111)
+
+### Refactor
+
+- daemon ipc/watcher/refresh split and surface cull (#233)
+- Origin{File,Stream}, resolve-once Run, SearchMode::Paths (#232)
+- sole FileIdentity; drop InputIdentity and PrintExtras
+- delete Grep; Query and Candidate file identity
+- ngram::Index always opened; knobs only on IndexRecord
+- drop IndexWrite; build/update take dest and config
+- collapse candidate/search adapter layers
+- rename hydrate helpers to candidate
+- split grep search pipeline (#144)
+- remove grep wrapper clutter (#143)
+- revamp grep pipeline with entity-based search API (#140)
+- rework grep architecture (#136)
+
+### Testing
+
+- remove index walk parity harness (#137)
+
+### Compat
+
+- report binary matches like ripgrep (#139)
+- match ripgrep type semantics (#138)
+- support ripgrep decoration buffering flags (#133)
+- support compressed and preprocessed search (#131)
+- support ripgrep sort flags (#130)
+- support PCRE2 regex engine (#129)
+- support stdin search semantics (#128)
+- support ripgrep config files (#127)
+- support encoding and null-data search (#126)
+
+### Deps
+
+- bump serde from 1.0.228 to 1.0.229 (#225)
+- bump serde_json from 1.0.150 to 1.0.151 (#223)
+- bump grep-matcher from 0.1.8 to 0.1.9 (#222)
+- bump bstr from 1.12.3 to 1.13.0 (#224)
+- bump grep-pcre2 from 0.1.9 to 0.1.10 (#226)
+- bump ignore from 0.4.27 to 0.4.28 (#208)
+- bump memchr from 2.8.2 to 2.8.3 (#207)
+- bump ignore from 0.4.26 to 0.4.27 (#159)
+- bump bstr from 1.12.1 to 1.12.3 (#134)
+- bump anyhow from 1.0.102 to 1.0.103 (#135)
+
+### Merge
+
+- bring master into search-pipeline stack
+
+## [0.6.0](https://github.com/botirk38/sift/releases/tag/v0.6.0) — 2026-06-24
+
+### Bug Fixes
+
+- install.sh success output for legacy releases and cargo fallback
+
+### Documentation
+
+- benchsuite fix, benchmark charts, README revamp, agent/human install (#107)
+- communicate composable index vision across README, AGENTS.md, and rustdoc (#104)
+
+### Features
+
+- make `sift index build` async by default (remove --lazy) (#103)
+
+### Miscellaneous
+
+- release v0.6.0
+- bump actions/checkout from 6 to 7 (#101)
+- Rust best-practices and architecture improvements (#106)
+- release v0.5.1 (#105)
+
+### Performance
+
+- domain types, metadata caching, lazy stats (#108)
+
+### Deps
+
+- bump memmap2 from 0.9.10 to 0.9.11 (#102)
+
+## [0.4.0](https://github.com/botirk38/sift/releases/tag/v0.4.0) — 2026-06-19
+
+### Bug Fixes
+
+- stabilize `integration_update` CI tests (Windows + Ubuntu) (#92)
+
+### Features
+
+- v0.4 with CLI-only daemon and lazy index build (#99)
+- add `sift index build --lazy` for deferred index construction (#94)
+- sift update for binary upgrades and sift index namespace (#85)
+- revamp agent skill for using sift (not developing it) (#84)
+
+### Miscellaneous
+
+- remove banned #[allow] attributes from bench modules (#93)
+- remove dead SnapshotRead::id and SnapshotWriterSession::current_id trait methods (#89)
+- consolidate duplicated `mmap_open` into `storage::mmap` (#90)
+- replace once_cell with std::sync::OnceLock (#91)
+- refactor sift-grep CLI around domain types (#86)
+
+### Deps
+
+- bump bitflags from 2.12.1 to 2.13.0 (#95)
+- bump ignore from 0.4.25 to 0.4.26 (#96)
+- bump regex-syntax from 0.8.10 to 0.8.11 (#97)
+- bump memchr from 2.8.1 to 2.8.2 (#98)
+- bump memchr from 2.8.0 to 2.8.1 (#88)
+- bump bitflags from 2.11.1 to 2.12.1 (#87)
 
 ## [0.3.0](https://github.com/botirk38/sift/releases/tag/v0.3.0) — 2026-06-02
 
 ### Bug Fixes
 
+- stage sift-core path dep bump in release script
 - reconcile on startup to catch changes made while daemon was down (#71)
 - configure WalkBuilder from VisibilityConfig in no-index search (#59)
 
@@ -377,3 +435,5 @@ All notable changes to this project will be documented in this file.
 - skip redundant canonicalize in indexed search
 - cache parallel scan threshold with OnceLock
 - byte-first scanning with regex::bytes::Regex, remove prefilter
+
+
