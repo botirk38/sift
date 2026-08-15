@@ -10,9 +10,9 @@ pub mod search;
 
 pub use candidates::{Candidates, Coverage, Plan, Scan, ScanScope, SnapshotFreshness};
 pub use corpus::{
-    AllFiles, File, FileFilter, FileFilterConfig, FileOrder, FileOrderDirection, FileOrderKey,
-    FileWalk, FilterAdmission, GlobConfig, HiddenMode, IgnoreConfig, IgnoreSources, PathDisplay,
-    TypeFilterRule, VisibilityConfig, WalkFile, WalkMetadata, WalkSelector,
+    File, FileFilter, FileFilterConfig, FileOrder, FileOrderDirection, FileOrderKey, FileWalk,
+    FilterAdmission, GlobConfig, HiddenMode, IgnoreConfig, IgnoreSources, PathDisplay,
+    TypeFilterRule, VisibilityConfig, WalkFile, WalkMetadata,
 };
 pub use search::{
     BinaryEvent, BinaryMode, ByteInput, Case, CaseMode, ContextEvent, ContextKind,
@@ -22,15 +22,13 @@ pub use search::{
     SearchSink, Searcher, SpanCount, Stats, StatsMode, ZeroCounts,
 };
 
-pub use index::config::IndexWalkConfig;
 pub use index::meta::StoreMeta;
 pub use index::ngram::{
     Gram, GramNorm, GramWidth, GramWindows, Index as NGramIndex, NGramIndexError,
 };
 pub use index::{
-    CorpusKind, CorpusMeta, CorpusSpec, FileId, Files, FilterMeta, Index, IndexConfig,
-    IndexCoverage, IndexDestination, IndexError, IndexRecord, IndexedCorpus, Indexes, SnapshotId,
-    WalkMeta,
+    CorpusMeta, FileId, Files, FilterMeta, IndexCoverage, IndexError, IndexRecord, Indexes,
+    SnapshotId, WalkMeta,
 };
 
 use thiserror::Error;

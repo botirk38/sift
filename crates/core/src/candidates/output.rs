@@ -3,20 +3,20 @@ use crate::corpus::filter::{FileFilter, FilterAdmission};
 use crate::index::{FileId, Indexes};
 
 /// Corpus files ready for search.
-pub struct Candidates<'a>(pub(crate) Inner<'a>);
+pub struct Candidates<'a>(pub(crate) Origin<'a>);
 
-pub(crate) enum Inner<'a> {
+pub enum Origin<'a> {
     /// Walk, merge residual, or sorted resolve: paths already materialized.
-    Resolved(Vec<File>),
+    Walk(Vec<File>),
     /// Index-narrowed file ids; search opens one file at a time.
-    Indexed {
+    Index {
         indexes: &'a Indexes,
         file_ids: Vec<FileId>,
         filter: &'a FileFilter,
         admission: FilterAdmission,
     },
     /// Lazy snapshot: index hits stay as ids; unindexed walk paths are resolved.
-    Mixed {
+    Merge {
         indexes: &'a Indexes,
         file_ids: Vec<FileId>,
         filter: &'a FileFilter,
@@ -26,15 +26,15 @@ pub(crate) enum Inner<'a> {
 }
 
 /// Iterator over candidates (opens index rows as it goes).
-pub enum IntoIter<'a> {
-    Resolved(std::vec::IntoIter<File>),
-    Indexed {
+pub enum Iter<'a> {
+    Walk(std::vec::IntoIter<File>),
+    Index {
         ids: std::vec::IntoIter<FileId>,
         indexes: &'a Indexes,
         filter: &'a FileFilter,
         admission: FilterAdmission,
     },
-    Mixed {
+    Merge {
         ids: std::vec::IntoIter<FileId>,
         indexes: &'a Indexes,
         filter: &'a FileFilter,
@@ -46,16 +46,16 @@ pub enum IntoIter<'a> {
 impl<'a> Candidates<'a> {
     #[must_use]
     pub const fn empty() -> Self {
-        Self(Inner::Resolved(Vec::new()))
+        Self(Origin::Walk(Vec::new()))
     }
 
-    pub(crate) const fn indexed(
+    pub(crate) const fn index(
         indexes: &'a Indexes,
         file_ids: Vec<FileId>,
         filter: &'a FileFilter,
         admission: FilterAdmission,
     ) -> Self {
-        Self(Inner::Indexed {
+        Self(Origin::Index {
             indexes,
             file_ids,
             filter,
@@ -63,14 +63,14 @@ impl<'a> Candidates<'a> {
         })
     }
 
-    pub(crate) const fn mixed(
+    pub(crate) const fn merge(
         indexes: &'a Indexes,
         file_ids: Vec<FileId>,
         filter: &'a FileFilter,
         admission: FilterAdmission,
         unindexed: Vec<File>,
     ) -> Self {
-        Self(Inner::Mixed {
+        Self(Origin::Merge {
             indexes,
             file_ids,
             filter,
@@ -86,9 +86,9 @@ impl<'a> Candidates<'a> {
     #[must_use = "candidate emptiness affects whether search runs"]
     pub const fn is_empty(&self) -> bool {
         match &self.0 {
-            Inner::Resolved(items) => items.is_empty(),
-            Inner::Indexed { file_ids, .. } => file_ids.is_empty(),
-            Inner::Mixed {
+            Origin::Walk(items) => items.is_empty(),
+            Origin::Index { file_ids, .. } => file_ids.is_empty(),
+            Origin::Merge {
                 file_ids,
                 unindexed,
                 ..
@@ -100,14 +100,14 @@ impl<'a> Candidates<'a> {
     #[must_use = "materialized candidates are consumed by search"]
     pub fn into_vec(self) -> Vec<File> {
         match self.0 {
-            Inner::Resolved(items) => items,
-            Inner::Indexed {
+            Origin::Walk(items) => items,
+            Origin::Index {
                 indexes,
                 file_ids,
                 filter,
                 admission,
             } => indexes.candidates(&file_ids, filter, admission),
-            Inner::Mixed {
+            Origin::Merge {
                 indexes,
                 file_ids,
                 filter,
@@ -124,17 +124,17 @@ impl<'a> Candidates<'a> {
 
 impl From<Vec<File>> for Candidates<'_> {
     fn from(items: Vec<File>) -> Self {
-        Self(Inner::Resolved(items))
+        Self(Origin::Walk(items))
     }
 }
 
-impl Iterator for IntoIter<'_> {
+impl Iterator for Iter<'_> {
     type Item = File;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            Self::Resolved(iter) => iter.next(),
-            Self::Indexed {
+            Self::Walk(iter) => iter.next(),
+            Self::Index {
                 ids,
                 indexes,
                 filter,
@@ -145,7 +145,7 @@ impl Iterator for IntoIter<'_> {
                     return Some(candidate);
                 }
             },
-            Self::Mixed {
+            Self::Merge {
                 ids,
                 indexes,
                 filter,
@@ -166,9 +166,9 @@ impl Iterator for IntoIter<'_> {
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         match self {
-            Self::Resolved(iter) => iter.size_hint(),
-            Self::Indexed { ids, .. } => (0, ids.size_hint().1),
-            Self::Mixed { ids, unindexed, .. } => {
+            Self::Walk(iter) => iter.size_hint(),
+            Self::Index { ids, .. } => (0, ids.size_hint().1),
+            Self::Merge { ids, unindexed, .. } => {
                 let (unindexed_lo, unindexed_hi) = unindexed.size_hint();
                 let (_, ids_hi) = ids.size_hint();
                 (
@@ -185,29 +185,29 @@ impl Iterator for IntoIter<'_> {
 
 impl<'a> IntoIterator for Candidates<'a> {
     type Item = File;
-    type IntoIter = IntoIter<'a>;
+    type IntoIter = Iter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
         match self.0 {
-            Inner::Resolved(items) => IntoIter::Resolved(items.into_iter()),
-            Inner::Indexed {
+            Origin::Walk(items) => Iter::Walk(items.into_iter()),
+            Origin::Index {
                 indexes,
                 file_ids,
                 filter,
                 admission,
-            } => IntoIter::Indexed {
+            } => Iter::Index {
                 ids: file_ids.into_iter(),
                 indexes,
                 filter,
                 admission,
             },
-            Inner::Mixed {
+            Origin::Merge {
                 indexes,
                 file_ids,
                 filter,
                 admission,
                 unindexed,
-            } => IntoIter::Mixed {
+            } => Iter::Merge {
                 ids: file_ids.into_iter(),
                 indexes,
                 filter,

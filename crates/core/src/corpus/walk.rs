@@ -128,7 +128,19 @@ impl<'a> FileWalk<'a> {
     ///
     /// Returns an error if the root cannot be canonicalized or a walk fails.
     pub fn files(self) -> crate::Result<Vec<WalkFile>> {
-        self.files_matching(AllFiles)
+        let filter_root = self.root.canonicalize()?;
+        let filter_root = Arc::new(filter_root);
+        let mut files = Vec::new();
+        if self.scopes.is_empty() {
+            self.collect_scope(&filter_root, Path::new(""), &mut files)?;
+        } else {
+            for scope in self.scopes {
+                self.collect_scope(&filter_root, scope, &mut files)?;
+            }
+        }
+        files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+        files.dedup_by(|a, b| a.rel_path == b.rel_path);
+        Ok(files)
     }
 
     /// Discover matching files and convert them into search candidates.
@@ -139,42 +151,12 @@ impl<'a> FileWalk<'a> {
     ///
     /// Returns an error if the root cannot be canonicalized or a walk fails.
     pub fn candidates(self) -> crate::Result<Vec<File>> {
-        self.candidates_matching(AllFiles)
-    }
-
-    /// Discover selected files and convert them into search candidates.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the root cannot be canonicalized or a walk fails.
-    pub fn candidates_matching<S: WalkSelector>(self, selector: S) -> crate::Result<Vec<File>> {
         Ok(self
             .metadata(WalkMetadata::Read)
-            .files_matching(selector)?
+            .files()?
             .into_iter()
             .map(File::from)
             .collect())
-    }
-
-    /// Discover matching files whose relative path is accepted by `selector`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the root cannot be canonicalized or a walk fails.
-    pub fn files_matching<S: WalkSelector>(self, selector: S) -> crate::Result<Vec<WalkFile>> {
-        let filter_root = self.root.canonicalize()?;
-        let filter_root = Arc::new(filter_root);
-        let mut files = Vec::new();
-        if self.scopes.is_empty() {
-            self.collect_scope(&filter_root, Path::new(""), selector, &mut files)?;
-        } else {
-            for scope in self.scopes {
-                self.collect_scope(&filter_root, scope, selector.clone(), &mut files)?;
-            }
-        }
-        files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
-        files.dedup_by(|a, b| a.rel_path == b.rel_path);
-        Ok(files)
     }
 
     fn is_excluded(&self, rel_path: &Path) -> bool {
@@ -183,11 +165,10 @@ impl<'a> FileWalk<'a> {
             .any(|excluded| !excluded.as_os_str().is_empty() && rel_path.starts_with(excluded))
     }
 
-    fn collect_scope<S: WalkSelector>(
+    fn collect_scope(
         &self,
         filter_root: &Arc<PathBuf>,
         scope: &Path,
-        selector: S,
         files: &mut Vec<WalkFile>,
     ) -> crate::Result<()> {
         let path = if scope.as_os_str().is_empty() {
@@ -205,7 +186,6 @@ impl<'a> FileWalk<'a> {
                 .unwrap_or(&path)
                 .to_path_buf();
             if !self.is_excluded(&rel_path)
-                && selector.includes(rel_path.as_path())
                 && let Some(file) = WalkFile::from_scope_file(
                     Arc::clone(filter_root),
                     rel_path,
@@ -217,7 +197,7 @@ impl<'a> FileWalk<'a> {
                 files.push(file);
             }
         } else if path.is_dir() {
-            let mut walk = FileWalkRun::new(&path, filter_root, self, selector);
+            let mut walk = FileWalkRun::new(&path, filter_root, self);
             files.extend(walk.run()?);
         }
         Ok(())
@@ -323,36 +303,20 @@ impl From<WalkFile> for File {
     }
 }
 
-/// Selects which discovered relative paths a [`FileWalk`] should keep.
-pub trait WalkSelector: Clone + Send + Sync {
-    fn includes(&self, rel_path: &Path) -> bool;
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct AllFiles;
-
-impl WalkSelector for AllFiles {
-    fn includes(&self, _rel_path: &Path) -> bool {
-        true
-    }
-}
-
-struct FileWalkRun<'a, S: WalkSelector> {
+struct FileWalkRun<'a> {
     root: PathBuf,
     filter_root: Arc<PathBuf>,
     config: &'a FileWalk<'a>,
-    selector: S,
     walk_error: Arc<Mutex<Option<crate::Error>>>,
     consolidated: Arc<Mutex<Vec<WalkFile>>>,
 }
 
-impl<'a, S: WalkSelector> FileWalkRun<'a, S> {
-    fn new(root: &Path, filter_root: &Arc<PathBuf>, config: &'a FileWalk<'a>, selector: S) -> Self {
+impl<'a> FileWalkRun<'a> {
+    fn new(root: &Path, filter_root: &Arc<PathBuf>, config: &'a FileWalk<'a>) -> Self {
         Self {
             root: root.to_path_buf(),
             filter_root: Arc::clone(filter_root),
             config,
-            selector,
             walk_error: Arc::new(Mutex::new(None)),
             consolidated: Arc::new(Mutex::new(Vec::new())),
         }
@@ -393,14 +357,13 @@ impl<'a, S: WalkSelector> FileWalkRun<'a, S> {
     }
 }
 
-impl<'a, S: WalkSelector + 'a> ignore::ParallelVisitorBuilder<'a> for FileWalkRun<'_, S> {
+impl<'a> ignore::ParallelVisitorBuilder<'a> for FileWalkRun<'_> {
     fn build(&mut self) -> Box<dyn ignore::ParallelVisitor + 'a> {
         Box::new(FileCollector {
             filter_root: Arc::clone(&self.filter_root),
             excludes: self.config.excludes.to_vec(),
             max_filesize: self.config.max_filesize,
             metadata: self.config.metadata,
-            selector: self.selector.clone(),
             thread_files: Vec::new(),
             walk_error: Arc::clone(&self.walk_error),
             consolidated: Arc::clone(&self.consolidated),
@@ -408,18 +371,17 @@ impl<'a, S: WalkSelector + 'a> ignore::ParallelVisitorBuilder<'a> for FileWalkRu
     }
 }
 
-struct FileCollector<S: WalkSelector> {
+struct FileCollector {
     filter_root: Arc<PathBuf>,
     excludes: Vec<PathBuf>,
     max_filesize: Option<u64>,
     metadata: WalkMetadata,
-    selector: S,
     thread_files: Vec<WalkFile>,
     walk_error: Arc<Mutex<Option<crate::Error>>>,
     consolidated: Arc<Mutex<Vec<WalkFile>>>,
 }
 
-impl<S: WalkSelector> Drop for FileCollector<S> {
+impl Drop for FileCollector {
     fn drop(&mut self) {
         if self.thread_files.is_empty() {
             return;
@@ -429,7 +391,7 @@ impl<S: WalkSelector> Drop for FileCollector<S> {
     }
 }
 
-impl<S: WalkSelector> ignore::ParallelVisitor for FileCollector<S> {
+impl ignore::ParallelVisitor for FileCollector {
     fn visit(&mut self, entry: Result<DirEntry, IgnoreError>) -> WalkState {
         let entry = match entry {
             Ok(entry) => entry,
@@ -458,10 +420,6 @@ impl<S: WalkSelector> ignore::ParallelVisitor for FileCollector<S> {
         if !entry.file_type().is_some_and(|ft| ft.is_file()) {
             return WalkState::Continue;
         }
-        if !self.selector.includes(&rel_path) {
-            return WalkState::Continue;
-        }
-
         if let Some(file) =
             WalkFile::from_dir_entry(&entry, &self.filter_root, self.max_filesize, self.metadata)
         {
@@ -471,7 +429,7 @@ impl<S: WalkSelector> ignore::ParallelVisitor for FileCollector<S> {
     }
 }
 
-impl<S: WalkSelector> FileCollector<S> {
+impl FileCollector {
     fn is_excluded(&self, rel_path: &Path) -> bool {
         self.excludes
             .iter()

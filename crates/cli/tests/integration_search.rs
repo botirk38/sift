@@ -1,7 +1,6 @@
 mod common;
 
 use std::fs;
-use std::path::Path;
 
 #[cfg(not(windows))]
 use common::assert_stdout_eq;
@@ -127,27 +126,13 @@ fn search_literal_index_without_subcommand() {
 }
 
 #[test]
-fn build_single_file_then_search_finds_match() {
+fn index_build_rejects_file_path() {
     let p = TestProject::new("search-single-file");
     p.write("one.txt", "alpha\nbeta needle\n");
-    p.build_index_at(Path::new("one.txt"));
 
-    let out = p.index_output(["needle"]);
-    assert_success(&out);
-    assert_stdout_contains(&out, "beta needle");
-    assert_stdout_not_contains(&out, "one.txt");
-}
-
-#[test]
-fn build_single_file_then_search_path_scope_accepts_that_file() {
-    let p = TestProject::new("search-single-file-scope");
-    p.write("one.txt", "needle here\n");
-    p.build_index_at(Path::new("one.txt"));
-
-    let out = p.index_output(["needle", "one.txt"]);
-    assert_success(&out);
-    assert_stdout_contains(&out, "needle here");
-    assert_stdout_not_contains(&out, "one.txt");
+    let out = p.index_output(["index", "build", "--wait", "one.txt"]);
+    assert_exit_code(&out, 2);
+    assert!(normalize_stderr(&out).contains("index build requires a directory"));
 }
 
 #[test]

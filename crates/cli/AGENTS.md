@@ -25,8 +25,8 @@ Two-layer flag model:
 | `grep/paths.rs` | `PathArgs` | `CorpusScope` | `CorpusScope::resolve` |
 | `grep/input.rs` | — | `InputSources`, `ContentTransform` | `InputSources::resolve`, `stdin_streams` |
 | `grep/run.rs` | — | `RunConfig`, `Run`, `RunResult` | `Run::execute(daemon)` |
-| `format/printer.rs` | — | `SearchPrinter`, `PrintSpec` (`SearchMode`) | `SearchPrinter::print` → `Report` |
-| `index/mod.rs` | — | `IndexRequest`, `IndexJob`, `SnapshotRefresh` | `IndexJob::resolve`, `IndexJob::run(daemon)`, `SnapshotRefresh::run` |
+| `format/output/mod.rs` | — | `PrintSpec` (`SearchMode`) | `PrintSpec::print` → `Report` |
+| `index/mod.rs` | — | `IndexRequest`, `IndexJob`, `ReconcileOutcome` | `IndexJob::resolve`, `IndexJob::run(daemon)`, `ReconcileOutcome::rebuild` |
 | `index/selection.rs` | `IndexDecl` | `IndexSelection` | `IndexSelection::resolve` (argv order for `--index`/`--width`/`--norm`) |
 | `index/daemon/` | — | `Daemon`, `DaemonOrchestrator`, `ServeConfig` | `Daemon::{index,validate_snapshot}`, `DaemonOrchestrator::{start,serve}` (`ipc` / `watcher` / `refresh`) |
 
@@ -36,16 +36,18 @@ Two-layer flag model:
 RunConfig → Run::execute
 InputSources → stdin_streams → Inputs
 Scan + Plan::resolve → Candidates
-Searcher::execute → SearchPrinter::print → Report
+Searcher::execute → PrintSpec::print → Report
 ```
 
-Index lifecycle: `IndexJob::run` → `SnapshotRefresh::run` (build/update snapshot). Daemon debouncing and IPC stay in `index/daemon/`.
+Index lifecycle: `IndexJob::run` → `ReconcileOutcome::rebuild` (full rebuild from
+stored metadata). `ReconcileOutcome::rebuild(&mut Indexes)` always calls
+`Indexes::build()`; daemon debouncing and IPC stay in `index/daemon/`.
 
 ## Structure
 
 - **`src/lib.rs`**: `main_entry`; re-exports `grep::*` for tests/benches.
 - **`src/cli.rs`**: `Cli` parser, `run_config`, `dispatch`.
-- **`src/format/`**: `SearchPrinter`, sinks (`LinePrinter`, `AggregatePrinter`, `JsonPrinter`).
+- **`src/format/`**: `PrintSpec` output configuration and event rendering.
 - **`src/grep/`**: search domain — `argv`, `run`, `pattern`, `filter`, `output`, `paths`, `input`, `ignore`, `engine`.
 
 ## Behavior Notes

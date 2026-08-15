@@ -11,10 +11,9 @@
 //! over-allocate, or read out of bounds.
 
 use libfuzzer_sys::fuzz_target;
-use sift_core::VisibilityConfig;
 use sift_core::{
-    CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramWidth, IndexConfig, IndexCoverage,
-    IndexRecord, IndexWalkConfig, Indexes, NGramIndex, StoreMeta, WalkMeta,
+    CorpusMeta, Files, FilterMeta, GramNorm, GramWidth, IndexCoverage, IndexRecord, NGramIndex,
+    StoreMeta, VisibilityConfig, WalkMeta,
 };
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -22,10 +21,10 @@ use std::{fs, io::Write};
 
 struct Harness {
     _temp: tempfile::TempDir,
-    sift_dir: PathBuf,
+    trigram_dir: PathBuf,
     postings: PathBuf,
     header: Vec<u8>,
-    meta: StoreMeta,
+    file_count: usize,
 }
 
 static HARNESS: OnceLock<Harness> = OnceLock::new();
@@ -37,32 +36,10 @@ fn harness() -> &'static Harness {
         fs::create_dir_all(&corpus).expect("mkdir");
         fs::write(corpus.join("a.txt"), b"hello world\nfoo bar\n").expect("a.txt");
         fs::write(corpus.join("b.txt"), b"baz\nquux line\n").expect("b.txt");
-        let sift_dir = tmp.path().join(".sift");
-        let trigram_dir = sift_dir.join("trigram");
-        let config = IndexConfig {
-            corpus: CorpusSpec {
-                root: &corpus,
-                kind: CorpusKind::Directory,
-                follow_links: false,
-                include_paths: &[],
-                exclude_paths: &[],
-            },
-            walk: IndexWalkConfig::new(false),
-            visibility: VisibilityConfig::default(),
-        };
-        NGramIndex::build(
-            GramWidth::TRIGRAM,
-            sift_core::GramNorm::Identity,
-            sift_core::IndexDestination::Directory(&trigram_dir),
-            &config,
-        )
-            .expect("build_index");
-        let postings = trigram_dir.join("postings.bin");
-        let magic = fs::read(&postings).expect("read postings")[..8].to_vec();
+        let trigram_dir = tmp.path().join("trigram");
         let meta = StoreMeta::new(
             CorpusMeta {
                 root: corpus.clone(),
-                kind: CorpusKind::Directory,
                 include_paths: Vec::new(),
                 exclude_paths: Vec::new(),
             },
@@ -78,12 +55,20 @@ fn harness() -> &'static Harness {
             },
             vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
         );
+        let snapshot = tmp.path().join("snapshot");
+        fs::create_dir(&snapshot).expect("snapshot");
+        let files = Files::build(&meta, &snapshot).expect("files");
+        let file_count = files.len();
+        NGramIndex::build(GramWidth::TRIGRAM, GramNorm::Identity, &trigram_dir, &files)
+            .expect("build_index");
+        let postings = trigram_dir.join("postings.bin");
+        let magic = fs::read(&postings).expect("read postings")[..8].to_vec();
         Harness {
             _temp: tmp,
-            sift_dir,
+            trigram_dir,
             postings,
             header: magic,
-            meta,
+            file_count,
         }
     })
 }
@@ -106,5 +91,11 @@ fuzz_target!(|data: &[u8]| {
     }
     drop(file);
 
-    let _ = Indexes::open(&h.sift_dir, &h.meta);
+    // Reopen the kind tables against the corrupted postings blob.
+    let _ = NGramIndex::open(
+        GramWidth::TRIGRAM,
+        GramNorm::Identity,
+        &h.trigram_dir,
+        h.file_count,
+    );
 });

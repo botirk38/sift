@@ -2,49 +2,52 @@
 
 ## Responsibility
 
-Uniform index kinds, snapshot persistence, and search orchestration via
+Store metadata, snapshot persistence, and query orchestration via
 [`Indexes`](indexes.rs).
 
 ## Layer split
 
 | Layer | Types | Owns |
 |-------|-------|------|
-| Record | `IndexRecord`, `Index` trait | Catalog knobs + opened query/update |
-| Orchestrator | `Indexes`, `StoreMeta` | `open` / `build` / `update` + query/hydrate |
-| Snapshot | `Snapshot`, `Files`, `SnapshotId` | Shared `Files`, opened indexes, artifact I/O |
-| Kind impl | `ngram::Index` | Knobs + storage + trait impl |
+| Metadata | `StoreMeta`, `IndexRecord` | Corpus configuration and index catalog |
+| Orchestrator | `Indexes` | `open` / `load` / `build`, query, and hydration |
+| Snapshot storage | `SnapshotId`, `Files` | Committed artifact layout and shared file IDs |
+| Kind impl | `ngram::Index` | Kind artifacts and query narrowing |
 
-CLI owns daemon orchestration (`SnapshotRefresh`, path debouncing). Core does
+CLI owns daemon orchestration (`ReconcileOutcome::rebuild`, path debouncing). Core does
 not expose `reconcile`, `unindexed_hit_paths`, or walk-merge helpers on
 `Indexes`.
 
 ## Key types
 
-- `Index` — opened trait only: `query` / `coverage` / `all_file_ids` / `update`
-- `IndexRecord` — typed catalog entry; `build` / `open` → `Box<dyn Index>`
-- `IndexConfig` — corpus/walk/visibility inputs for a write
-- `IndexDestination` — directory or snapshot write target
+- `StoreMeta` — persistent corpus, walk, filtering, coverage, and catalog configuration
+- `IndexRecord` — typed catalog entry; builds kind artifacts and privately opens a kind
 - `Indexes` — store orchestrator over one `.sift` directory
-- `Files` — snapshot-owned `FileId → File` hydration
-- `IndexedCorpus` — covered rel-paths; `retain_unindexed` filters paths
+- `Files` — snapshot-owned mmap-backed `FileId → File` hydration
+- `SnapshotId` — opaque committed snapshot identity
+
+`Kind` in `record.rs` is private. It dispatches queries to runtime kinds; there
+is no public index trait or public snapshot type.
 
 ## Conventions
 
-- `grep/` and `candidates/` talk to `Indexes` and the `Index` trait, never
-  `ngram/` internals.
-- `Index::query` returns `Vec<FileId>` (may over-return; must not under-return;
-  cannot narrow → every covered id). No `AllIndexed` / `Unavailable` status.
-- Hydration uses `Snapshot::files()`, never a lead index.
+- Search and candidates use `Indexes`, never N-gram internals.
+- Kind queries may over-return but must not under-return; when narrowing is not
+  possible, they return every shared file ID.
+- `Files` is the single shared mmap-backed `FileId` space and lives at the
+  snapshot root.
 - `Indexes::open(dir, meta)` writes meta when the store is new — no
   `open_or_create`. Search uses `Indexes::load(dir) -> Result<Option<_>>`,
   which never creates a store (`None` when absent).
-- Catalog knobs live on `IndexRecord`; opened indexes cannot be queried before
-  `open`.
+- `Indexes::build()` rebuilds from stored metadata: walk → `Files` → root
+  `files.bin` → each `IndexRecord` namespace → publish `CURRENT`.
+- Each kind writes only `snapshots/<id>/<kind-name>/`; shared `files.bin` and
+  `manifest.json` remain at the snapshot root.
 
 ## Adding a new index kind
 
 1. Add a typed `IndexRecord` arm with `build` / `open` / `name`.
-2. Implement opened `Index` on the kind's type.
+2. Add a `Kind` arm and dispatch its query operation in `record.rs`.
 3. Sibling module under `index/`.
 
 ## Do NOT

@@ -1,22 +1,22 @@
 # index/
 
-Uniform index kinds, snapshot persistence, and search orchestration.
+Store metadata, snapshot persistence, and search orchestration.
 
 ## Layers
 
 | Layer | Types | Role |
 |-------|-------|------|
-| Record | `IndexRecord`, opened `Index` | Catalog knobs + opened query/update |
-| Orchestrator | `Indexes`, `StoreMeta` | `open` / `build` / `update` + query/hydrate |
-| Snapshot | `Snapshot`, `Files`, `SnapshotId` | Shared file table + opened indexes |
-| Kind | `ngram::Index` | First shipped impl |
+| Metadata | `StoreMeta`, `IndexRecord` | Corpus configuration and kind catalog |
+| Orchestrator | `Indexes` | `open` / `load` / `build`, query, and hydration |
+| Snapshot storage | `SnapshotId`, `Files` | Committed artifact layout and shared file IDs |
+| Kind | `ngram::Index` | First shipped kind |
 
 ```
 index/
-  record.rs    -- IndexRecord, Index trait
-  indexes.rs   -- Indexes: build/update + query/hydrate
+  record.rs    -- IndexRecord and private Kind query dispatch
+  indexes.rs   -- Indexes: open/load/build + query/hydrate
   files.rs     -- Snapshot-owned FileId → File map
-  snapshot/    -- atomic persistence, leases, manifests
+  disk.rs      -- atomic persistence, leases, manifests
   ngram/       -- runtime-width N-gram index (default width 3)
 ```
 
@@ -24,15 +24,12 @@ index/
 
 | Module | Description |
 |--------|-------------|
-| [`record.rs`](record.rs) | `IndexRecord`, opened `Index` |
+| [`record.rs`](record.rs) | `IndexRecord`, private `Kind` |
 | [`indexes.rs`](indexes.rs) | `Indexes` orchestrator |
 | [`files.rs`](files.rs) | Snapshot `Files` |
-| [`snapshot/`](snapshot/) | Snapshot persistence |
+| [`disk.rs`](disk.rs) | Snapshot persistence |
 | [`kinds.rs`](kinds.rs) | `FileId` |
-| [`paths.rs`](paths.rs) | `IndexedCorpus` |
-| [`config.rs`](config.rs) | `IndexConfig` (corpus write inputs), `CorpusSpec` |
 | [`meta.rs`](meta.rs) | `StoreMeta` |
-| [`artifacts.rs`](artifacts.rs) | `IndexDestination` |
 | [`ngram/`](ngram/) | N-gram implementation |
 
 ## API
@@ -41,14 +38,20 @@ index/
 use sift_core::{GramWidth, IndexRecord, Indexes, StoreMeta};
 
 let mut indexes = Indexes::open(&sift_dir, &meta)?;
-let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
-indexes.build(&catalog, &config)?;
+indexes.build()?;
 ```
 
-Resolve candidates through `Plan::resolve`.
+`build()` walks the corpus configured in `StoreMeta`, writes shared
+`files.bin` at the new snapshot root, builds every `IndexRecord` beneath its
+own namespace, and atomically publishes `CURRENT`. `files.bin` uses
+`SIFTFIL2`; the store format version is 2.
+
+`Indexes::load` opens an existing store for search. Querying is dispatched
+through the private `Kind` enum in `record.rs`; `Files` hydrates the returned
+IDs. Resolve candidates through `Plan::resolve`.
 
 ## Adding a New Index Kind
 
 1. Add a typed arm on `IndexRecord` with `build` / `open`.
-2. Implement opened `Index` (`query` / `coverage` / `all_file_ids` / `update`).
+2. Add a private `Kind` arm and its query dispatch.
 3. Add a sibling module under `index/`.

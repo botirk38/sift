@@ -6,9 +6,8 @@ use sift_core::search::{
     Events, Query, SearchFlags, SearchInputs, SearchMode, SearchOptions, Searcher, StatsMode,
 };
 use sift_core::{
-    FileFilter, FileFilterConfig, CorpusKind, CorpusMeta, CorpusSpec, FilterMeta,
-    GramWidth, IndexConfig, IndexCoverage, IndexRecord, IndexWalkConfig, Indexes, Inputs, Plan,
-    StoreMeta, VisibilityConfig, WalkMeta,
+    CorpusMeta, FileFilter, FileFilterConfig, FilterMeta, GramWidth, IndexCoverage, IndexRecord,
+    Indexes, Inputs, Plan, StoreMeta, VisibilityConfig, WalkMeta,
 };
 use std::fs;
 use std::sync::OnceLock;
@@ -34,7 +33,6 @@ fn indexed() -> &'static IndexHolder {
         let meta = StoreMeta::new(
             CorpusMeta {
                 root: corpus.clone(),
-                kind: CorpusKind::Directory,
                 include_paths: Vec::new(),
                 exclude_paths: Vec::new(),
             },
@@ -52,20 +50,7 @@ fn indexed() -> &'static IndexHolder {
         );
         let mut indexes = Indexes::open(&sift_dir, &meta).expect("open_index");
         indexes.refresh_meta(&meta).expect("refresh_meta");
-        let config = IndexConfig {
-            corpus: CorpusSpec {
-                root: &corpus,
-                kind: CorpusKind::Directory,
-                follow_links: false,
-                include_paths: &[],
-                exclude_paths: &[],
-            },
-            walk: IndexWalkConfig::new(false),
-            visibility: VisibilityConfig::default(),
-        };
-        indexes
-            .build(&[IndexRecord::ngram(GramWidth::TRIGRAM)], &config)
-            .expect("build_index");
+        indexes.build().expect("build_index");
         let root = indexes.corpus_root().to_path_buf();
         IndexHolder {
             _temp: tmp,

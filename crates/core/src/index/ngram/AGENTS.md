@@ -1,27 +1,28 @@
 # AGENTS.md -- index/ngram/
 
-N-gram index implementation: corpus walk, runtime-width gram extraction, index
-building, file table, and persistence. [`Index`](index.rs) is always opened
-(required `Storage`); catalog knobs live on `IndexRecord`. Implements
-`crate::index::Index` (`query` / `coverage` / `all_file_ids` / `update`).
+Runtime-width N-gram kind implementation: gram extraction, kind-artifact
+building, persistence, and candidate narrowing. Corpus walking and the shared
+file table belong to the parent index layer.
 
 ## Key Types
 
-- `Index`: opened only; `Index::build(width, norm, dest, config)` /
-  `Index::open(width, norm, dir, root, kind)`
-- `IndexRecord::Ngram { width, norm }`: catalog entry; `build` / `open` dispatch here
+- `Index`: opened N-gram kind; `build(width, norm, dir, &Files)` /
+  `open(width, norm, dir, file_count)`
+- `IndexRecord::Ngram { width, norm }`: catalog entry; private dispatch in
+  `record.rs` builds and opens this kind
 - `GramWidth`, `GramNorm`, `Gram`, `GramWindows`: runtime-width gram domain primitives
 - `GramNorm::AsciiLower`: fold ASCII letters at index time; query-time Exact on folded literals for `-i` only
-- `IndexTables`: table builder output; reuses cached grams for unchanged files
-- `FileFingerprint`: per-file change detection data (path, mtime, size)
+- `IndexTables`: table builder output
 
 ## Conventions
 
-- File paths are always relative to the corpus root.
-- Filesystem discovery uses `walk::FileWalk`; do not add N-gram-specific walk visitors.
+- `Files` owns the shared, snapshot-wide `FileId` space. This kind reads corpus
+  bytes through it but does not persist paths or file metadata.
 - Gram extraction is parallelized via Rayon.
-- Catalog vs opened: knobs on `IndexRecord`; runtime on `ngram::Index`. No
-  knobs-only handle, no `to_record` adapter.
+- A kind writes only `lexicon.bin` and `postings.bin` in its own snapshot
+  namespace. Do not add `files.bin`, `grams.bin`, or incremental-update state.
+- `Index` is opened only. `Kind` is private to `record.rs`; there is no
+  shared `Index` trait.
 - Generic behavior is runtime-width. Do not add specialization layers until a
   measured hot path justifies them.
 - The only `unsafe` in the index crate lives in `index/mmap.rs`.
@@ -34,4 +35,4 @@ building, file table, and persistence. [`Index`](index.rs) is always opened
 - Add specialization logic before the general runtime-width implementation has
   a measured need.
 - Add `unsafe` outside `index/mmap.rs`.
-- Reintroduce `Index::new()` / knobs-only builders or optional storage.
+- Reintroduce knobs-only builders or optional storage.

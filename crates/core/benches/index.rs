@@ -9,58 +9,47 @@ use std::hint::black_box;
 use std::path::{Path, PathBuf};
 
 use sift_core::{
-    CaseMode, CorpusKind, CorpusMeta, CorpusSpec, FileFilter, FileFilterConfig, FileOrder,
-    FilterMeta, GramNorm, GramWidth, IndexConfig, IndexDestination, IndexRecord, IndexWalkConfig,
-    Indexes, NGramIndex, Plan, Query, Scan, ScanScope, SearchMode, SearchOptions, Searcher,
-    SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta,
+    CaseMode, CorpusMeta, FileFilter, FileFilterConfig, FileOrder, Files, FilterMeta, GramNorm,
+    GramWidth, IndexCoverage, IndexRecord, Indexes, NGramIndex, Plan, Query, Scan, ScanScope,
+    SearchMode, SearchOptions, Searcher, SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta,
 };
 
 mod common;
 
-fn build_index(corpus: &Path, idx_dir: &Path) -> NGramIndex {
-    let (root, kind, include_paths) = if corpus.is_file() {
-        let parent = corpus.parent().unwrap_or(corpus);
-        let filename = corpus.file_name().map(PathBuf::from).unwrap_or_default();
-        (parent, CorpusKind::SingleFile, vec![filename])
-    } else {
-        (corpus, CorpusKind::Directory, vec![])
-    };
-    let config = IndexConfig {
-        corpus: CorpusSpec {
-            root,
-            kind,
-            follow_links: false,
-            include_paths: &include_paths,
-            exclude_paths: &[],
+fn build_files(corpus: &Path, snapshot_dir: &Path) -> Files {
+    let abs_root = corpus
+        .canonicalize()
+        .unwrap_or_else(|_| corpus.to_path_buf());
+    let meta = StoreMeta::new(
+        CorpusMeta {
+            root: abs_root,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
         },
-        walk: IndexWalkConfig::new(false),
-        visibility: VisibilityConfig::default(),
-    };
-    NGramIndex::build(
-        GramWidth::TRIGRAM,
-        GramNorm::Identity,
-        IndexDestination::Directory(idx_dir),
-        &config,
-    )
-    .unwrap();
-    NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, root, kind).unwrap()
+        IndexCoverage::Complete,
+        WalkMeta {
+            follow_links: false,
+            one_file_system: false,
+            max_depth: None,
+            max_filesize: None,
+        },
+        FilterMeta {
+            visibility: VisibilityConfig::default(),
+        },
+        vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
+    );
+    fs::create_dir_all(snapshot_dir).unwrap();
+    Files::build(&meta, snapshot_dir).unwrap()
 }
 
-fn open_index(idx_dir: &Path, root: &Path, kind: CorpusKind) -> NGramIndex {
-    NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, root, kind).unwrap()
+fn build_index(corpus: &Path, idx_dir: &Path) -> NGramIndex {
+    let files = build_files(corpus, idx_dir);
+    NGramIndex::build(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, &files).unwrap();
+    NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, files.len()).unwrap()
 }
 
-fn open_large_index() -> (tempfile::TempDir, NGramIndex) {
-    let tmp = tempfile::tempdir().unwrap();
-    let corpus = tmp.path().join("corpus");
-    common::materialize_large_corpus(&corpus, 8_000, 100, 256);
-    let idx = tmp.path().join(".sift");
-    let built = build_index(&corpus, &idx);
-    let root = built.root().to_path_buf();
-    let kind = built.corpus_kind();
-    drop(built);
-    let index = open_index(&idx, &root, kind);
-    (tmp, index)
+fn open_index(idx_dir: &Path, file_count: usize) -> NGramIndex {
+    NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, file_count).unwrap()
 }
 
 fn index_candidate_vec(
@@ -89,7 +78,7 @@ fn index_candidate_vec(
 struct IndexOpenFixture {
     temp: tempfile::TempDir,
     idx_dir: std::path::PathBuf,
-    root: std::path::PathBuf,
+    file_count: usize,
 }
 
 struct SiftDirFixture {
@@ -102,7 +91,6 @@ fn default_meta(root: std::path::PathBuf) -> StoreMeta {
     StoreMeta::new(
         CorpusMeta {
             root,
-            kind: CorpusKind::Directory,
             include_paths: Vec::new(),
             exclude_paths: Vec::new(),
         },
@@ -151,7 +139,7 @@ fn make_parity_corpus(root: &Path) {
     fs::write(root.join("b/y.txt"), "gamma delta\n").unwrap();
 }
 
-fn make_single_file_corpus(root: &Path) {
+fn make_one_file_directory(root: &Path) {
     fs::create_dir_all(root).unwrap();
     fs::write(
         root.join("single.rs"),
@@ -183,35 +171,17 @@ fn materialize_monorepo_corpus(
 
 // ─── Index-only build helpers ────────────────────────────────────────────────
 
-fn standard_build_config<'a>(
-    root: &'a Path,
-    exclude_paths: &'a [std::path::PathBuf],
-) -> IndexConfig<'a> {
-    IndexConfig {
-        corpus: CorpusSpec {
-            root,
-            kind: CorpusKind::Directory,
-            follow_links: false,
-            include_paths: &[],
-            exclude_paths,
-        },
-        walk: IndexWalkConfig::new(false),
-        visibility: VisibilityConfig::default(),
-    }
-}
-
 /// Full `sift build` path via [`Indexes`] (production defaults).
 fn build_index_via_store(corpus: &Path, sift_dir: &Path) {
     let corpus_path = corpus.to_path_buf();
     let root = corpus.canonicalize().unwrap_or(corpus_path);
-    let meta = sift_core::StoreMeta::new(
+    let meta = StoreMeta::new(
         CorpusMeta {
             root,
-            kind: CorpusKind::Directory,
             include_paths: Vec::new(),
             exclude_paths: Vec::new(),
         },
-        sift_core::IndexCoverage::Complete,
+        IndexCoverage::Complete,
         WalkMeta {
             follow_links: false,
             one_file_system: false,
@@ -225,9 +195,7 @@ fn build_index_via_store(corpus: &Path, sift_dir: &Path) {
     );
     let mut indexes = Indexes::open(sift_dir, &meta).unwrap();
     indexes.refresh_meta(&meta).unwrap();
-    let config = standard_build_config(corpus, &[]);
-    let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
-    indexes.build(&catalog, &config).unwrap();
+    indexes.build().unwrap();
 }
 
 // ─── Build benchmarks ────────────────────────────────────────────────────────
@@ -235,11 +203,11 @@ fn build_index_via_store(corpus: &Path, sift_dir: &Path) {
 fn bench_index_build(c: &mut Criterion) {
     let mut g = c.benchmark_group("index_build");
 
-    g.bench_function("single_file", |b| {
+    g.bench_function("one_file_directory", |b| {
         b.iter(|| {
             let tmp = tempfile::tempdir().unwrap();
             let corpus = tmp.path().join("corpus");
-            make_single_file_corpus(&corpus);
+            make_one_file_directory(&corpus);
             let idx = tmp.path().join(".sift");
             build_index_via_store(&corpus, &idx);
         });
@@ -300,123 +268,44 @@ fn bench_index_build(c: &mut Criterion) {
     g.finish();
 }
 
-// ─── Update benchmarks ───────────────────────────────────────────────────────
+// ─── Rebuild benchmarks ──────────────────────────────────────────────────────
 
-/// Base corpus + opened index reused across incremental-update iterations.
-///
-/// The corpus is materialized once and the index built once (outside `b.iter`),
-/// so each iteration measures only the incremental update: fingerprint diff,
-/// re-reading changed files, cached-gram reuse, posting reassembly, and persist.
-struct UpdateFixture {
+struct RebuildFixture {
     _temp: tempfile::TempDir,
     corpus: PathBuf,
     out_dir: PathBuf,
-    index: NGramIndex,
 }
 
-/// Relative path of a file materialized by `common::materialize_large_corpus`.
-fn corpus_rel_path(i: usize, fanout: usize) -> PathBuf {
-    let c = i % fanout;
-    Path::new("crates")
-        .join(format!("c{c:04}"))
-        .join("src")
-        .join(format!("module_{i}.rs"))
-}
-
-/// Distinct, fixed-size body used to mutate a file so its fingerprint differs
-/// from the built index (size change forces a re-read; content is stable across
-/// iterations so update work is constant).
-fn changed_file_body(i: usize) -> String {
-    format!("// changed {i} beta RESUME ERR_SYS\nfn changed_{i}() {{ let v = {i}; }}\n")
-}
-
-fn build_update_fixture(files: usize, lines_per_file: usize, dir_fanout: usize) -> UpdateFixture {
+fn build_rebuild_fixture(files: usize, lines_per_file: usize, dir_fanout: usize) -> RebuildFixture {
     let temp = tempfile::tempdir().unwrap();
     let corpus = temp.path().join("corpus");
     common::materialize_large_corpus(&corpus, files, lines_per_file, dir_fanout);
-    let idx = temp.path().join(".sift");
-    let index = build_index(&corpus, &idx);
-    let out_dir = temp.path().join(".sift-update");
-    UpdateFixture {
+    let out_dir = temp.path().join(".sift-rebuild");
+    RebuildFixture {
         _temp: temp,
         corpus,
         out_dir,
-        index,
     }
 }
 
-fn bench_index_update(c: &mut Criterion) {
+fn bench_index_rebuild(c: &mut Criterion) {
     const FILES: usize = 2_000;
     const LINES: usize = 60;
     const FANOUT: usize = 64;
 
-    let mut g = c.benchmark_group("index_update");
+    let mut g = c.benchmark_group("index_rebuild");
 
-    g.bench_function("changed_file", |b| {
-        let fx = build_update_fixture(FILES, LINES, FANOUT);
-        let rel = corpus_rel_path(0, FANOUT);
-        fs::write(fx.corpus.join(&rel), changed_file_body(0)).unwrap();
-        let config = standard_build_config(&fx.corpus, &[]);
+    g.bench_function("full_rebuild", |b| {
+        let fx = build_rebuild_fixture(FILES, LINES, FANOUT);
         b.iter(|| {
-            black_box(
-                fx.index
-                    .update(IndexDestination::Directory(&fx.out_dir), &config)
-                    .unwrap(),
-            );
-        });
-    });
-
-    g.bench_function("added_file", |b| {
-        let fx = build_update_fixture(FILES, LINES, FANOUT);
-        let rel = Path::new("crates")
-            .join("c0000")
-            .join("src")
-            .join("added.rs");
-        fs::write(fx.corpus.join(&rel), changed_file_body(99_999)).unwrap();
-        let config = standard_build_config(&fx.corpus, &[]);
-        b.iter(|| {
-            black_box(
-                fx.index
-                    .update(IndexDestination::Directory(&fx.out_dir), &config)
-                    .unwrap(),
-            );
-        });
-    });
-
-    g.bench_function("deleted_file", |b| {
-        let fx = build_update_fixture(FILES, LINES, FANOUT);
-        fs::remove_file(fx.corpus.join(corpus_rel_path(1, FANOUT))).unwrap();
-        // Deletion is detected by a full corpus rescan.
-        let config = standard_build_config(&fx.corpus, &[]);
-        b.iter(|| {
-            black_box(
-                fx.index
-                    .update(IndexDestination::Directory(&fx.out_dir), &config)
-                    .unwrap(),
-            );
-        });
-    });
-
-    g.bench_function("many_small_changes", |b| {
-        let fx = build_update_fixture(FILES, LINES, FANOUT);
-        for i in 0..50 {
-            let rel = corpus_rel_path(i, FANOUT);
-            fs::write(fx.corpus.join(&rel), changed_file_body(i)).unwrap();
-        }
-        let config = standard_build_config(&fx.corpus, &[]);
-        b.iter(|| {
-            black_box(
-                fx.index
-                    .update(IndexDestination::Directory(&fx.out_dir), &config)
-                    .unwrap(),
-            );
+            let files = build_files(&fx.corpus, &fx.out_dir);
+            NGramIndex::build(GramWidth::TRIGRAM, GramNorm::Identity, &fx.out_dir, &files).unwrap();
+            black_box(files.len());
         });
     });
 
     g.finish();
 }
-
-// ─── Open benchmarks ─────────────────────────────────────────────────────────
 
 fn bench_index_open(c: &mut Criterion) {
     let mut g = c.benchmark_group("index_open");
@@ -427,21 +316,17 @@ fn bench_index_open(c: &mut Criterion) {
             let corpus = tmp.path().join("corpus");
             make_parity_corpus(&corpus);
             let idx = tmp.path().join(".sift");
-            let built = build_index(&corpus, &idx);
-            let root = built.root().to_path_buf();
-            drop(built);
+            let files = build_files(&corpus, &idx);
+            let file_count = files.len();
+            build_index(&corpus, &idx);
             IndexOpenFixture {
                 temp: tmp,
                 idx_dir: idx,
-                root,
+                file_count,
             }
         };
         b.iter(|| {
-            black_box(open_index(
-                &fixture.idx_dir,
-                &fixture.root,
-                CorpusKind::Directory,
-            ));
+            black_box(open_index(&fixture.idx_dir, fixture.file_count));
         });
     });
 
@@ -451,21 +336,17 @@ fn bench_index_open(c: &mut Criterion) {
             let corpus = tmp.path().join("corpus");
             common::materialize_large_corpus(&corpus, 8_000, 100, 256);
             let idx = tmp.path().join(".sift");
-            let built = build_index(&corpus, &idx);
-            let root = built.root().to_path_buf();
-            drop(built);
+            let files = build_files(&corpus, &idx);
+            let file_count = files.len();
+            build_index(&corpus, &idx);
             IndexOpenFixture {
                 temp: tmp,
                 idx_dir: idx,
-                root,
+                file_count,
             }
         };
         b.iter(|| {
-            black_box(open_index(
-                &fixture.idx_dir,
-                &fixture.root,
-                CorpusKind::Directory,
-            ));
+            black_box(open_index(&fixture.idx_dir, fixture.file_count));
         });
     });
 
@@ -498,7 +379,6 @@ fn bench_indexes_open(c: &mut Criterion) {
             let meta = StoreMeta::new(
                 CorpusMeta {
                     root,
-                    kind: CorpusKind::Directory,
                     include_paths: Vec::new(),
                     exclude_paths: Vec::new(),
                 },
@@ -516,23 +396,7 @@ fn bench_indexes_open(c: &mut Criterion) {
             );
             let mut indexes = Indexes::open(&sift, &meta).expect("open indexes");
             indexes.refresh_meta(&meta).expect("refresh meta");
-            let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
-            indexes
-                .build(
-                    &catalog,
-                    &IndexConfig {
-                        corpus: CorpusSpec {
-                            root: &corpus,
-                            kind: CorpusKind::Directory,
-                            follow_links: false,
-                            include_paths: &[],
-                            exclude_paths: &[],
-                        },
-                        walk: IndexWalkConfig::new(false),
-                        visibility: VisibilityConfig::default(),
-                    },
-                )
-                .expect("build");
+            indexes.build().expect("build");
             drop(indexes);
             SiftDirFixture {
                 temp: tmp,
@@ -559,31 +423,11 @@ fn bench_index_save_reopen(c: &mut Criterion) {
         make_parity_corpus(&corpus);
         let idx_dir = tmp.path().join(".sift");
         let index = build_index(&corpus, &idx_dir);
-        let root = index.root().to_path_buf();
-        let kind = index.corpus_kind();
+        let file_count = index.file_count();
         drop(index);
         b.iter(|| {
-            black_box(open_index(&idx_dir, &root, kind));
+            black_box(open_index(&idx_dir, file_count));
         });
-    });
-
-    g.finish();
-}
-
-// ─── Trigram-specialized N-gram method benches ───────────────────────────────
-
-fn bench_trigram_index_methods(c: &mut Criterion) {
-    let fixture = open_large_index();
-    let index = fixture.1;
-
-    let mut g = c.benchmark_group("trigram_index");
-
-    g.bench_function("file_path", |b| {
-        b.iter(|| black_box(index.file_path(sift_core::FileId::new(0))));
-    });
-
-    g.bench_function("file_abs_path", |b| {
-        b.iter(|| black_box(index.file_abs_path(sift_core::FileId::new(0))));
     });
 
     g.finish();
@@ -685,6 +529,6 @@ fn bench_candidates(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = sift_criterion();
-    targets = bench_index_build, bench_index_update, bench_index_open, bench_indexes_open, bench_index_save_reopen, bench_trigram_index_methods, bench_candidates,
+    targets = bench_index_build, bench_index_rebuild, bench_index_open, bench_indexes_open, bench_index_save_reopen, bench_candidates,
 }
 criterion_main!(benches);

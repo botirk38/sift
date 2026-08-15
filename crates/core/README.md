@@ -5,28 +5,33 @@ run regex or fixed-string queries with automatic candidate narrowing.
 
 ## Index architecture
 
-Every kind implements the `Index` trait; `Indexes` builds/updates snapshots and
-intersects `query` results at search time.
+`StoreMeta` defines the corpus and catalog. `Indexes::build()` walks that
+corpus, writes one shared `files.bin`, builds each `IndexRecord` beneath its
+snapshot namespace, and atomically publishes `CURRENT`. Query dispatch uses the
+private `Kind` enum in `record.rs`; `Indexes` intersects kind results.
+
+The current store format is version 2. Each committed snapshot has
+`files.bin` (`SIFTFIL2`) and `manifest.json` at its root; each kind writes only
+under `snapshots/<id>/<kind-name>/`.
 
 ```
-IndexRecord / Box<dyn Index> ──Indexes::build──> snapshot on disk
-                                      │
-                              Indexes::open
-                                      │
-                                 Indexes
-                                      │
-                Plan::new → Plan::resolve
-                                      │
-                            Searcher::execute
+StoreMeta + IndexRecord ──Indexes::build──> snapshot on disk
+                                        │
+                                Indexes::open/load
+                                        │
+                                    Indexes
+                                        │
+                  Plan::new → Plan::resolve
+                                        │
+                              Searcher::execute
 ```
 
 | Type | Role |
 |------|------|
-| `Index` | Opened kind (`query` / `coverage` / `all_file_ids` / `update`) |
-| `IndexRecord` | Typed catalog knobs (`build` / `open`) |
+| `StoreMeta` | Persistent corpus, walk, filter, coverage, and catalog configuration |
+| `IndexRecord` | Typed catalog entry; builds and privately opens a kind |
 | `Files` | Snapshot-owned `FileId → File` map |
-| `IndexConfig` | Corpus/walk/visibility for a write |
-| `Indexes` | Build/update + query/hydrate |
+| `Indexes` | Open/load/build + query/hydrate |
 | `Query` / `Searcher` | Patterns + execute |
 | `Plan` / `Candidates` | Pure plan then resolve |
 
@@ -34,7 +39,7 @@ IndexRecord / Box<dyn Index> ──Indexes::build──> snapshot on disk
 
 | Module | Description |
 |--------|-------------|
-| [`index/`](src/index/) | Record, Files, Snapshot, Indexes |
+| [`index/`](src/index/) | Metadata, records, files, disk snapshots, Indexes |
 | [`index/ngram/`](src/index/ngram/) | N-gram index implementation |
 | [`search/`](src/search/) | Query, Searcher, inputs, events |
 | [`candidates/`](src/candidates/) | Planning and resolution |

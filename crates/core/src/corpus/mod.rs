@@ -11,4 +11,4 @@ pub use filter::{
     IgnoreSources, TypeFilterRule, VisibilityConfig,
 };
 pub use order::{FileOrder, FileOrderDirection, FileOrderKey};
-pub use walk::{AllFiles, FileWalk, WalkFile, WalkMetadata, WalkSelector};
+pub use walk::{FileWalk, WalkFile, WalkMetadata};

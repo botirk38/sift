@@ -13,8 +13,8 @@ use std::io::Write;
 use std::path::Path;
 
 use sift_core::{
-    CorpusKind, CorpusMeta, CorpusSpec, FilterMeta, GramWidth, IndexConfig, IndexCoverage,
-    IndexRecord, IndexWalkConfig, Indexes, StoreMeta, VisibilityConfig, WalkMeta,
+    CorpusMeta, FilterMeta, GramWidth, IndexCoverage, IndexRecord, Indexes, StoreMeta,
+    VisibilityConfig, WalkMeta,
 };
 
 // ─── Corpus materializers ────────────────────────────────────────────────────
@@ -84,7 +84,6 @@ fn build_index_store(corpus: &Path, sift_dir: &Path) {
     let meta = StoreMeta::new(
         CorpusMeta {
             root,
-            kind: CorpusKind::Directory,
             include_paths: Vec::new(),
             exclude_paths: Vec::new(),
         },
@@ -102,19 +101,7 @@ fn build_index_store(corpus: &Path, sift_dir: &Path) {
     );
     let mut indexes = Indexes::open(sift_dir, &meta).unwrap();
     indexes.refresh_meta(&meta).unwrap();
-    let config = IndexConfig {
-        corpus: CorpusSpec {
-            root: corpus,
-            kind: CorpusKind::Directory,
-            follow_links: false,
-            include_paths: &[],
-            exclude_paths: &[],
-        },
-        walk: IndexWalkConfig::new(false),
-        visibility: VisibilityConfig::default(),
-    };
-    let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
-    indexes.build(&catalog, &config).unwrap();
+    indexes.build().unwrap();
 }
 
 pub fn open_large_indexes() -> (tempfile::TempDir, Indexes) {

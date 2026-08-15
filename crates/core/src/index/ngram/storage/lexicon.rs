@@ -5,7 +5,6 @@ use std::path::Path;
 use crate::index::mmap::mmap_open;
 use crate::index::ngram::gram::{Gram, GramWidth};
 use crate::index::ngram::storage::format::LEXICON_MAGIC;
-use crate::index::snapshot::ArtifactData;
 
 use super::{read_u32_le, read_u64_le};
 
@@ -20,21 +19,12 @@ pub struct LexiconEntry {
 #[derive(Debug)]
 pub struct Lexicon {
     width: GramWidth,
-    data: ArtifactData,
+    data: memmap2::Mmap,
     count: usize,
 }
 
 impl Lexicon {
     const HEADER_SIZE: usize = 12;
-
-    #[must_use]
-    pub fn empty(width: GramWidth) -> Self {
-        Self {
-            width,
-            data: ArtifactData::Memory(Vec::new().into()),
-            count: 0,
-        }
-    }
 
     const fn entry_size(width: GramWidth) -> usize {
         width.get() + 12
@@ -68,18 +58,7 @@ impl Lexicon {
     }
 
     fn bytes(&self) -> &[u8] {
-        self.data.as_ref()
-    }
-
-    /// Validate and wrap in-memory or mmap artifact bytes as a lexicon.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the header or entries are invalid.
-    pub fn from_artifact(data: ArtifactData, width: GramWidth) -> std::io::Result<Self> {
-        let bytes = data.as_ref();
-        let count = Self::validate(bytes, width)?;
-        Ok(Self { width, data, count })
+        &self.data
     }
 
     /// Write a lexicon to a file and return a memory-mapped instance.
@@ -104,7 +83,12 @@ impl Lexicon {
     /// Returns an error if the file cannot be opened or the format is invalid.
     pub fn open(path: &Path, width: GramWidth) -> std::io::Result<Self> {
         let mmap = mmap_open(path)?;
-        Self::from_artifact(ArtifactData::Mmap(mmap), width)
+        let count = Self::validate(&mmap, width)?;
+        Ok(Self {
+            width,
+            data: mmap,
+            count,
+        })
     }
 
     fn validate(bytes: &[u8], width: GramWidth) -> std::io::Result<usize> {

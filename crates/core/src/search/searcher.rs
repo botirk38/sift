@@ -4,14 +4,14 @@ use std::time::Instant;
 use rayon::prelude::*;
 
 use crate::Error;
-use crate::candidates::{Candidates, CandidatesInner};
+use crate::candidates::{Candidates, CandidatesOrigin};
 use crate::corpus::File;
 use crate::corpus::filter::{FileFilter, FilterAdmission};
 use crate::index::{FileId, Indexes};
 use crate::search::error::Error as SearchError;
 use crate::search::event::Events;
 use crate::search::input::{Input, Inputs, SearchInputs};
-use crate::search::matcher::{Matcher, MatcherBuilder};
+use crate::search::matcher::Matcher;
 use crate::search::mode::SearchMode;
 use crate::search::options::{SearchBound, SearchOptions};
 use crate::search::query::Query;
@@ -32,7 +32,7 @@ impl Searcher {
     ///
     /// Returns an error if matcher construction fails.
     pub fn new(query: Query) -> Result<Self, SearchError> {
-        let matcher = MatcherBuilder::new(&query).build()?;
+        let matcher = Matcher::compile(&query)?;
         let query = query.with_engine(matcher.resolved_engine());
         Ok(Self { query, matcher })
     }
@@ -134,10 +134,10 @@ impl Searcher {
         buffer: Buffer,
     ) -> crate::Result<(Vec<FileSearch>, usize, u64)> {
         match candidates.0 {
-            CandidatesInner::Resolved(items) => {
+            CandidatesOrigin::Walk(items) => {
                 Ok(self.search_resolved(&items, explicit, mode, buffer))
             }
-            CandidatesInner::Indexed {
+            CandidatesOrigin::Index {
                 indexes,
                 file_ids,
                 filter,
@@ -153,7 +153,7 @@ impl Searcher {
                 mode,
                 buffer,
             ),
-            CandidatesInner::Mixed {
+            CandidatesOrigin::Merge {
                 indexes,
                 file_ids,
                 filter,

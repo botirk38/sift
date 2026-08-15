@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use sift_core::{
-    CorpusKind, CorpusSpec, GramNorm, GramWidth, IndexConfig, IndexWalkConfig, NGramIndex,
-    VisibilityConfig,
+    CorpusMeta, Files, FilterMeta, GramNorm, GramWidth, IndexCoverage, IndexRecord, NGramIndex,
+    StoreMeta, VisibilityConfig, WalkMeta,
 };
 
 /// Dimensions of a synthetic on-disk corpus.
@@ -144,36 +144,35 @@ pub fn materialize_scale(root: &Path, scale: CorpusScale) {
 
 /// Trigram-specialized N-gram tables written directly under `idx_dir`.
 pub fn build_index(corpus: &Path, idx_dir: &Path) -> NGramIndex {
-    let (root, kind, include_paths) = if corpus.is_file() {
-        let parent = corpus.parent().unwrap_or(corpus);
-        let filename = corpus.file_name().map(PathBuf::from).unwrap_or_default();
-        (parent, CorpusKind::SingleFile, vec![filename])
-    } else {
-        (corpus, CorpusKind::Directory, vec![])
-    };
-    let config = IndexConfig {
-        corpus: CorpusSpec {
-            root,
-            kind,
-            follow_links: false,
-            include_paths: &include_paths,
-            exclude_paths: &[],
+    let abs_root = corpus
+        .canonicalize()
+        .unwrap_or_else(|_| corpus.to_path_buf());
+    let meta = StoreMeta::new(
+        CorpusMeta {
+            root: abs_root,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
         },
-        walk: IndexWalkConfig::new(false),
-        visibility: VisibilityConfig::default(),
-    };
-    NGramIndex::build(
-        GramWidth::TRIGRAM,
-        GramNorm::Identity,
-        sift_core::IndexDestination::Directory(idx_dir),
-        &config,
-    )
-    .unwrap();
-    NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, root, kind).unwrap()
+        IndexCoverage::Complete,
+        WalkMeta {
+            follow_links: false,
+            one_file_system: false,
+            max_depth: None,
+            max_filesize: None,
+        },
+        FilterMeta {
+            visibility: VisibilityConfig::default(),
+        },
+        vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
+    );
+    fs::create_dir_all(idx_dir).unwrap();
+    let files = Files::build(&meta, idx_dir).unwrap();
+    NGramIndex::build(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, &files).unwrap();
+    NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, files.len()).unwrap()
 }
 
-pub fn open_index(idx_dir: &Path, root: &Path, kind: CorpusKind) -> NGramIndex {
-    NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, root, kind).unwrap()
+pub fn open_index(idx_dir: &Path, file_count: usize) -> NGramIndex {
+    NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, file_count).unwrap()
 }
 
 fn workspace_target_dir() -> PathBuf {
@@ -204,7 +203,8 @@ fn ensure_cached_search_fixture(scale: CorpusScale) -> PathBuf {
         root.display()
     );
     materialize_scale(&corpus, scale);
-    let _ = build_index(&corpus, &idx);
+    let index = build_index(&corpus, &idx);
+    fs::write(root.join("FILE_COUNT"), index.file_count().to_string()).unwrap();
     fs::write(&ready, b"ok\n").unwrap();
     root
 }
@@ -236,6 +236,38 @@ pub fn large_fixture_paths() -> LargeFixturePaths {
 /// `$CARGO_TARGET_DIR/sift-bench-fixtures/` and is reused across runs.
 pub fn open_large_index() -> (PathBuf, NGramIndex) {
     let paths = large_fixture_paths();
-    let index = open_index(&paths.index_dir, &paths.corpus, CorpusKind::Directory);
+    let root = paths
+        .index_dir
+        .parent()
+        .expect("index_dir has parent");
+    let file_count = fs::read_to_string(root.join("FILE_COUNT"))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or_else(|| {
+            // Rebuild FILE_COUNT for fixtures materialized before this field existed.
+            let files = Files::build(&StoreMeta::new(
+                CorpusMeta {
+                    root: paths.corpus.clone(),
+                    include_paths: Vec::new(),
+                    exclude_paths: Vec::new(),
+                },
+                IndexCoverage::Complete,
+                WalkMeta {
+                    follow_links: false,
+                    one_file_system: false,
+                    max_depth: None,
+                    max_filesize: None,
+                },
+                FilterMeta {
+                    visibility: VisibilityConfig::default(),
+                },
+                vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
+            ), &paths.index_dir)
+            .unwrap();
+            let n = files.len();
+            let _ = fs::write(root.join("FILE_COUNT"), n.to_string());
+            n
+        });
+    let index = open_index(&paths.index_dir, file_count);
     (paths.corpus, index)
 }

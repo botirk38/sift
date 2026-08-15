@@ -1,6 +1,4 @@
-//! Shared magic bytes.
+//! Shared magic bytes for N-gram kind artifacts.
 
-pub const FILES_MAGIC: [u8; 8] = *b"SIFTFIL1";
 pub const LEXICON_MAGIC: [u8; 8] = *b"SIFTLEX2";
 pub const POSTINGS_MAGIC: [u8; 8] = *b"SIFTPST3";
-pub const GRAMS_MAGIC: [u8; 8] = *b"SIFTGRM1";

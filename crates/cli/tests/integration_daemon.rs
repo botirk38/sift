@@ -22,8 +22,8 @@ use common::normalize_stderr;
 use common::normalize_stdout;
 use sift_core::VisibilityConfig;
 use sift_core::{
-    CorpusKind, CorpusMeta, FilterMeta, GramWidth, IndexCoverage, IndexRecord, Indexes, SnapshotId,
-    StoreMeta, WalkMeta,
+    CorpusMeta, FilterMeta, GramWidth, IndexCoverage, IndexRecord, Indexes, SnapshotId, StoreMeta,
+    WalkMeta,
 };
 use sift_grep::index::daemon::{Daemon, DaemonOrchestrator, ServeConfig};
 
@@ -62,7 +62,6 @@ fn sample_meta(root: PathBuf) -> StoreMeta {
     StoreMeta::new(
         CorpusMeta {
             root,
-            kind: CorpusKind::Directory,
             include_paths: Vec::new(),
             exclude_paths: Vec::new(),
         },
@@ -122,9 +121,11 @@ where
 
 fn path_indexed(sift_dir: &Path, rel: &str) -> bool {
     StoreMeta::read(sift_dir).ok().is_some_and(|meta| {
-        Indexes::open(sift_dir, &meta)
-            .ok()
-            .is_some_and(|indexes| indexes.indexed_corpus().contains(Path::new(rel)))
+        Indexes::open(sift_dir, &meta).ok().is_some_and(|indexes| {
+            indexes
+                .files()
+                .is_some_and(|files| files.contains(Path::new(rel)))
+        })
     })
 }
 

@@ -6,8 +6,8 @@ use sift_core::{FilterAdmission, GramWidth, IndexRecord, Indexes};
 use tempfile::TempDir;
 
 use super::common::{
-    build_indexes, index_candidates, make_filter_corpus, no_ignore_build_config, open_indexes,
-    sample_store_meta,
+    build_indexes, index_candidates, make_filter_corpus, open_indexes, sample_store_meta,
+    sample_store_meta_no_ignore,
 };
 
 fn candidate_paths(
@@ -54,12 +54,10 @@ fn empty_ignore_sources_indexes_gitignored_paths() {
     let sift_dir = tmp.path().join(".sift");
     let tmp_path = tmp.path().to_path_buf();
     let root = tmp_path.canonicalize().unwrap_or(tmp_path);
-    let meta = sample_store_meta(root, vec![IndexRecord::ngram(GramWidth::TRIGRAM)]);
+    let meta = sample_store_meta_no_ignore(root, vec![IndexRecord::ngram(GramWidth::TRIGRAM)]);
     let mut indexes = Indexes::open(&sift_dir, &meta).expect("open");
     indexes.refresh_meta(&meta).expect("refresh meta");
-    let config = no_ignore_build_config(tmp.path(), &[]);
-    let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
-    indexes.build(&catalog, &config).expect("build");
+    indexes.build().expect("build");
     drop(indexes);
 
     let indexes = open_indexes(&sift_dir);
@@ -108,13 +106,7 @@ fn build_respects_hidden_files_by_default() {
     let meta = sample_store_meta(root, vec![IndexRecord::ngram(GramWidth::TRIGRAM)]);
     let mut indexes = Indexes::open(sift_dir.path(), &meta).expect("open");
     indexes.refresh_meta(&meta).expect("refresh meta");
-    let catalog = [IndexRecord::ngram(GramWidth::TRIGRAM)];
-    indexes
-        .build(
-            &catalog,
-            &super::common::standard_build_config(corpus.path(), &[]),
-        )
-        .expect("build");
+    indexes.build().expect("build");
     drop(indexes);
 
     let indexes = Indexes::open(sift_dir.path(), &meta).expect("open");

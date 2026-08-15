@@ -1,6 +1,5 @@
 mod event;
 pub mod output;
-pub mod printer;
 pub mod sink;
 
 pub use output::format::{ColumnLimit, ColumnOverflow};
@@ -11,4 +10,3 @@ pub use output::style::{
     PrintSeparators, RecordTerminator,
 };
 pub use output::{PrintFormat, PrintSpec};
-pub use printer::SearchPrinter;
