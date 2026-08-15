@@ -123,7 +123,6 @@ fn count_mode_narrows_indexed_candidates() {
     );
 }
 
-
 #[test]
 fn stats_with_files_with_matches_reports_presence_tally() {
     let p = TestProject::new("stats-l-presence");
