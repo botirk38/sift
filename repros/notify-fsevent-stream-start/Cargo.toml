@@ -1,0 +1,13 @@
+[package]
+name = "notify-fsevent-stream-start-repro"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Minimal repro for notify FSEventStreamStart failures on macOS"
+
+[[bin]]
+name = "notify-fsevent-stream-start-repro"
+path = "src/main.rs"
+
+[dependencies]
+notify = "9.0.0-rc.4"
