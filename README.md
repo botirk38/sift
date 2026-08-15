@@ -62,17 +62,17 @@ Linux kernel source tree, 79K files, 1.3 GB. End-to-end CLI wall-clock (includes
 
 ## Architecture
 
-Sift is built around **composable on-disk indexes**. `StoreMeta` and `IndexRecord` configure the catalog; `Indexes::build` publishes snapshots and `Indexes::load` / `open` serve query-time narrowing. `Plan::resolve` produces candidates; `Searcher` runs the regex scan.
+Sift is built around **composable on-disk indexes**. `StoreMeta` configures a catalog of `IndexRecord`s; `Indexes::build` publishes snapshots and `Indexes::open` / `load` serve query-time narrowing. `Plan::resolve` produces candidates; `Searcher` runs the regex scan.
 
 ```
-  pattern --> Planner --> [ngram-3] [Future Index B] [Future Index C]
+  pattern --> Plan --> [ngram-3] [Future Index B] [Future Index C]
                               \           |            /
                                intersect / union
                                       |
                               candidate set --> regex scan
 ```
 
-Today the default configured index is `ngram-3`, a runtime-width N-gram index. Adding a new index family means adding configured identity plus opened runtime dispatch while leaving the planner, search engine, and CLI flow unchanged.
+Today the default configured index is `ngram-3`, a runtime-width N-gram index. Adding a new index family means adding configured identity plus opened runtime dispatch while leaving planning, search execution, and the CLI flow unchanged.
 
 ## Project Layout
 
