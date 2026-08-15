@@ -48,6 +48,51 @@ fn json_emits_begin_match_end_and_summary() {
 }
 
 #[test]
+fn json_omits_begin_end_for_zero_match_files() {
+    let p = TestProject::new("json-zero-match");
+    p.write("hit.txt", "needle here\n");
+    p.write("miss.txt", "nothing relevant\n");
+    p.build_index();
+
+    let output = p.index_output(["needle", "--json", "hit.txt", "miss.txt"]);
+    assert_success(&output);
+    let lines = json_lines(&output);
+    let types: Vec<&str> = lines
+        .iter()
+        .map(|line| line["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        types,
+        ["begin", "match", "end", "summary"],
+        "expected begin/match/end only for the matching file; got {lines:?}"
+    );
+    assert!(
+        lines[0]["data"]["path"]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with("hit.txt"),
+        "begin path should be hit.txt: {}",
+        lines[0]
+    );
+    assert!(
+        lines[2]["data"]["path"]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with("hit.txt"),
+        "end path should be hit.txt: {}",
+        lines[2]
+    );
+    for line in &lines {
+        if let Some(path) = line.pointer("/data/path/text").and_then(|v| v.as_str()) {
+            assert!(
+                !path.ends_with("miss.txt"),
+                "zero-match file must not appear in JSON events: {line}"
+            );
+        }
+    }
+}
+
+#[test]
 fn json_emits_context_events_with_empty_submatches() {
     let p = TestProject::new("json-context");
     p.write("a.txt", "before\nhello world\nafter\n");
