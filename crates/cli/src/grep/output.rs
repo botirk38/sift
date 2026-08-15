@@ -541,9 +541,13 @@ impl OutputDecl {
         }
     }
 
+    /// Whether to print human `--stats` lines after the search.
+    ///
+    /// Independent of [`Self::format`]: `--json` still collects summary stats for
+    /// JSON events, but does not print these lines unless `--stats` is set.
     #[must_use]
-    pub const fn print_stats(output_argv: &OutputArgv, mode: SearchMode) -> bool {
-        output_argv.mode.stats || matches!(Self::format(output_argv, mode), PrintFormat::Json)
+    pub const fn print_stats(output_argv: &OutputArgv) -> bool {
+        output_argv.mode.stats
     }
 
     pub fn write_stats(stats: &Stats) {
