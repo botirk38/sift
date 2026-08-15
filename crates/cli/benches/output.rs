@@ -52,7 +52,7 @@ pub fn bench(c: &mut Criterion) {
                 SearchMode::Lines,
                 Quiet::Off,
                 None,
-                FilenameContext::DirectoryCorpus,
+                FilenameContext::Directory,
             ))
         });
     });

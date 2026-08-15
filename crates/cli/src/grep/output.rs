@@ -14,7 +14,7 @@ use std::process::Command;
 #[derive(Clone, Copy)]
 pub enum FilenameContext {
     PathMode,
-    DirectoryCorpus,
+    Directory,
     SingleStream,
 }
 

@@ -273,7 +273,7 @@ impl Run {
         } else if !sources.stdin_bytes.is_empty() && sources.paths.is_empty() {
             FilenameContext::SingleStream
         } else {
-            FilenameContext::DirectoryCorpus
+            FilenameContext::Directory
         }
     }
 
