@@ -168,6 +168,9 @@ impl Indexes {
             let ns = txn.namespace_dir(&record.name())?;
             record.build(&ns, &files)?;
         }
+        // Release the files.bin mmap before renaming the snapshot temp dir.
+        // Windows denies directory rename while a mapping is open (ERROR_ACCESS_DENIED).
+        drop(files);
 
         let manifest = SnapshotManifest::new(txn.id().clone(), records);
         let id = writer.publish(txn, &manifest)?;
