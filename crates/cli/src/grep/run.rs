@@ -167,14 +167,14 @@ impl Run {
         let scan = Self::scan(&session, scan_scope);
 
         // Collect stats for `--stats` (human lines) and for `--json` (summary /
-        // end events). Human stderr lines stay opt-in via `--stats` only.
-        let print_stats = OutputDecl::print_stats(output_argv);
-        let stats =
-            if print_stats || matches!(OutputDecl::format(output_argv, mode), PrintFormat::Json) {
-                sift_core::StatsMode::On
-            } else {
-                sift_core::StatsMode::Off
-            };
+        // end events). Human stderr lines are text-only (`--stats` without JSON).
+        let format = OutputDecl::format(output_argv, mode);
+        let print_stats = OutputDecl::print_stats(output_argv, format);
+        let stats = if print_stats || matches!(format, PrintFormat::Json) {
+            sift_core::StatsMode::On
+        } else {
+            sift_core::StatsMode::Off
+        };
         let query = {
             let query = if matches!(mode, SearchMode::Paths) {
                 Query::new(vec![".".to_string()], SearchOptions::default())
