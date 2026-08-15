@@ -122,10 +122,10 @@ impl Cli {
         let mut patterns = self.patterns.clone();
         let mut paths = self.search_scope.paths.clone();
         let explicit = !patterns.regexp.is_empty() || patterns.pattern_file.is_some();
-        if explicit {
-            if let Some(positional) = patterns.pattern.take() {
-                paths.insert(0, PathBuf::from(positional));
-            }
+        if explicit
+            && let Some(positional) = patterns.pattern.take()
+        {
+            paths.insert(0, PathBuf::from(positional));
         }
         (patterns, paths)
     }
