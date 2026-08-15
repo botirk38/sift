@@ -83,7 +83,9 @@ fn scoped_directory_indexes_correctly() {
         },
         vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
     );
-    let files = Files::build(&meta).expect("files");
+    let snapshot = tmp.path().join("snapshot");
+    fs::create_dir(&snapshot).expect("snapshot");
+    let files = Files::build(&meta, &snapshot).expect("files");
     let trigram_dir = tmp.path().join("trigram");
     NGramIndex::build(GramWidth::TRIGRAM, GramNorm::Identity, &trigram_dir, &files).expect("build");
     let index = NGramIndex::open(

@@ -16,7 +16,7 @@ use sift_core::{
 
 mod common;
 
-fn build_files(corpus: &Path) -> Files {
+fn build_files(corpus: &Path, snapshot_dir: &Path) -> Files {
     let abs_root = corpus
         .canonicalize()
         .unwrap_or_else(|_| corpus.to_path_buf());
@@ -38,11 +38,12 @@ fn build_files(corpus: &Path) -> Files {
         },
         vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
     );
-    Files::build(&meta).unwrap()
+    fs::create_dir_all(snapshot_dir).unwrap();
+    Files::build(&meta, snapshot_dir).unwrap()
 }
 
 fn build_index(corpus: &Path, idx_dir: &Path) -> NGramIndex {
-    let files = build_files(corpus);
+    let files = build_files(corpus, idx_dir);
     NGramIndex::build(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, &files).unwrap();
     NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, files.len()).unwrap()
 }
@@ -297,7 +298,7 @@ fn bench_index_rebuild(c: &mut Criterion) {
     g.bench_function("full_rebuild", |b| {
         let fx = build_rebuild_fixture(FILES, LINES, FANOUT);
         b.iter(|| {
-            let files = build_files(&fx.corpus);
+            let files = build_files(&fx.corpus, &fx.out_dir);
             NGramIndex::build(GramWidth::TRIGRAM, GramNorm::Identity, &fx.out_dir, &files).unwrap();
             black_box(files.len());
         });
@@ -315,7 +316,7 @@ fn bench_index_open(c: &mut Criterion) {
             let corpus = tmp.path().join("corpus");
             make_parity_corpus(&corpus);
             let idx = tmp.path().join(".sift");
-            let files = build_files(&corpus);
+            let files = build_files(&corpus, &idx);
             let file_count = files.len();
             build_index(&corpus, &idx);
             IndexOpenFixture {
@@ -335,7 +336,7 @@ fn bench_index_open(c: &mut Criterion) {
             let corpus = tmp.path().join("corpus");
             common::materialize_large_corpus(&corpus, 8_000, 100, 256);
             let idx = tmp.path().join(".sift");
-            let files = build_files(&corpus);
+            let files = build_files(&corpus, &idx);
             let file_count = files.len();
             build_index(&corpus, &idx);
             IndexOpenFixture {

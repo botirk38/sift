@@ -159,11 +159,10 @@ impl Indexes {
     /// Returns an error if walking, building, or publishing fails.
     pub fn build(&mut self) -> crate::Result<String> {
         let records = self.meta.indexes.clone();
-        let files = Files::build(&self.meta)?;
 
         let mut writer = self.store.writer()?;
         let txn = writer.begin()?;
-        files.write(txn.dir())?;
+        let files = Files::build(&self.meta, txn.dir())?;
 
         for record in &records {
             let ns = txn.namespace_dir(&record.name())?;

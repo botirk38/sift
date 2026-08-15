@@ -23,7 +23,7 @@ not expose `reconcile`, `unindexed_hit_paths`, or walk-merge helpers on
 - `StoreMeta` — persistent corpus, walk, filtering, coverage, and catalog configuration
 - `IndexRecord` — typed catalog entry; builds kind artifacts and privately opens a kind
 - `Indexes` — store orchestrator over one `.sift` directory
-- `Files` — snapshot-owned `FileId → File` hydration
+- `Files` — snapshot-owned mmap-backed `FileId → File` hydration
 - `SnapshotId` — opaque committed snapshot identity
 
 `Kind` in `record.rs` is private. It dispatches queries to runtime kinds; there
@@ -34,7 +34,8 @@ is no public index trait or public snapshot type.
 - Search and candidates use `Indexes`, never N-gram internals.
 - Kind queries may over-return but must not under-return; when narrowing is not
   possible, they return every shared file ID.
-- `Files` is the single shared `FileId` space and lives at the snapshot root.
+- `Files` is the single shared mmap-backed `FileId` space and lives at the
+  snapshot root.
 - `Indexes::open(dir, meta)` writes meta when the store is new — no
   `open_or_create`. Search uses `Indexes::load(dir) -> Result<Option<_>>`,
   which never creates a store (`None` when absent).

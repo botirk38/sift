@@ -227,7 +227,9 @@ mod tests {
         let tmp = TempDir::new().expect("tmp");
         fs::write(tmp.path().join("a.rs"), b"fn foo() {}").expect("write");
         fs::write(tmp.path().join("b.rs"), b"fn bar() {}").expect("write");
-        let files = Files::build(&meta_for(tmp.path().to_path_buf())).expect("files");
+        let snapshot = tmp.path().join("snapshot");
+        fs::create_dir(&snapshot).expect("snapshot");
+        let files = Files::build(&meta_for(tmp.path().to_path_buf()), &snapshot).expect("files");
         let tables =
             IndexTables::assemble(GramWidth::TRIGRAM, GramNorm::Identity, &files).expect("tables");
         assert!(!tables.lexicon.is_empty());

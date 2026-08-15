@@ -1,6 +1,6 @@
 # index/ngram/storage/
 
-On-disk binary format for N-gram index tables. All access is zero-copy via memory-mapped files.
+On-disk binary format for N-gram index tables. All access is mmap-only and zero-copy.
 
 ## Modules
 
@@ -24,6 +24,6 @@ All integers are little-endian. Lexicon entries are sorted by gram ordinal for
 binary search. Width-bearing files store the gram width in the header and reject
 mismatched widths at open time.
 
-The shared snapshot-root `files.bin` is owned by `index/files.rs` and uses
-`SIFTFIL2`. This module has no `grams.bin`, `GramSet`, or incremental-update
-artifacts.
+The shared snapshot-root `files.bin` is owned by `index/files.rs`, uses
+`SIFTFIL2`, and is also mmap-only. This module has no `grams.bin`, `GramSet`,
+or incremental-update artifacts.

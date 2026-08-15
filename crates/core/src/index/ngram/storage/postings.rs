@@ -10,7 +10,6 @@ use std::path::Path;
 use bitpacking::{BitPacker, BitPacker4x};
 use integer_encoding::VarInt;
 
-use super::ArtifactData;
 use crate::index::ngram::storage::format::POSTINGS_MAGIC;
 
 use super::read_u32_le;
@@ -21,28 +20,17 @@ const BLOCK_LEN: usize = BitPacker4x::BLOCK_LEN;
 
 #[derive(Debug)]
 pub struct Postings {
-    data: ArtifactData,
+    data: memmap2::Mmap,
     payload_len: usize,
 }
 
 impl Postings {
     fn bytes(&self) -> &[u8] {
-        self.data.as_ref()
+        &self.data
     }
 
     fn malformed(msg: &'static str) -> std::io::Error {
         std::io::Error::new(std::io::ErrorKind::InvalidData, msg)
-    }
-
-    /// Validate and wrap in-memory or mmap artifact bytes as postings.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the header or payload length is invalid.
-    pub fn from_artifact(data: ArtifactData) -> std::io::Result<Self> {
-        let bytes = data.as_ref();
-        let payload_len = Self::validate(bytes)?;
-        Ok(Self { data, payload_len })
     }
 
     /// Encode a postings payload into bytes (magic + length prefix + payload).
@@ -82,7 +70,11 @@ impl Postings {
     /// Returns an error if the file is malformed.
     pub fn open(path: &Path) -> std::io::Result<Self> {
         let mmap = mmap_open(path)?;
-        Self::from_artifact(ArtifactData::Mmap(mmap))
+        let payload_len = Self::validate(&mmap)?;
+        Ok(Self {
+            data: mmap,
+            payload_len,
+        })
     }
 
     fn validate(bytes: &[u8]) -> std::io::Result<usize> {

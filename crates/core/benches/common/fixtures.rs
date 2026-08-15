@@ -165,7 +165,8 @@ pub fn build_index(corpus: &Path, idx_dir: &Path) -> NGramIndex {
         },
         vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
     );
-    let files = Files::build(&meta).unwrap();
+    fs::create_dir_all(idx_dir).unwrap();
+    let files = Files::build(&meta, idx_dir).unwrap();
     NGramIndex::build(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, &files).unwrap();
     NGramIndex::open(GramWidth::TRIGRAM, GramNorm::Identity, idx_dir, files.len()).unwrap()
 }
@@ -261,7 +262,7 @@ pub fn open_large_index() -> (PathBuf, NGramIndex) {
                     visibility: VisibilityConfig::default(),
                 },
                 vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
-            ))
+            ), &paths.index_dir)
             .unwrap();
             let n = files.len();
             let _ = fs::write(root.join("FILE_COUNT"), n.to_string());

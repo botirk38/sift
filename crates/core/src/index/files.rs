@@ -2,36 +2,13 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
 use crate::corpus::File;
 use crate::corpus::walk::{FileWalk, LinkTraversal};
 use crate::index::FileId;
 use crate::index::meta::StoreMeta;
 use crate::index::mmap::mmap_open;
-
-enum TableBytes {
-    Owned(Arc<[u8]>),
-    Mmap(memmap2::Mmap),
-}
-
-impl std::fmt::Debug for TableBytes {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Owned(bytes) => f.debug_tuple("Owned").field(&bytes.len()).finish(),
-            Self::Mmap(mmap) => f.debug_tuple("Mmap").field(&mmap.len()).finish(),
-        }
-    }
-}
-
-impl AsRef<[u8]> for TableBytes {
-    fn as_ref(&self) -> &[u8] {
-        match self {
-            Self::Owned(bytes) => bytes,
-            Self::Mmap(mmap) => mmap.as_ref(),
-        }
-    }
-}
 
 /// On-disk artifact name for the shared file table.
 pub const FILES_BIN: &str = "files.bin";
@@ -47,12 +24,12 @@ pub struct Files {
 }
 
 impl Files {
-    /// Walk the corpus described by `meta` and build an in-memory table.
+    /// Walk the corpus described by `meta`, persist it, and memory-map it.
     ///
     /// # Errors
     ///
     /// Returns an error if walking or stating files fails.
-    pub fn build(meta: &StoreMeta) -> crate::Result<Self> {
+    pub fn build(meta: &StoreMeta, snapshot_dir: &Path) -> crate::Result<Self> {
         let root = meta.corpus.root.canonicalize().map_err(|source| {
             crate::Error::Index(crate::index::IndexError::Io {
                 path: meta.corpus.root.clone(),
@@ -61,7 +38,8 @@ impl Files {
         })?;
         let files = Self::walk(meta, &root)?;
         let bytes = FileTable::encode(&files).map_err(crate::Error::Io)?;
-        let table = FileTable::from_bytes(bytes).map_err(crate::Error::Io)?;
+        std::fs::write(snapshot_dir.join(FILES_BIN), bytes).map_err(crate::Error::Io)?;
+        let table = FileTable::open(&snapshot_dir.join(FILES_BIN)).map_err(crate::Error::Io)?;
         Ok(Self {
             root,
             table,
@@ -82,16 +60,6 @@ impl Files {
             table,
             paths: OnceLock::new(),
         })
-    }
-
-    /// Write `files.bin` into `snapshot_dir`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if encoding or writing fails.
-    pub fn write(&self, snapshot_dir: &Path) -> crate::Result<()> {
-        let bytes = self.table.bytes();
-        std::fs::write(snapshot_dir.join(FILES_BIN), bytes).map_err(crate::Error::Io)
     }
 
     #[must_use]
@@ -176,7 +144,7 @@ impl Files {
 }
 
 struct FileTable {
-    data: TableBytes,
+    data: memmap2::Mmap,
     count: usize,
     offset_table_start: usize,
 }
@@ -243,27 +211,18 @@ impl FileTable {
         Ok(out)
     }
 
-    fn from_bytes(bytes: Vec<u8>) -> std::io::Result<Self> {
-        let (count, offset_table_start) = Self::validate(&bytes)?;
-        Ok(Self {
-            data: TableBytes::Owned(bytes.into()),
-            count,
-            offset_table_start,
-        })
-    }
-
     fn open(path: &Path) -> std::io::Result<Self> {
         let mmap = mmap_open(path)?;
         let (count, offset_table_start) = Self::validate(mmap.as_ref())?;
         Ok(Self {
-            data: TableBytes::Mmap(mmap),
+            data: mmap,
             count,
             offset_table_start,
         })
     }
 
     fn bytes(&self) -> &[u8] {
-        self.data.as_ref()
+        &self.data
     }
 
     const fn len(&self) -> usize {
@@ -400,8 +359,10 @@ mod tests {
                 None,
             ),
         ];
-        let bytes = FileTable::encode(&files).expect("encode");
-        let table = FileTable::from_bytes(bytes).expect("decode");
+        let tmp = TempDir::new().expect("tmp");
+        let path = tmp.path().join(FILES_BIN);
+        std::fs::write(&path, FileTable::encode(&files).expect("encode")).expect("write");
+        let table = FileTable::open(&path).expect("open");
         assert_eq!(table.len(), 2);
         let (path0, size0) = table.entry(0).expect("row0");
         assert_eq!(path0, "a.txt");
@@ -433,10 +394,10 @@ mod tests {
             },
             crate::index::record::IndexRecord::default_catalog(),
         );
-        let files = Files::build(&meta).expect("build");
         let snap = tmp.path().join("snap");
         std::fs::create_dir_all(&snap).expect("snap");
-        files.write(&snap).expect("write");
+        let files = Files::build(&meta, &snap).expect("build");
+        assert_eq!(files.len(), 1);
         let opened = Files::open(&snap, root).expect("open");
         assert_eq!(opened.len(), 1);
         assert!(opened.contains(Path::new("a.txt")));

@@ -8,7 +8,6 @@ use crate::search::{Case, Query};
 
 use super::build::IndexTables;
 use super::gram::{GramMatch, GramNorm, GramWidth};
-use super::storage::ArtifactData;
 use super::storage::lexicon::Lexicon;
 use super::storage::postings::Postings;
 
@@ -203,31 +202,6 @@ impl Index {
             width,
             norm,
             Storage::new(lexicon, postings, file_count),
-        ))
-    }
-
-    /// Build into memory for tests/fuzz that need an opened index without a store.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if extraction or encoding fails.
-    pub fn build_opened(width: GramWidth, norm: GramNorm, files: &Files) -> crate::Result<Self> {
-        let tables = IndexTables::assemble(width, norm, files)?;
-        let (lr, pr) = rayon::join(
-            || Lexicon::encode(width, &tables.lexicon),
-            || Postings::encode(&tables.postings),
-        );
-        let lexicon_bytes = lr.map_err(crate::Error::Io)?;
-        let postings_bytes = pr.map_err(crate::Error::Io)?;
-
-        let lexicon = Lexicon::from_artifact(ArtifactData::Memory(lexicon_bytes.into()), width)?;
-        let postings = Postings::from_artifact(ArtifactData::Memory(postings_bytes.into()))?;
-        Self::validate_lexicon_postings(&lexicon, &postings)?;
-
-        Ok(Self::from_parts(
-            width,
-            norm,
-            Storage::new(lexicon, postings, files.len()),
         ))
     }
 }

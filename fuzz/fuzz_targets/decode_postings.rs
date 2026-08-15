@@ -55,7 +55,9 @@ fn harness() -> &'static Harness {
             },
             vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
         );
-        let files = Files::build(&meta).expect("files");
+        let snapshot = tmp.path().join("snapshot");
+        fs::create_dir(&snapshot).expect("snapshot");
+        let files = Files::build(&meta, &snapshot).expect("files");
         let file_count = files.len();
         NGramIndex::build(GramWidth::TRIGRAM, GramNorm::Identity, &trigram_dir, &files)
             .expect("build_index");
