@@ -1,6 +1,40 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.8.0](https://github.com/botirk38/sift/releases/tag/v0.8.0) — 2026-08-15
+
+### Bug Fixes
+
+- emit ripgrep-style single-line binary match notice (#266)
+- --files --stats must not inflate match counts (#265)
+- keep --json --stats quiet on stderr (#264)
+- -e/-f leftover positionals are search paths (#255)
+- keep --json quiet unless --stats is set (#253)
+- print NUL in binary match notice (#249)
+- report match tally for -l in --stats (#254)
+- add -P alias and correct PCRE2 skill docs (#252)
+
+### Documentation
+
+- drop rg-compat-matrix links; track parity as issues (#257)
+- update README architecture nouns for 0.7 (#250)
+- revamp sift skill for 0.7 index rebuild semantics (#240)
+
+### Features
+
+- add --debug stderr diagnostics (#267)
+
+### Refactor
+
+- tighten CorpusWatcher entity boundaries (#263)
+- native-or-poll daemon watcher backend (#262)
+
+### Deps
+
+- bump globset from 0.4.19 to 0.4.20
+- bump ignore from 0.4.31 to 0.4.33
+- bump clap from 4.6.5 to 4.6.6
+
 ## [0.7.0](https://github.com/botirk38/sift/releases/tag/v0.7.0) — 2026-08-15
 
 ### Bug Fixes

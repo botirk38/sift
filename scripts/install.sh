@@ -16,7 +16,7 @@ PREFIX="${PREFIX:-$HOME/.local}"
 BIN_DIR="${BIN_DIR:-$PREFIX/bin}"
 
 # Managed by scripts/release.sh — do not edit manually.
-SIFT_DEFAULT_VERSION="0.7.0"
+SIFT_DEFAULT_VERSION="0.8.0"
 
 # Optional: pin a version, e.g. export SIFT_VERSION=0.1.2
 resolve_version() {
