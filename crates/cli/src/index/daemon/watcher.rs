@@ -7,7 +7,7 @@ use std::time::Duration;
 use notify::RecursiveMode;
 use notify::Watcher;
 
-use super::{DaemonError, Event, StorePaths, DEBOUNCE_MS};
+use super::{DEBOUNCE_MS, DaemonError, Event, StorePaths};
 
 pub(super) struct CorpusWatcher {
     platform: PlatformWatcher,
@@ -72,8 +72,8 @@ impl CorpusWatcher {
     }
 
     fn poll(events: &mpsc::Sender<Event>, root: &Path) -> Result<Self, DaemonError> {
-        let config = notify::Config::default()
-            .with_poll_interval(Duration::from_millis(DEBOUNCE_MS));
+        let config =
+            notify::Config::default().with_poll_interval(Duration::from_millis(DEBOUNCE_MS));
         let platform = notify::PollWatcher::new(Self::callback(events), config)
             .map_err(|e| DaemonError::message(e.to_string()))?;
         let mut watcher = Self {
