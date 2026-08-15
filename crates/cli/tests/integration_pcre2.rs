@@ -18,6 +18,18 @@ fn pcre2_enables_look_around() {
 }
 
 #[test]
+fn pcre2_short_flag_enables_look_around() {
+    let p = TestProject::new("pcre2-short-look-around");
+    p.write("hay.txt", "foo\nbar\nbaz\n");
+
+    let out = p.walk_output(["-P", "(?<=ba)r"]);
+
+    assert_success(&out);
+    assert_stdout_eq(&out, "hay.txt:bar\n");
+    assert_stderr_empty(&out);
+}
+
+#[test]
 fn pcre2_look_around_works_with_index_and_raw_encoding() {
     let p = TestProject::new("pcre2-index-look-around");
     p.write("hay.txt", "foo\nbar\nbaz\n");

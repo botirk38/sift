@@ -52,7 +52,7 @@ pub struct RegexEngineDecl {
 /// PCRE2 engine selection shortcuts.
 #[derive(Args, Clone)]
 pub struct Pcre2EngineDecl {
-    #[arg(long = "pcre2")]
+    #[arg(short = 'P', long = "pcre2")]
     pub pcre2: bool,
     #[arg(long = "no-pcre2")]
     pub no_pcre2: bool,
@@ -194,6 +194,12 @@ mod tests {
         let cli = Cli::try_parse_from(["sift", "--pcre2", "--no-pcre2", "pat"]).unwrap();
         assert!(cli.engine_decl.regex.pcre2.pcre2);
         assert!(cli.engine_decl.regex.pcre2.no_pcre2);
+    }
+
+    #[test]
+    fn engine_pcre2_short_flag() {
+        let cli = Cli::try_parse_from(["sift", "-P", "pat"]).unwrap();
+        assert!(cli.engine_decl.regex.pcre2.pcre2);
     }
 
     #[test]
