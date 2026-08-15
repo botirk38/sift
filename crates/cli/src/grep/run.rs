@@ -53,6 +53,14 @@ struct SearchSession {
     store_meta: Option<sift_core::StoreMeta>,
 }
 
+impl SearchSession {
+    fn queryable(&self) -> bool {
+        self.indexes
+            .as_ref()
+            .is_some_and(sift_core::Indexes::queryable)
+    }
+}
+
 impl RunResult {
     #[must_use]
     pub const fn succeeded(self) -> bool {
@@ -138,11 +146,7 @@ impl Run {
         let output_argv = &self.config.output_argv;
         let line_number_override = self.line_number_override();
         let session = self.prepare_session(&sources.paths)?;
-        let indexes_empty = session
-            .indexes
-            .as_ref()
-            .is_none_or(|indexes| !indexes.queryable());
-        let sources = sources.resolve(patterns.input, indexes_empty)?;
+        let sources = sources.resolve(patterns.input, session.queryable())?;
         let transform = self.config.content.transform()?;
         let filename_ctx = Self::filename_context(mode, &sources);
         let print_spec = self
@@ -158,7 +162,7 @@ impl Run {
             .map_err(|e| anyhow::anyhow!(e))?;
         let separators = self.config.output.separators();
         let freshness = Self::snapshot_freshness(&session, daemon);
-        let scan_scope = self.scan_scope(freshness, sources.resolve_candidates(), !indexes_empty);
+        let scan_scope = self.scan_scope(&session, freshness, sources.resolve_candidates());
         let scan = Self::scan(&session, scan_scope);
         let format = OutputDecl::format(output_argv, mode);
         let print_stats = OutputDecl::print_stats(output_argv, format);
@@ -252,17 +256,16 @@ impl Run {
         }
     }
 
-    const fn scan_scope(
+    fn scan_scope(
         &self,
+        session: &SearchSession,
         freshness: SnapshotFreshness,
         resolve_candidates: bool,
-        queryable: bool,
     ) -> ScanScope {
         if !resolve_candidates {
             return ScanScope::StreamsOnly;
         }
-        // No queryable index → walk; Index scope would misreport --debug scan-scope.
-        if !queryable || matches!(self.config.search_mode, SearchMode::Paths) {
+        if !session.queryable() || matches!(self.config.search_mode, SearchMode::Paths) {
             return ScanScope::Walk {
                 order: self.config.file_order,
             };

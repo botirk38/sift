@@ -135,7 +135,7 @@ impl InputSources {
     pub fn resolve(
         mut self,
         pattern_input: super::pattern::PatternInputUse,
-        indexes_empty: bool,
+        queryable: bool,
     ) -> anyhow::Result<Self> {
         if self.stdin_explicit && self.stdin_bytes.is_empty() {
             let mut bytes = Vec::new();
@@ -150,7 +150,7 @@ impl InputSources {
             && !self.stdin_explicit
             && self.paths.is_empty()
             && self.stdin_bytes.is_empty()
-            && indexes_empty
+            && !queryable
             && stdin_is_pipe();
         if implicit_stream {
             let mut bytes = Vec::new();

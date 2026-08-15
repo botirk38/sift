@@ -17,7 +17,9 @@ pub enum ScanScope {
     StreamsOnly,
     /// Filesystem walk under the filter.
     Walk { order: FileOrder },
-    /// Index-backed discovery; plan chooses walk when indexes are absent.
+    /// Index-backed discovery. Callers request [`Walk`](Self::Walk) when no
+    /// queryable index is available; Plan still falls back to walk when Index
+    /// cannot be used.
     Index {
         order: FileOrder,
         freshness: SnapshotFreshness,
