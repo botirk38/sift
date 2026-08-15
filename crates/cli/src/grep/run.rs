@@ -158,7 +158,7 @@ impl Run {
             .map_err(|e| anyhow::anyhow!(e))?;
         let separators = self.config.output.separators();
         let freshness = Self::snapshot_freshness(&session, daemon);
-        let scan_scope = self.scan_scope(freshness, sources.resolve_candidates());
+        let scan_scope = self.scan_scope(freshness, sources.resolve_candidates(), !indexes_empty);
         let scan = Self::scan(&session, scan_scope);
         let format = OutputDecl::format(output_argv, mode);
         let print_stats = OutputDecl::print_stats(output_argv, format);
@@ -256,11 +256,13 @@ impl Run {
         &self,
         freshness: SnapshotFreshness,
         resolve_candidates: bool,
+        queryable: bool,
     ) -> ScanScope {
         if !resolve_candidates {
             return ScanScope::StreamsOnly;
         }
-        if matches!(self.config.search_mode, SearchMode::Paths) {
+        // No queryable index → walk; Index scope would misreport --debug scan-scope.
+        if !queryable || matches!(self.config.search_mode, SearchMode::Paths) {
             return ScanScope::Walk {
                 order: self.config.file_order,
             };
