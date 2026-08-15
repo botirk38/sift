@@ -52,7 +52,7 @@ pub struct RegexEngineDecl {
 /// PCRE2 engine selection shortcuts.
 #[derive(Args, Clone)]
 pub struct Pcre2EngineDecl {
-    #[arg(long = "pcre2")]
+    #[arg(short = 'P', long = "pcre2")]
     pub pcre2: bool,
     #[arg(long = "no-pcre2")]
     pub no_pcre2: bool,
