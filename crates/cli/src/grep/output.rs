@@ -1,13 +1,14 @@
 use crate::format::output::style::{ColorSpecs, HyperlinkFormat, OutputBuffering};
 use crate::format::{
-    ColorChoice, ColumnLimit, ColumnOverflow, FilenameMode, LineStyleFlags, OutputEmission,
+    ColorChoice, ColumnLimit, ColumnOverflow, Debug, FilenameMode, LineStyleFlags, OutputEmission,
     PassthruMode, PrintFormat, PrintLineStyle, PrintRecordStyle, PrintSeparators, PrintSpec, Quiet,
     RecordTerminator,
 };
 use clap::{ArgAction, Args};
 use sift_core::SearchMode;
+use sift_core::candidates::ScanScope;
 use sift_core::search::Stats;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Describes the filename display context for deciding whether to show paths.
@@ -168,6 +169,103 @@ pub struct StatsDecl {
     pub stats_flag: bool,
 }
 
+/// Declares `--debug` for clap.
+#[derive(Args)]
+pub struct DebugDecl {
+    #[arg(long = "debug", action = ArgAction::SetTrue)]
+    pub debug_flag: bool,
+}
+
+/// Whether an index directory loaded for this search.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum IndexLoad {
+    Absent,
+    Present { queryable: bool },
+}
+
+/// Skip / fallback reasons surfaced by `--debug`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DebugNote {
+    IndexAbsent,
+    IndexNotQueryable,
+    NarrowingDisabled,
+    SnapshotStale,
+    StreamsOnly,
+    ContentTransform,
+}
+
+/// Structured `--debug` diagnostics written to stderr (not stdout).
+pub struct SearchDebug<'a> {
+    pub sift_dir: &'a Path,
+    pub corpus_root: &'a Path,
+    pub index: IndexLoad,
+    pub search_mode: SearchMode,
+    pub patterns: &'a [String],
+    pub scan_scope: ScanScope,
+    pub candidate_bound: usize,
+    pub stream_count: usize,
+    pub notes: &'a [DebugNote],
+}
+
+impl SearchDebug<'_> {
+    pub fn write(&self) {
+        eprintln!("DEBUG sift-dir: {}", self.sift_dir.display());
+        eprintln!("DEBUG corpus-root: {}", self.corpus_root.display());
+        match self.index {
+            IndexLoad::Absent => eprintln!("DEBUG index: absent"),
+            IndexLoad::Present { queryable: true } => {
+                eprintln!("DEBUG index: loaded (queryable)");
+            }
+            IndexLoad::Present { queryable: false } => {
+                eprintln!("DEBUG index: loaded (not queryable)");
+            }
+        }
+        eprintln!("DEBUG search-mode: {:?}", self.search_mode);
+        eprintln!(
+            "DEBUG patterns: {} {:?}",
+            self.patterns.len(),
+            self.patterns
+        );
+        eprintln!(
+            "DEBUG scan-scope: {}",
+            Self::scan_scope_label(self.scan_scope)
+        );
+        eprintln!("DEBUG candidates: {} (upper bound)", self.candidate_bound);
+        eprintln!("DEBUG streams: {}", self.stream_count);
+        for note in self.notes {
+            eprintln!("DEBUG note: {}", Self::note_label(*note));
+        }
+    }
+
+    const fn scan_scope_label(scope: ScanScope) -> &'static str {
+        match scope {
+            ScanScope::StreamsOnly => "streams-only",
+            ScanScope::Walk { .. } => "walk",
+            ScanScope::Index {
+                freshness: sift_core::SnapshotFreshness::Current,
+                ..
+            } => "index (freshness=current)",
+            ScanScope::Index {
+                freshness: sift_core::SnapshotFreshness::Stale,
+                ..
+            } => "index (freshness=stale)",
+        }
+    }
+
+    const fn note_label(note: DebugNote) -> &'static str {
+        match note {
+            DebugNote::IndexAbsent => "index absent; walk or streams only",
+            DebugNote::IndexNotQueryable => "index not queryable; falling back to walk",
+            DebugNote::NarrowingDisabled => "index narrowing disabled",
+            DebugNote::SnapshotStale => "snapshot stale",
+            DebugNote::StreamsOnly => "scan scope is streams-only",
+            DebugNote::ContentTransform => {
+                "content transform active; candidates searched as streams"
+            }
+        }
+    }
+}
+
 // ── Argv-order resolution ──
 
 /// Output-related flags resolved from raw argv (ripgrep last-wins).
@@ -176,6 +274,7 @@ pub struct OutputModeFlags {
     pub stats: bool,
     pub json: bool,
     pub heading: bool,
+    pub debug: Debug,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -203,6 +302,7 @@ impl OutputArgv {
                 stats: Self::stats(tokens),
                 json: Self::json(tokens),
                 heading: Self::heading(tokens),
+                debug: Self::debug(tokens),
             },
             path: OutputPathFlags {
                 glob_case_insensitive: Self::glob_case_insensitive(tokens),
@@ -299,6 +399,18 @@ impl OutputArgv {
             if arg == "--stats" && i >= last_idx {
                 last_idx = i;
                 result = true;
+            }
+        }
+        result
+    }
+
+    fn debug(args: &[String]) -> Debug {
+        let mut last_idx = 0usize;
+        let mut result = Debug::Off;
+        for (i, arg) in args.iter().enumerate() {
+            if arg == "--debug" && i >= last_idx {
+                last_idx = i;
+                result = Debug::On;
             }
         }
         result
@@ -643,6 +755,15 @@ mod tests {
     #[test]
     fn output_argv_json_toggle() {
         assert!(!out_argv(&["sift", "--json", "--no-json", "pat"]).mode.json);
+    }
+
+    #[test]
+    fn output_argv_debug_flag() {
+        assert!(matches!(
+            out_argv(&["sift", "--debug", "pat"]).mode.debug,
+            Debug::On
+        ));
+        assert!(matches!(out_argv(&["sift", "pat"]).mode.debug, Debug::Off));
     }
 
     #[test]

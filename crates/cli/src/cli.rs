@@ -14,8 +14,8 @@ use crate::grep::input::ContentTransformConfig;
 use crate::grep::output::OutputArgv;
 use crate::grep::output::OutputDecl;
 use crate::grep::output::{
-    ColumnDecl, ColumnsDecl, ExtraOutputDecl, FilenameDecl, HeadingDecl, JsonDecl, LineNumberDecl,
-    NullColorDecl, ReplaceDecl, SeparatorDecl, StatsDecl,
+    ColumnDecl, ColumnsDecl, DebugDecl, ExtraOutputDecl, FilenameDecl, HeadingDecl, JsonDecl,
+    LineNumberDecl, NullColorDecl, ReplaceDecl, SeparatorDecl, StatsDecl,
 };
 use crate::grep::paths::PathArgs;
 use crate::grep::pattern::PatternArgv;
@@ -92,6 +92,8 @@ pub struct Cli {
     pub paths: PathArgs,
     #[command(flatten)]
     pub stats_decl: StatsDecl,
+    #[command(flatten)]
+    pub debug_decl: DebugDecl,
     #[command(flatten)]
     pub json_decl: JsonDecl,
     #[command(flatten)]
