@@ -358,7 +358,7 @@ impl<'a> EventRenderer<'a> {
         self.terminator();
         self.bytes.extend(
             format!(
-                "found \"/0\" byte around offset {}",
+                "found NUL byte around offset {}",
                 event.absolute_byte_offset
             )
             .as_bytes(),
