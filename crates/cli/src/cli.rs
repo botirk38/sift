@@ -115,10 +115,26 @@ pub struct Cli {
 }
 
 impl Cli {
+    /// When `-e`/`-f` supply patterns, clap still binds the first free positional to
+    /// `PatternArgs::pattern`. Ripgrep treats those positionals as search paths, so
+    /// move a leftover positional into `search_scope` instead of OR-ing it as a pattern.
+    fn effective_patterns_and_paths(&self) -> (crate::grep::pattern::PatternArgs, Vec<PathBuf>) {
+        let mut patterns = self.patterns.clone();
+        let mut paths = self.search_scope.paths.clone();
+        let explicit = !patterns.regexp.is_empty() || patterns.pattern_file.is_some();
+        if explicit {
+            if let Some(positional) = patterns.pattern.take() {
+                paths.insert(0, PathBuf::from(positional));
+            }
+        }
+        (patterns, paths)
+    }
+
     #[must_use]
     pub fn pattern_config(&self) -> PatternDecl {
+        let (patterns, _) = self.effective_patterns_and_paths();
         PatternDecl {
-            patterns: self.patterns.clone(),
+            patterns,
             search_flags: self.search_flags.clone(),
             regex1: self.regex1.clone(),
             regex2: self.regex2.clone(),
@@ -164,7 +180,7 @@ impl Cli {
     ///
     /// Returns an error if sort/order flags or type filters are invalid.
     pub fn run_config(&self, argv: &Argv<'_>) -> Result<RunConfig, anyhow::Error> {
-        let search_paths = self.search_scope.paths.clone();
+        let (_, search_paths) = self.effective_patterns_and_paths();
         let zeros = if self.extra_output.include_zero {
             ZeroCounts::Include
         } else {
@@ -524,6 +540,15 @@ mod tests {
             cli.search_scope.paths,
             vec![PathBuf::from("dir1"), PathBuf::from("dir2")]
         );
+    }
+
+    #[test]
+    fn cli_regexp_positional_becomes_search_path() {
+        let cli = Cli::try_parse_from(["sift", "-e", "foo", "dir1"]).unwrap();
+        let (patterns, paths) = cli.effective_patterns_and_paths();
+        assert_eq!(patterns.regexp, vec!["foo"]);
+        assert!(patterns.pattern.is_none());
+        assert_eq!(paths, vec![PathBuf::from("dir1")]);
     }
 
     #[test]

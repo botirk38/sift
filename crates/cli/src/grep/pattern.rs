@@ -991,11 +991,13 @@ mod tests {
     }
 
     #[test]
-    fn resolve_patterns_regexp_and_positional() {
+    fn resolve_patterns_regexp_and_positional_path() {
+        // With `-e`, the leftover positional is a search path (see Cli::effective_patterns_and_paths),
+        // so ResolvedPatterns only keeps the regexp patterns.
         let patterns = ResolvedPatterns::resolve(&pattern_config(&["sift", "-e", "foo", "bar"]))
             .unwrap()
             .patterns;
-        assert_eq!(patterns, vec!["foo", "bar"]);
+        assert_eq!(patterns, vec!["foo"]);
     }
 
     // ── GrepFlags / query options ──
