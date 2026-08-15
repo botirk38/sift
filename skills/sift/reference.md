@@ -70,6 +70,8 @@ After `index build`, `index update`, or search, sift may spawn `sift-daemon` to 
 export SIFT_NO_DAEMON=1
 ```
 
+The daemon prefers the native filesystem watcher from `notify` (`RecommendedWatcher`). If that backend cannot start, it falls back to polling and logs a warning. On macOS this commonly happens under seatbelt sandboxes that deny Mach lookup of `com.apple.FSEvents` (for example Cursor’s default agent sandbox).
+
 ## Limitations
 
 - Requires `sift index build` for indexed speedup.
