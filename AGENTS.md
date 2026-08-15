@@ -335,7 +335,8 @@ Clap parses `*Decl` flag groups; **`Argv` resolves effective runtime values**
   crate `sift-grep`). You must build an index before searching, and search paths
   must sit under the indexed corpus root.
   - `index build` is async via a background daemon by default; pass `--wait` to
-    build synchronously, or set `SIFT_NO_DAEMON=1` to disable the daemon.
+    build synchronously. Leave the daemon enabled unless the environment cannot
+    run one; `SIFT_NO_DAEMON=1` is an escape hatch, not the default workflow.
   - Point `--sift-dir` at a writable index dir, e.g.:
     `target/debug/sift --sift-dir /tmp/demo/.sift index build --wait /tmp/demo`
     then `target/debug/sift --sift-dir /tmp/demo/.sift "pattern" /tmp/demo`.
