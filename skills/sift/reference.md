@@ -7,8 +7,8 @@
 | `sift update` | Upgrade the installed **binary** (latest GitHub release) |
 | `sift index build [PATH]` | Create an index (async via daemon by default; fails if one already exists) |
 | `sift index build --wait [PATH]` | Blocking build (waits until complete) |
-| `sift index update [PATH]` | Incrementally refresh an existing index (async by default) |
-| `sift index update --wait [PATH]` | Blocking incremental refresh |
+| `sift index update [PATH]` | Full rebuild of an existing index (async by default; not incremental) |
+| `sift index update --wait [PATH]` | Blocking full rebuild |
 | `sift PATTERN [PATH...]` | Search (indexed or walk mode) |
 
 ## Common flags
@@ -39,14 +39,15 @@ sift --sift-dir .sift index build .
 sift --sift-dir .sift index build --wait .
 sift --sift-dir .sift index update .
 sift --sift-dir .sift index update --wait .
-sift --sift-dir .sift index build --indexes trigram .
+sift --sift-dir .sift index build --index ngram --width 3 .
 ```
 
 - `index build` and `index update` are both async via daemon by default; use `--wait` for blocking.
-- Search queues background indexing for unindexed hit paths (when the daemon is enabled).
-
-- `PATH` defaults to `.` and must be a directory.
-- `--indexes` selects index kinds (default: all; shipped: `trigram`).
+- `index update` fully rebuilds the snapshot (same pipeline as build); it does not apply an incremental delta.
+- Search may queue background indexing for unindexed hit paths (when the daemon is enabled).
+- With the daemon running, filesystem watches refresh the index after corpus changes.
+- `PATH` defaults to `.` and must be a **directory**.
+- Repeatable `--index ngram` with optional `--width` / `--norm` (after `--index`) selects kinds to build (default: ngram width 3).
 - Search paths must lie under the indexed **corpus root** when an index exists.
 
 ## Binary upgrade
