@@ -845,95 +845,23 @@ mod tests {
     #[test]
     fn rebind_watcher_skips_when_root_unchanged() {
         let dir = TempDir::new().unwrap();
-        let sift_dir = dir.path().join(".sift");
-        std::fs::create_dir_all(&sift_dir).unwrap();
-        let meta = StoreMeta::new(
-            CorpusMeta {
-                root: dir.path().to_path_buf(),
-                include_paths: Vec::new(),
-                exclude_paths: Vec::new(),
-            },
-            IndexCoverage::Complete,
-            WalkMeta {
-                follow_links: false,
-                one_file_system: false,
-                max_depth: None,
-                max_filesize: None,
-            },
-            FilterMeta {
-                visibility: VisibilityConfig::default(),
-            },
-            vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
-        );
-        StoreMeta::write(&meta, &sift_dir).unwrap();
-
         let (tx, _rx) = mpsc::channel();
         let mut watcher = CorpusWatcher::new(&tx, dir.path()).unwrap();
-
-        watcher.rebind(&sift_dir).unwrap();
+        watcher.rebind(dir.path()).unwrap();
         assert_eq!(watcher.root.as_path(), dir.path());
     }
 
     #[test]
     fn rebind_watcher_switches_to_new_corpus_root() {
         let dir = TempDir::new().unwrap();
-        let sift_dir = dir.path().join(".sift");
         let old_root = dir.path().join("old");
         let new_root = dir.path().join("new");
         std::fs::create_dir_all(&old_root).unwrap();
         std::fs::create_dir_all(&new_root).unwrap();
-        std::fs::create_dir_all(&sift_dir).unwrap();
-
-        StoreMeta::write(
-            &StoreMeta::new(
-                CorpusMeta {
-                    root: old_root.clone(),
-                    include_paths: Vec::new(),
-                    exclude_paths: Vec::new(),
-                },
-                IndexCoverage::Complete,
-                WalkMeta {
-                    follow_links: false,
-                    one_file_system: false,
-                    max_depth: None,
-                    max_filesize: None,
-                },
-                FilterMeta {
-                    visibility: VisibilityConfig::default(),
-                },
-                vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
-            ),
-            &sift_dir,
-        )
-        .unwrap();
 
         let (tx, _rx) = mpsc::channel();
         let mut watcher = CorpusWatcher::new(&tx, &old_root).unwrap();
-
-        StoreMeta::write(
-            &StoreMeta::new(
-                CorpusMeta {
-                    root: new_root.clone(),
-                    include_paths: Vec::new(),
-                    exclude_paths: Vec::new(),
-                },
-                IndexCoverage::Complete,
-                WalkMeta {
-                    follow_links: false,
-                    one_file_system: false,
-                    max_depth: None,
-                    max_filesize: None,
-                },
-                FilterMeta {
-                    visibility: VisibilityConfig::default(),
-                },
-                vec![IndexRecord::ngram(GramWidth::TRIGRAM)],
-            ),
-            &sift_dir,
-        )
-        .unwrap();
-
-        watcher.rebind(&sift_dir).unwrap();
+        watcher.rebind(&new_root).unwrap();
         assert_eq!(watcher.root.as_path(), new_root.as_path());
     }
 

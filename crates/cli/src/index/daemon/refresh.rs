@@ -98,7 +98,8 @@ impl IndexRefresh<'_> {
         store: &Path,
         phase: &mut Phase,
     ) -> Result<(), DaemonError> {
-        watcher.rebind(store)?;
+        let root = StorePaths::read_meta(store)?.corpus.root;
+        watcher.rebind(&root)?;
         PendingIndex::lock(self.pending)?.push(paths);
         let _ = reply.send(DaemonResponse::Accepted);
         if phase.is_refreshing() {
