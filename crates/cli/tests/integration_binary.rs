@@ -97,8 +97,10 @@ fn binary_flag_reports_binary_match_walk() {
 
     let out = p.walk_output(["--binary", "findme"]);
     assert_success(&out);
-    assert_stdout_contains(&out, "mixed.txt: binary file matches");
-    assert_stdout_contains(&out, "found NUL byte around offset 11");
+    assert_stdout_contains(
+        &out,
+        "mixed.txt: binary file matches (found \"/0\" byte around offset 11)",
+    );
     assert_stdout_not_contains(&out, "findme");
     assert_stderr_empty(&out);
 }
@@ -111,8 +113,10 @@ fn binary_flag_reports_binary_match_index() {
 
     let out = p.index_output(["--binary", "findme"]);
     assert_success(&out);
-    assert_stdout_contains(&out, "mixed.txt: binary file matches");
-    assert_stdout_contains(&out, "found NUL byte around offset 11");
+    assert_stdout_contains(
+        &out,
+        "mixed.txt: binary file matches (found \"/0\" byte around offset 11)",
+    );
     assert_stdout_not_contains(&out, "findme");
     assert_stderr_empty(&out);
 }
@@ -124,8 +128,10 @@ fn explicit_binary_file_reports_match_before_nul() {
 
     let out = p.walk_output(["findme", "binary.txt"]);
     assert_success(&out);
-    assert_stdout_contains(&out, "binary file matches");
-    assert_stdout_contains(&out, "found NUL byte around offset 6");
+    assert_stdout_contains(
+        &out,
+        "binary.txt: binary file matches (found \"/0\" byte around offset 6)",
+    );
     assert_stdout_not_contains(&out, "findme");
     assert_stderr_empty(&out);
 }
@@ -138,8 +144,10 @@ fn indexed_explicit_binary_file_reports_match_before_nul() {
 
     let out = p.index_output(["findme", "binary.txt"]);
     assert_success(&out);
-    assert_stdout_contains(&out, "binary file matches");
-    assert_stdout_contains(&out, "found NUL byte around offset 6");
+    assert_stdout_contains(
+        &out,
+        "binary.txt: binary file matches (found \"/0\" byte around offset 6)",
+    );
     assert_stdout_not_contains(&out, "findme");
     assert_stderr_empty(&out);
 }
@@ -151,7 +159,10 @@ fn no_messages_does_not_suppress_binary_match_output() {
 
     let out = p.walk_output(["--no-messages", "findme", "binary.txt"]);
     assert_success(&out);
-    assert_stdout_contains(&out, "binary file matches");
+    assert_stdout_contains(
+        &out,
+        "binary.txt: binary file matches (found \"/0\" byte around offset 6)",
+    );
     assert_stderr_empty(&out);
 }
 

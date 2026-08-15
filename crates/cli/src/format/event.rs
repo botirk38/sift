@@ -348,17 +348,18 @@ impl<'a> EventRenderer<'a> {
         if matches!(self.binary_mode, BinaryMode::Quit) && !event.explicit {
             return;
         }
-        self.write_display_path(
-            event
-                .origin
-                .display(self.output.lines.path_display)
-                .as_ref(),
-        );
-        self.bytes.extend(b": binary file matches");
-        self.terminator();
+        if !matches!(self.output.lines.filename_mode, FilenameMode::Never) {
+            self.write_display_path(
+                event
+                    .origin
+                    .display(self.output.lines.path_display)
+                    .as_ref(),
+            );
+            self.bytes.extend(b": ");
+        }
         self.bytes.extend(
             format!(
-                "found NUL byte around offset {}",
+                "binary file matches (found \"\\0\" byte around offset {})",
                 event.absolute_byte_offset
             )
             .as_bytes(),
