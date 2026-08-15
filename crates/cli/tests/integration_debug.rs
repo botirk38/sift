@@ -40,8 +40,8 @@ fn debug_emits_stderr_diagnostics_and_keeps_matches() {
         "expected patterns debug line, got: {stderr:?}"
     );
     assert!(
-        stderr.contains("DEBUG scan-scope:"),
-        "expected scan-scope debug line, got: {stderr:?}"
+        stderr.contains("DEBUG scan-scope: index (freshness=current)"),
+        "expected index scan-scope debug line, got: {stderr:?}"
     );
     assert!(
         stderr.contains("DEBUG candidates:"),
@@ -67,6 +67,14 @@ fn debug_absent_index_notes_walk() {
     assert!(
         stderr.contains("DEBUG index: absent"),
         "expected absent index debug line, got: {stderr:?}"
+    );
+    assert!(
+        stderr.contains("DEBUG scan-scope: walk"),
+        "expected walk scan-scope when index is absent, got: {stderr:?}"
+    );
+    assert!(
+        !stderr.contains("DEBUG scan-scope: index"),
+        "absent index must not claim scan-scope=index, got: {stderr:?}"
     );
     assert!(
         !stdout.contains("DEBUG"),

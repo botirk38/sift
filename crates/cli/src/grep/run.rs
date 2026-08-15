@@ -53,6 +53,14 @@ struct SearchSession {
     store_meta: Option<sift_core::StoreMeta>,
 }
 
+impl SearchSession {
+    fn queryable(&self) -> bool {
+        self.indexes
+            .as_ref()
+            .is_some_and(sift_core::Indexes::queryable)
+    }
+}
+
 impl RunResult {
     #[must_use]
     pub const fn succeeded(self) -> bool {
@@ -154,7 +162,7 @@ impl Run {
             .map_err(|e| anyhow::anyhow!(e))?;
         let separators = self.config.output.separators();
         let freshness = Self::snapshot_freshness(&session, daemon);
-        let scan_scope = self.scan_scope(freshness, &sources);
+        let scan_scope = self.scan_scope(&session, freshness, &sources);
         let scan = Self::scan(&session, scan_scope);
         let format = OutputDecl::format(output_argv, mode);
         let print_stats = OutputDecl::print_stats(output_argv, format);
@@ -248,11 +256,16 @@ impl Run {
         }
     }
 
-    const fn scan_scope(&self, freshness: SnapshotFreshness, sources: &InputSources) -> ScanScope {
+    fn scan_scope(
+        &self,
+        session: &SearchSession,
+        freshness: SnapshotFreshness,
+        sources: &InputSources,
+    ) -> ScanScope {
         if !sources.resolve_candidates() {
             return ScanScope::StreamsOnly;
         }
-        if matches!(self.config.search_mode, SearchMode::Paths) {
+        if !session.queryable() || matches!(self.config.search_mode, SearchMode::Paths) {
             return ScanScope::Walk {
                 order: self.config.file_order,
             };
