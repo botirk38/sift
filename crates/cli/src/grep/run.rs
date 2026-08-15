@@ -8,6 +8,8 @@ use sift_core::{
 
 use crate::index::daemon::Daemon;
 
+use crate::format::PrintFormat;
+
 use super::filter::{FilterConfig, FilterResolution};
 use super::ignore::IgnoreResolution;
 use super::input::{ContentTransformConfig, InputSources};
@@ -164,12 +166,15 @@ impl Run {
         let scan_scope = self.scan_scope(freshness, sources.resolve_candidates());
         let scan = Self::scan(&session, scan_scope);
 
-        let print_stats = OutputDecl::print_stats(output_argv, mode);
-        let stats = if print_stats {
-            sift_core::StatsMode::On
-        } else {
-            sift_core::StatsMode::Off
-        };
+        // Collect stats for `--stats` (human lines) and for `--json` (summary /
+        // end events). Human stderr lines stay opt-in via `--stats` only.
+        let print_stats = OutputDecl::print_stats(output_argv);
+        let stats =
+            if print_stats || matches!(OutputDecl::format(output_argv, mode), PrintFormat::Json) {
+                sift_core::StatsMode::On
+            } else {
+                sift_core::StatsMode::Off
+            };
         let query = {
             let query = if matches!(mode, SearchMode::Paths) {
                 Query::new(vec![".".to_string()], SearchOptions::default())
@@ -219,7 +224,7 @@ impl Run {
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-        if let Some(s) = report.stats.as_ref() {
+        if print_stats && let Some(s) = report.stats.as_ref() {
             OutputDecl::write_stats(s);
         }
         let selected = report.found();

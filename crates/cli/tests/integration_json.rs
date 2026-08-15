@@ -35,7 +35,16 @@ fn json_emits_begin_match_end_and_summary() {
     assert_eq!(lines[1]["data"]["submatches"][0]["start"], 0);
     assert_eq!(lines[1]["data"]["submatches"][0]["end"], 5);
     assert!(lines[2]["data"]["stats"]["matches"].as_u64().unwrap() >= 1);
-    assert!(lines[lines.len() - 1]["data"]["stats"]["bytes_searched"].is_number());
+    let summary = &lines[lines.len() - 1];
+    assert_eq!(summary["type"], "summary");
+    assert!(
+        summary["data"]["stats"]["matches"].as_u64().unwrap() >= 1,
+        "JSON summary must carry match stats without --stats: {summary}"
+    );
+    assert!(
+        summary["data"]["stats"]["bytes_searched"].as_u64().unwrap() > 0,
+        "JSON summary must carry bytes_searched without --stats: {summary}"
+    );
 }
 
 #[test]
@@ -68,8 +77,23 @@ fn json_does_not_imply_human_stats_on_stderr() {
     assert_success(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("bytes searched"),
+        stderr.trim().is_empty(),
         "expected quiet stderr without --stats, got: {stderr:?}"
+    );
+}
+
+#[test]
+fn json_with_stats_prints_human_stats_on_stderr() {
+    let p = TestProject::new("json-with-stats-stderr");
+    p.write("a.txt", "x\n");
+    p.build_index();
+
+    let output = p.index_output(["x", "--json", "--stats"]);
+    assert_success(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("matches") && stderr.contains("bytes searched"),
+        "expected human --stats lines on stderr with --json --stats, got: {stderr:?}"
     );
 }
 
