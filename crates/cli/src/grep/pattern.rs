@@ -1000,6 +1000,18 @@ mod tests {
         assert_eq!(patterns, vec!["foo"]);
     }
 
+    #[test]
+    fn resolve_patterns_pattern_file_and_positional_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let pats = dir.path().join("pats.txt");
+        std::fs::write(&pats, "alpha\n").unwrap();
+        let pats_s = pats.to_str().unwrap();
+        let patterns = ResolvedPatterns::resolve(&pattern_config(&["sift", "-f", pats_s, "bar"]))
+            .unwrap()
+            .patterns;
+        assert_eq!(patterns, vec!["alpha"]);
+    }
+
     // ── GrepFlags / query options ──
 
     #[test]

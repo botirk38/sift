@@ -550,6 +550,96 @@ mod tests {
     }
 
     #[test]
+    fn cli_multiple_regexp_positional_becomes_search_path() {
+        let cli = Cli::try_parse_from(["sift", "-e", "foo", "-e", "bar", "dir1"]).unwrap();
+        let (patterns, paths) = cli.effective_patterns_and_paths();
+        assert_eq!(patterns.regexp, vec!["foo", "bar"]);
+        assert!(patterns.pattern.is_none());
+        assert_eq!(paths, vec![PathBuf::from("dir1")]);
+    }
+
+    #[test]
+    fn cli_regexp_preserves_path_order_with_extra_paths() {
+        let cli = Cli::try_parse_from(["sift", "-e", "foo", "dir1", "dir2"]).unwrap();
+        let (patterns, paths) = cli.effective_patterns_and_paths();
+        assert_eq!(patterns.regexp, vec!["foo"]);
+        assert!(patterns.pattern.is_none());
+        assert_eq!(paths, vec![PathBuf::from("dir1"), PathBuf::from("dir2")]);
+    }
+
+    #[test]
+    fn cli_pattern_file_positional_becomes_search_path() {
+        let cli = Cli::try_parse_from(["sift", "-f", "pats.txt", "dir1"]).unwrap();
+        let (patterns, paths) = cli.effective_patterns_and_paths();
+        assert_eq!(
+            patterns.pattern_file.as_deref(),
+            Some(Path::new("pats.txt"))
+        );
+        assert!(patterns.pattern.is_none());
+        assert_eq!(paths, vec![PathBuf::from("dir1")]);
+    }
+
+    #[test]
+    fn cli_regexp_without_path_leaves_paths_empty() {
+        let cli = Cli::try_parse_from(["sift", "-e", "foo"]).unwrap();
+        let (patterns, paths) = cli.effective_patterns_and_paths();
+        assert_eq!(patterns.regexp, vec!["foo"]);
+        assert!(patterns.pattern.is_none());
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn cli_positional_only_keeps_pattern_and_paths() {
+        let cli = Cli::try_parse_from(["sift", "pat", "dir1", "dir2"]).unwrap();
+        let (patterns, paths) = cli.effective_patterns_and_paths();
+        assert_eq!(patterns.pattern.as_deref(), Some("pat"));
+        assert!(patterns.regexp.is_empty());
+        assert_eq!(paths, vec![PathBuf::from("dir1"), PathBuf::from("dir2")]);
+    }
+
+    #[test]
+    fn cli_regexp_double_dash_path_becomes_search_path() {
+        let cli = Cli::try_parse_from(["sift", "-e", "foo", "--", "dir1"]).unwrap();
+        let (patterns, paths) = cli.effective_patterns_and_paths();
+        assert_eq!(patterns.regexp, vec!["foo"]);
+        assert!(patterns.pattern.is_none());
+        assert_eq!(paths, vec![PathBuf::from("dir1")]);
+    }
+
+    #[test]
+    fn cli_regexp_double_dash_hyphen_path() {
+        let cli = Cli::try_parse_from(["sift", "-e", "foo", "--", "-weird"]).unwrap();
+        let (patterns, paths) = cli.effective_patterns_and_paths();
+        assert_eq!(patterns.regexp, vec!["foo"]);
+        assert!(patterns.pattern.is_none());
+        assert_eq!(paths, vec![PathBuf::from("-weird")]);
+    }
+
+    #[test]
+    fn cli_regexp_and_pattern_file_positional_is_path() {
+        let cli = Cli::try_parse_from(["sift", "-e", "foo", "-f", "pats.txt", "dir1"]).unwrap();
+        let (patterns, paths) = cli.effective_patterns_and_paths();
+        assert_eq!(patterns.regexp, vec!["foo"]);
+        assert_eq!(
+            patterns.pattern_file.as_deref(),
+            Some(Path::new("pats.txt"))
+        );
+        assert!(patterns.pattern.is_none());
+        assert_eq!(paths, vec![PathBuf::from("dir1")]);
+    }
+
+    #[test]
+    fn cli_run_config_uses_remapped_paths() {
+        let cli = Cli::try_parse_from(["sift", "-e", "foo", "dir1"]).unwrap();
+        let tokens = ["sift".into(), "-e".into(), "foo".into(), "dir1".into()];
+        let argv = Argv::new(&tokens);
+        let config = cli.run_config(&argv).unwrap();
+        assert_eq!(config.search_paths, vec![PathBuf::from("dir1")]);
+        assert!(config.pattern.patterns.pattern.is_none());
+        assert_eq!(config.pattern.patterns.regexp, vec!["foo"]);
+    }
+
+    #[test]
     fn cli_parses_short_flags_before_pattern() {
         let cli = Cli::try_parse_from(["sift", "-n", "-H", "pattern"]).unwrap();
         assert!(cli.line_number_decl.line_number);
