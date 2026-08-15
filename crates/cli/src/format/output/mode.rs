@@ -32,11 +32,3 @@ pub enum InvertMatch {
     Off,
     On,
 }
-
-/// Whether `--debug` diagnostics should be written to stderr.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Debug {
-    #[default]
-    Off,
-    On,
-}

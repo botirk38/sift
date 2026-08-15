@@ -16,7 +16,6 @@ use super::input::{ContentTransform, ContentTransformConfig, InputSources};
 use super::output::{DebugNote, FilenameContext, IndexLoad, OutputArgv, OutputDecl, SearchDebug};
 use super::paths::CorpusScope;
 use super::pattern::{PatternArgv, PatternDecl, PatternInputUse, ResolvedPatterns};
-use crate::format::Debug;
 
 /// Resolved configuration for a search invocation (no Decl bags / Argv at execute).
 #[derive(Clone)]
@@ -279,7 +278,7 @@ impl Run {
     }
 
     fn emit_debug(&self, probe: DebugProbe<'_>) {
-        if !matches!(self.config.output_argv.mode.debug, Debug::On) {
+        if !self.config.output_argv.debug {
             return;
         }
         let notes = Self::debug_notes(

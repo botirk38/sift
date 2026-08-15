@@ -1,6 +1,6 @@
 use crate::format::output::style::{ColorSpecs, HyperlinkFormat, OutputBuffering};
 use crate::format::{
-    ColorChoice, ColumnLimit, ColumnOverflow, Debug, FilenameMode, LineStyleFlags, OutputEmission,
+    ColorChoice, ColumnLimit, ColumnOverflow, FilenameMode, LineStyleFlags, OutputEmission,
     PassthruMode, PrintFormat, PrintLineStyle, PrintRecordStyle, PrintSeparators, PrintSpec, Quiet,
     RecordTerminator,
 };
@@ -274,7 +274,6 @@ pub struct OutputModeFlags {
     pub stats: bool,
     pub json: bool,
     pub heading: bool,
-    pub debug: Debug,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -291,6 +290,7 @@ pub struct OutputArgv {
     pub buffering: OutputBuffering,
     pub line_number: Option<bool>,
     pub with_filename: Option<bool>,
+    pub debug: bool,
 }
 
 impl OutputArgv {
@@ -302,7 +302,6 @@ impl OutputArgv {
                 stats: Self::stats(tokens),
                 json: Self::json(tokens),
                 heading: Self::heading(tokens),
-                debug: Self::debug(tokens),
             },
             path: OutputPathFlags {
                 glob_case_insensitive: Self::glob_case_insensitive(tokens),
@@ -312,6 +311,7 @@ impl OutputArgv {
             buffering: Self::buffering(tokens),
             line_number: Self::line_number(tokens),
             with_filename: Self::with_filename(tokens),
+            debug: Self::debug(tokens),
         }
     }
 
@@ -404,13 +404,13 @@ impl OutputArgv {
         result
     }
 
-    fn debug(args: &[String]) -> Debug {
+    fn debug(args: &[String]) -> bool {
         let mut last_idx = 0usize;
-        let mut result = Debug::Off;
+        let mut result = false;
         for (i, arg) in args.iter().enumerate() {
             if arg == "--debug" && i >= last_idx {
                 last_idx = i;
-                result = Debug::On;
+                result = true;
             }
         }
         result
@@ -759,11 +759,8 @@ mod tests {
 
     #[test]
     fn output_argv_debug_flag() {
-        assert!(matches!(
-            out_argv(&["sift", "--debug", "pat"]).mode.debug,
-            Debug::On
-        ));
-        assert!(matches!(out_argv(&["sift", "pat"]).mode.debug, Debug::Off));
+        assert!(out_argv(&["sift", "--debug", "pat"]).debug);
+        assert!(!out_argv(&["sift", "pat"]).debug);
     }
 
     #[test]
