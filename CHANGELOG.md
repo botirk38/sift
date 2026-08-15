@@ -1,6 +1,19 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.8.1](https://github.com/botirk38/sift/releases/tag/v0.8.1) — 2026-08-15
+
+### Bug Fixes
+
+- scope --files PATH like ripgrep (#276)
+- --debug scan-scope walk when index absent (#275)
+- piped stdin with no paths searches stdin (rg parity) (#274)
+- omit JSON begin/end for zero-match files (#273)
+
+### Documentation
+
+- stop steering agents toward SIFT_NO_DAEMON (#268)
+
 ## [0.8.0](https://github.com/botirk38/sift/releases/tag/v0.8.0) — 2026-08-15
 
 ### Bug Fixes
