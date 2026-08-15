@@ -61,12 +61,26 @@ pub fn bench(c: &mut Criterion) {
 
     g.bench_function("patterns/positional", |b| {
         let cli = parse_cli(&["beta"]);
-        b.iter(|| black_box(ResolvedPatterns::resolve(black_box(&cli.pattern_config())).unwrap()));
+        b.iter(|| {
+            black_box(
+                ResolvedPatterns::resolve(black_box(
+                    &cli.pattern_config(sift_core::SearchMode::Lines).0,
+                ))
+                .unwrap(),
+            )
+        });
     });
 
     g.bench_function("patterns/repeated_e", |b| {
         let cli = parse_cli(&["-e", "foo", "-e", "bar", "-e", "baz"]);
-        b.iter(|| black_box(ResolvedPatterns::resolve(black_box(&cli.pattern_config())).unwrap()));
+        b.iter(|| {
+            black_box(
+                ResolvedPatterns::resolve(black_box(
+                    &cli.pattern_config(sift_core::SearchMode::Lines).0,
+                ))
+                .unwrap(),
+            )
+        });
     });
 
     g.bench_function("patterns/from_file", |b| {
@@ -75,7 +89,14 @@ pub fn bench(c: &mut Criterion) {
         let path = tmp.path().to_path_buf();
         b.iter_batched(
             || parse_cli(&["-f", path.to_str().unwrap()]),
-            |cli| black_box(ResolvedPatterns::resolve(black_box(&cli.pattern_config())).unwrap()),
+            |cli| {
+                black_box(
+                    ResolvedPatterns::resolve(black_box(
+                        &cli.pattern_config(sift_core::SearchMode::Lines).0,
+                    ))
+                    .unwrap(),
+                )
+            },
             BatchSize::SmallInput,
         );
     });
@@ -86,7 +107,8 @@ pub fn bench(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 cli_default
-                    .pattern_config()
+                    .pattern_config(sift_core::SearchMode::Lines)
+                    .0
                     .query(vec!["pattern".to_string()], black_box(&pattern_argv))
                     .and_then(Searcher::new)
                     .unwrap(),

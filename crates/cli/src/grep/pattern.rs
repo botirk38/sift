@@ -21,14 +21,39 @@ pub struct PatternArgs {
     pub regexp: Vec<String>,
     #[arg(short = 'f', long = "file", value_name = "FILE")]
     pub pattern_file: Option<PathBuf>,
-    #[arg(value_name = "PATTERN")]
+    /// Positional PATTERN after [`GrepScope::resolve`]; not a clap field.
+    #[arg(skip)]
     pub pattern: Option<String>,
 }
 
+/// Free arguments: `PATTERN [PATH ...]` or `PATH ...` with `-e`/`-f`/`--files`.
 #[derive(Args)]
 pub struct GrepScope {
     #[arg(value_name = "PATH", num_args = 0..)]
-    pub paths: Vec<PathBuf>,
+    pub args: Vec<String>,
+}
+
+impl GrepScope {
+    /// Split free args into positional pattern (when needed) and search paths.
+    ///
+    /// [`SearchMode::Paths`] (`--files`) and explicit `-e`/`-f` patterns take every
+    /// free arg as a path. Otherwise the first arg is the pattern and the rest are
+    /// paths.
+    #[must_use]
+    pub fn resolve(&self, patterns: &PatternArgs, mode: SearchMode) -> (PatternArgs, Vec<PathBuf>) {
+        let mut patterns = patterns.clone();
+        patterns.pattern = None;
+        let wants_positional = !matches!(mode, SearchMode::Paths)
+            && patterns.regexp.is_empty()
+            && patterns.pattern_file.is_none();
+        if wants_positional {
+            let mut args = self.args.iter();
+            patterns.pattern = args.next().cloned();
+            (patterns, args.map(PathBuf::from).collect())
+        } else {
+            (patterns, self.args.iter().map(PathBuf::from).collect())
+        }
+    }
 }
 
 #[derive(Args, Clone)]
@@ -639,9 +664,13 @@ mod tests {
     }
 
     fn pattern_config(args: &[&str]) -> PatternDecl {
-        crate::cli::Cli::try_parse_from(args)
-            .unwrap()
-            .pattern_config()
+        let cli = crate::cli::Cli::try_parse_from(args).unwrap();
+        let mode = if cli.filter_decl.files {
+            SearchMode::Paths
+        } else {
+            SearchMode::Lines
+        };
+        cli.pattern_config(mode).0
     }
 
     // ── PatternArgv case mode ──
@@ -992,8 +1021,7 @@ mod tests {
 
     #[test]
     fn resolve_patterns_regexp_and_positional_path() {
-        // With `-e`, the leftover positional is a search path (see Cli::effective_search_paths),
-        // so ResolvedPatterns only keeps the regexp patterns.
+        // With `-e`, GrepScope::resolve treats free args as search paths.
         let patterns = ResolvedPatterns::resolve(&pattern_config(&["sift", "-e", "foo", "bar"]))
             .unwrap()
             .patterns;
