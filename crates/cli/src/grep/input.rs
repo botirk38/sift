@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::io::Read;
+use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -102,8 +102,6 @@ pub struct InputSources {
     pub stdin_bytes: Vec<Vec<u8>>,
     /// `-` appeared on argv (stdin read even when empty).
     stdin_explicit: bool,
-    /// Implicit piped stdin with no paths (ripgrep parity).
-    stdin_implicit: bool,
 }
 
 impl InputSources {
@@ -123,14 +121,14 @@ impl InputSources {
             paths,
             stdin_bytes: Vec::new(),
             stdin_explicit,
-            stdin_implicit: false,
         }
     }
 
     /// Read stdin when requested and resolve implicit piped input.
     ///
     /// When stdin is not a TTY and no paths are given, search the pipe only
-    /// (ripgrep parity), whether or not an index is present.
+    /// (ripgrep parity), whether or not an index is present. An empty pipe does
+    /// not claim the search: corpus resolution still runs.
     ///
     /// # Errors
     ///
@@ -152,41 +150,28 @@ impl InputSources {
             && !self.stdin_explicit
             && self.paths.is_empty()
             && self.stdin_bytes.is_empty()
-            && stdin_is_pipe();
+            && !std::io::stdin().is_terminal();
         if implicit_stream {
             let mut bytes = Vec::new();
             std::io::stdin().read_to_end(&mut bytes)?;
             if !bytes.is_empty() {
-                self.stdin_implicit = true;
                 self.stdin_bytes.push(bytes);
             }
         }
         Ok(self)
     }
 
-    #[must_use]
-    pub const fn has_paths(&self) -> bool {
-        !self.paths.is_empty()
-    }
-
-    #[must_use]
-    pub const fn has_streams(&self) -> bool {
-        !self.stdin_bytes.is_empty()
-    }
-
     /// Whether corpus candidates should be resolved (index/walk).
     ///
-    /// Returns `false` for stdin-only runs (explicit `-`, implicit pipe, or
-    /// empty explicit `-` with no paths). Mixed runs (paths plus stdin) return
-    /// `true`; callers resolve corpus candidates and search them via
-    /// [`sift_core::Searcher`].
-    /// appends streams.
+    /// Returns `false` for stdin-only runs: explicit `-` (even when empty) or a
+    /// non-empty implicit pipe with no paths. Mixed runs (paths plus stdin)
+    /// return `true`; callers resolve corpus candidates and append streams.
     #[must_use]
     pub const fn resolve_candidates(&self) -> bool {
-        if self.has_paths() {
+        if !self.paths.is_empty() {
             return true;
         }
-        !(self.stdin_explicit || self.stdin_implicit || self.has_streams())
+        !self.stdin_explicit && self.stdin_bytes.is_empty()
     }
 }
 
@@ -204,12 +189,6 @@ impl InputSources {
         }
         streams
     }
-}
-
-fn stdin_is_pipe() -> bool {
-    use std::io::IsTerminal;
-
-    !std::io::stdin().is_terminal()
 }
 
 struct Preprocessor {
@@ -331,7 +310,6 @@ mod tests {
             paths: vec![PathBuf::from("src")],
             stdin_bytes: vec![b"stream\n".to_vec()],
             stdin_explicit: true,
-            stdin_implicit: false,
         };
         assert!(sources.resolve_candidates());
     }
@@ -342,7 +320,6 @@ mod tests {
             paths: Vec::new(),
             stdin_bytes: vec![b"stream\n".to_vec()],
             stdin_explicit: true,
-            stdin_implicit: false,
         };
         assert!(!sources.resolve_candidates());
     }
@@ -353,7 +330,6 @@ mod tests {
             paths: Vec::new(),
             stdin_bytes: Vec::new(),
             stdin_explicit: true,
-            stdin_implicit: false,
         };
         assert!(!sources.resolve_candidates());
     }
@@ -364,7 +340,6 @@ mod tests {
             paths: Vec::new(),
             stdin_bytes: vec![b"stream\n".to_vec()],
             stdin_explicit: false,
-            stdin_implicit: true,
         };
         assert!(!sources.resolve_candidates());
     }
@@ -375,7 +350,6 @@ mod tests {
             paths: vec![PathBuf::from("src")],
             stdin_bytes: Vec::new(),
             stdin_explicit: false,
-            stdin_implicit: false,
         };
         assert!(sources.resolve_candidates());
     }
@@ -386,7 +360,6 @@ mod tests {
             paths: Vec::new(),
             stdin_bytes: Vec::new(),
             stdin_explicit: false,
-            stdin_implicit: false,
         };
         assert!(sources.resolve_candidates());
     }
