@@ -120,9 +120,12 @@ fn binary_stdin_reports_match_before_nul() {
     let out = output_with_stdin(p.sift(), ["findme"], b"findme\0later\n");
 
     assert_success(&out);
-    assert_stdout_contains(&out, "binary file matches");
-    assert_stdout_contains(&out, "found NUL byte around offset 6");
+    assert_stdout_contains(
+        &out,
+        "binary file matches (found \"/0\" byte around offset 6)",
+    );
     assert_stdout_not_contains(&out, "findme");
+    assert_stdout_not_contains(&out, "<stdin>");
     assert_stderr_empty(&out);
 }
 
