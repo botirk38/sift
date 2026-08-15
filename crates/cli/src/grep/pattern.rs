@@ -992,7 +992,7 @@ mod tests {
 
     #[test]
     fn resolve_patterns_regexp_and_positional_path() {
-        // With `-e`, the leftover positional is a search path (see Cli::effective_patterns_and_paths),
+        // With `-e`, the leftover positional is a search path (see Cli::effective_search_paths),
         // so ResolvedPatterns only keeps the regexp patterns.
         let patterns = ResolvedPatterns::resolve(&pattern_config(&["sift", "-e", "foo", "bar"]))
             .unwrap()
