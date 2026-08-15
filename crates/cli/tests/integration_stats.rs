@@ -176,3 +176,26 @@ fn stats_with_files_without_match_reports_presence_tally() {
         "expected files-with-matches count, got: {stderr:?}"
     );
 }
+
+#[test]
+fn files_stats_does_not_claim_paths_contained_matches() {
+    let p = TestProject::new("stats-files");
+    p.write("a.txt", "hello\n");
+    p.write("b.txt", "world\n");
+    p.build_index();
+
+    let output = p.index_output(["--files", "--stats"]);
+    common::assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("a.txt") && stdout.contains("b.txt"),
+        "expected both paths listed, got: {stdout:?}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // rg `--files --stats` emits no human stats; at minimum do not claim listed
+    // paths "contained matches".
+    assert!(
+        !stderr.contains("files contained matches"),
+        "expected no human match tallies for --files --stats, got: {stderr:?}"
+    );
+}
