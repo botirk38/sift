@@ -307,7 +307,7 @@ impl PatternArgv {
                 break;
             }
             let next = i + 1;
-            let parsed = if arg == "--pcre2" {
+            let parsed = if arg == "--pcre2" || arg == "-P" {
                 Some((i, RegexEngine::Pcre2, 0usize))
             } else if arg == "--no-pcre2" {
                 Some((i, RegexEngine::Rust, 0))
@@ -739,6 +739,62 @@ mod tests {
             )
             .case_mode,
             CaseMode::Insensitive
+        );
+    }
+
+    // ── regex engine last-wins ──
+
+    #[test]
+    fn regex_engine_default_rust() {
+        assert_eq!(
+            PatternArgv::resolve(&Argv::new(&args(&["sift", "pat"])), ZeroCounts::Omit)
+                .regex_engine,
+            RegexEngine::Rust
+        );
+    }
+
+    #[test]
+    fn regex_engine_pcre2_long() {
+        assert_eq!(
+            PatternArgv::resolve(
+                &Argv::new(&args(&["sift", "--pcre2", "pat"])),
+                ZeroCounts::Omit
+            )
+            .regex_engine,
+            RegexEngine::Pcre2
+        );
+    }
+
+    #[test]
+    fn regex_engine_pcre2_short() {
+        assert_eq!(
+            PatternArgv::resolve(&Argv::new(&args(&["sift", "-P", "pat"])), ZeroCounts::Omit)
+                .regex_engine,
+            RegexEngine::Pcre2
+        );
+    }
+
+    #[test]
+    fn regex_engine_short_pcre2_last_wins_over_no_pcre2() {
+        assert_eq!(
+            PatternArgv::resolve(
+                &Argv::new(&args(&["sift", "--no-pcre2", "-P", "pat"])),
+                ZeroCounts::Omit
+            )
+            .regex_engine,
+            RegexEngine::Pcre2
+        );
+    }
+
+    #[test]
+    fn regex_engine_no_pcre2_last_wins_over_short() {
+        assert_eq!(
+            PatternArgv::resolve(
+                &Argv::new(&args(&["sift", "-P", "--no-pcre2", "pat"])),
+                ZeroCounts::Omit
+            )
+            .regex_engine,
+            RegexEngine::Rust
         );
     }
 

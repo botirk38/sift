@@ -197,6 +197,12 @@ mod tests {
     }
 
     #[test]
+    fn engine_pcre2_short_flag() {
+        let cli = Cli::try_parse_from(["sift", "-P", "pat"]).unwrap();
+        assert!(cli.engine_decl.regex.pcre2.pcre2);
+    }
+
+    #[test]
     fn engine_auto_hybrid_flag() {
         let cli = Cli::try_parse_from(["sift", "--auto-hybrid-regex", "pat"]).unwrap();
         assert!(cli.engine_decl.regex.pcre2.auto_hybrid_regex);
