@@ -85,7 +85,7 @@ export SIFT_NO_DAEMON=1
 | `-h` | No filename | Help |
 | Tool upgrade | Package manager | `sift update` |
 
-Full matrix: [docs/rg-compat-matrix.md](../../docs/rg-compat-matrix.md).
+Flag/search UX aims for ripgrep parity; remaining gaps are tracked as GitHub issues.
 
 ## Install from source
 

@@ -85,11 +85,13 @@ Today the default configured index is `ngram-3`, a runtime-width N-gram index. A
 
 ## Differences from ripgrep
 
-- Requires `sift index build` before searching (async via daemon by default, `--wait` for blocking).
+Product model (not flag gaps):
+
+- Requires `sift index build` before indexed search (async via daemon by default, `--wait` for blocking).
 - Search paths must sit under the indexed corpus root.
 - `SIFT_NO_DAEMON=1` disables background indexing.
 
-See [`docs/rg-compat-matrix.md`](docs/rg-compat-matrix.md) for the full flag matrix.
+Flag and search UX aim for ripgrep parity; remaining gaps are tracked as GitHub issues.
 
 ## Development
 

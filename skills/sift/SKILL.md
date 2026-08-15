@@ -92,4 +92,3 @@ With the daemon enabled (default), filesystem watches also refresh the index in 
 
 - [reference.md](reference.md): all flags, daemon details, limitations, rg differences
 - [README.md](../../README.md): user quick start
-- [docs/rg-compat-matrix.md](../../docs/rg-compat-matrix.md): flag parity with ripgrep
