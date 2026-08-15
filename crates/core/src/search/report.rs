@@ -47,9 +47,10 @@ impl Report {
 
         let stats = summary.stats.collect().then_some(Stats {
             matches: match summary.mode {
-                SearchMode::FilesWithMatches
-                | SearchMode::FilesWithoutMatch
-                | SearchMode::Paths => MatchTotals::None,
+                // File-listing modes: ripgrep still reports a match tally (one per
+                // selected file for `-l`). Paths / without-match keep MatchTotals::None.
+                SearchMode::FilesWithMatches => MatchTotals::Lines(files_with_matches),
+                SearchMode::FilesWithoutMatch | SearchMode::Paths => MatchTotals::None,
                 SearchMode::CountMatches { .. } | SearchMode::Matches => {
                     MatchTotals::Spans(match_spans)
                 }
