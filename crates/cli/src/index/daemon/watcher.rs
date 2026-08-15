@@ -13,40 +13,39 @@ use notify::Watcher;
 
 use super::{DEBOUNCE_MS, DaemonError, Event, StorePaths};
 
+/// Concrete notify backend. An enum is required because the two watcher types
+/// differ and fallback must switch between them at runtime.
 enum Backend {
     Native(notify::RecommendedWatcher),
     Poll(notify::PollWatcher),
 }
 
-impl Backend {
-    fn watch(&mut self, root: &Path, mode: RecursiveMode) -> notify::Result<()> {
-        match self {
-            Self::Native(watcher) => watcher.watch(root, mode),
-            Self::Poll(watcher) => watcher.watch(root, mode),
-        }
-    }
-
-    fn unwatch(&mut self, root: &Path) -> notify::Result<()> {
-        match self {
-            Self::Native(watcher) => watcher.unwatch(root),
-            Self::Poll(watcher) => watcher.unwatch(root),
-        }
-    }
-
-    const fn is_native(&self) -> bool {
-        matches!(self, Self::Native(_))
-    }
-}
-
 pub(super) struct CorpusWatcher {
     backend: Backend,
     pub(super) root: PathBuf,
+    /// Kept so [`Self::rebind`] can rebuild a poll watcher after native failure.
     events: mpsc::Sender<Event>,
 }
 
 impl CorpusWatcher {
     pub(super) fn new(events: &mpsc::Sender<Event>, root: &Path) -> Result<Self, DaemonError> {
-        match Self::native(events, root) {
+        let tx = events.clone();
+        match notify::RecommendedWatcher::new(
+            move |res: Result<notify::Event, notify::Error>| {
+                if let Ok(event) = res {
+                    let _ = tx.send(Event::FsChange(event));
+                }
+            },
+            notify::Config::default(),
+        )
+        .and_then(|mut w| {
+            w.watch(root, RecursiveMode::Recursive)?;
+            Ok(Self {
+                backend: Backend::Native(w),
+                root: root.to_path_buf(),
+                events: events.clone(),
+            })
+        }) {
             Ok(watcher) => Ok(watcher),
             Err(err) => {
                 eprintln!(
@@ -61,44 +60,25 @@ impl CorpusWatcher {
         }
     }
 
-    fn native(events: &mpsc::Sender<Event>, root: &Path) -> notify::Result<Self> {
-        let tx = events.clone();
-        let backend = Backend::Native(notify::RecommendedWatcher::new(
-            move |res: Result<notify::Event, notify::Error>| {
-                if let Ok(event) = res {
-                    let _ = tx.send(Event::FsChange(event));
-                }
-            },
-            notify::Config::default(),
-        )?);
-        let mut watcher = Self {
-            backend,
-            root: root.to_path_buf(),
-            events: events.clone(),
-        };
-        watcher.backend.watch(root, RecursiveMode::Recursive)?;
-        Ok(watcher)
-    }
-
+    /// Build a polling watcher. Shared by [`Self::new`] fallback and [`Self::rebind`].
     fn poll(events: &mpsc::Sender<Event>, root: &Path) -> notify::Result<Self> {
         let tx = events.clone();
         let config =
             notify::Config::default().with_poll_interval(Duration::from_millis(DEBOUNCE_MS));
-        let backend = Backend::Poll(notify::PollWatcher::new(
+        let mut w = notify::PollWatcher::new(
             move |res: Result<notify::Event, notify::Error>| {
                 if let Ok(event) = res {
                     let _ = tx.send(Event::FsChange(event));
                 }
             },
             config,
-        )?);
-        let mut watcher = Self {
-            backend,
+        )?;
+        w.watch(root, RecursiveMode::Recursive)?;
+        Ok(Self {
+            backend: Backend::Poll(w),
             root: root.to_path_buf(),
             events: events.clone(),
-        };
-        watcher.backend.watch(root, RecursiveMode::Recursive)?;
-        Ok(watcher)
+        })
     }
 
     pub(super) fn rebind(&mut self, store: &Path) -> Result<(), DaemonError> {
@@ -107,27 +87,35 @@ impl CorpusWatcher {
         if root == self.root {
             return Ok(());
         }
-        let _ = self.backend.unwatch(self.root.as_path());
-        match self.backend.watch(&root, RecursiveMode::Recursive) {
-            Ok(()) => {
+        match &mut self.backend {
+            Backend::Native(w) => {
+                let _ = w.unwatch(self.root.as_path());
+            }
+            Backend::Poll(w) => {
+                let _ = w.unwatch(self.root.as_path());
+            }
+        }
+        let watch_err = match &mut self.backend {
+            Backend::Native(w) => w.watch(&root, RecursiveMode::Recursive).err(),
+            Backend::Poll(w) => w.watch(&root, RecursiveMode::Recursive).err(),
+        };
+        match watch_err {
+            None => {
                 self.root = root;
                 Ok(())
             }
-            Err(err) if self.backend.is_native() => {
+            Some(err) if matches!(self.backend, Backend::Native(_)) => {
                 eprintln!(
                     "sift-daemon: native filesystem watcher unavailable ({err}); falling back to polling"
                 );
-                match Self::poll(&self.events, &root) {
-                    Ok(replacement) => {
-                        *self = replacement;
-                        Ok(())
-                    }
-                    Err(poll_err) => Err(DaemonError::message(format!(
+                *self = Self::poll(&self.events, &root).map_err(|poll_err| {
+                    DaemonError::message(format!(
                         "poll fallback after native watcher failed ({err}): {poll_err}"
-                    ))),
-                }
+                    ))
+                })?;
+                Ok(())
             }
-            Err(err) => Err(DaemonError::message(err.to_string())),
+            Some(err) => Err(DaemonError::message(err.to_string())),
         }
     }
 }
@@ -150,6 +138,6 @@ mod tests {
         let (tx, _rx) = mpsc::channel();
         let watcher = CorpusWatcher::poll(&tx, dir.path()).expect("poll watcher");
         assert_eq!(watcher.root.as_path(), dir.path());
-        assert!(!watcher.backend.is_native());
+        assert!(matches!(watcher.backend, Backend::Poll(_)));
     }
 }
