@@ -3,9 +3,7 @@ mod common;
 use std::thread;
 use std::time::Duration;
 
-use common::{
-    TestProject, abs_path, assert_exit_code, assert_success, normalize_stderr, normalize_stdout,
-};
+use common::{TestProject, assert_exit_code, assert_success, normalize_stderr, normalize_stdout};
 
 #[test]
 fn sortr_path_reverses_search_output() {
@@ -109,14 +107,7 @@ fn sort_files_maps_to_path_sorting() {
     let out = p.walk_output(["--files", "--sort-files"]);
 
     assert_success(&out);
-    assert_eq!(
-        normalize_stdout(&out),
-        format!(
-            "{}\n{}\n",
-            abs_path(p.root(), "a.txt"),
-            abs_path(p.root(), "b.txt")
-        )
-    );
+    assert_eq!(normalize_stdout(&out), "a.txt\nb.txt\n");
 }
 
 #[test]

@@ -119,13 +119,12 @@ pub struct Cli {
 impl Cli {
     /// Patterns for search after clap parse.
     ///
-    /// When `-e`/`-f` are used, clap still binds the first free positional to
-    /// `PatternArgs::pattern`. Ripgrep treats that positional as a search path, so
-    /// drop it here (see [`Self::effective_search_paths`]).
+    /// When `-e`/`-f` or `--files` are used, clap still binds the first free
+    /// positional to `PatternArgs::pattern`. Ripgrep treats that positional as a
+    /// search path, so drop it here (see [`Self::effective_search_paths`]).
     fn effective_patterns(&self) -> crate::grep::pattern::PatternArgs {
         let mut patterns = self.patterns.clone();
-        let explicit = !patterns.regexp.is_empty() || patterns.pattern_file.is_some();
-        if explicit {
+        if self.pattern_positional_is_path() {
             patterns.pattern = None;
         }
         patterns
@@ -133,15 +132,26 @@ impl Cli {
 
     /// Search paths after clap parse.
     ///
-    /// When `-e`/`-f` are used, prepend clap's leftover positional (if any) onto
-    /// `search_scope.paths` so scoped searches match ripgrep.
+    /// When `-e`/`-f` or `--files` are used, prepend clap's leftover positional
+    /// (if any) onto `search_scope.paths` so scoped searches match ripgrep.
     fn effective_search_paths(&self) -> Vec<PathBuf> {
         let mut paths = self.search_scope.paths.clone();
-        let explicit = !self.patterns.regexp.is_empty() || self.patterns.pattern_file.is_some();
-        if explicit && let Some(positional) = self.patterns.pattern.as_ref() {
+        if self.pattern_positional_is_path()
+            && let Some(positional) = self.patterns.pattern.as_ref()
+        {
             paths.insert(0, PathBuf::from(positional));
         }
         paths
+    }
+
+    /// Whether clap's `PATTERN` positional is actually a search path.
+    ///
+    /// True when `-e`/`-f` supply the pattern, or when `--files` lists paths
+    /// with no pattern at all.
+    const fn pattern_positional_is_path(&self) -> bool {
+        !self.patterns.regexp.is_empty()
+            || self.patterns.pattern_file.is_some()
+            || self.filter_decl.files
     }
 
     #[must_use]
@@ -661,6 +671,36 @@ mod tests {
         assert_eq!(config.search_paths, vec![PathBuf::from("dir1")]);
         assert!(config.pattern.patterns.pattern.is_none());
         assert_eq!(config.pattern.patterns.regexp, vec!["foo"]);
+    }
+
+    #[test]
+    fn cli_files_positional_becomes_search_path() {
+        let cli = Cli::try_parse_from(["sift", "--files", "subdir"]).unwrap();
+        let patterns = cli.effective_patterns();
+        let paths = cli.effective_search_paths();
+        assert!(patterns.pattern.is_none());
+        assert_eq!(paths, vec![PathBuf::from("subdir")]);
+        let tokens = ["sift".into(), "--files".into(), "subdir".into()];
+        let config = cli.run_config(&Argv::new(&tokens)).unwrap();
+        assert_eq!(config.search_mode, SearchMode::Paths);
+    }
+
+    #[test]
+    fn cli_files_preserves_path_order_with_extra_paths() {
+        let cli = Cli::try_parse_from(["sift", "--files", "a", "b"]).unwrap();
+        let patterns = cli.effective_patterns();
+        let paths = cli.effective_search_paths();
+        assert!(patterns.pattern.is_none());
+        assert_eq!(paths, vec![PathBuf::from("a"), PathBuf::from("b")]);
+    }
+
+    #[test]
+    fn cli_files_without_path_leaves_paths_empty() {
+        let cli = Cli::try_parse_from(["sift", "--files"]).unwrap();
+        let patterns = cli.effective_patterns();
+        let paths = cli.effective_search_paths();
+        assert!(patterns.pattern.is_none());
+        assert!(paths.is_empty());
     }
 
     #[test]
