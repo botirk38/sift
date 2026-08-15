@@ -138,11 +138,7 @@ impl Run {
         let output_argv = &self.config.output_argv;
         let line_number_override = self.line_number_override();
         let session = self.prepare_session(&sources.paths)?;
-        let indexes_empty = session
-            .indexes
-            .as_ref()
-            .is_none_or(|indexes| !indexes.queryable());
-        let sources = sources.resolve(patterns.input, indexes_empty)?;
+        let sources = sources.resolve(patterns.input)?;
         let transform = self.config.content.transform()?;
         let filename_ctx = Self::filename_context(mode, &sources);
         let print_spec = self

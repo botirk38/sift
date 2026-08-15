@@ -102,7 +102,7 @@ pub struct InputSources {
     pub stdin_bytes: Vec<Vec<u8>>,
     /// `-` appeared on argv (stdin read even when empty).
     stdin_explicit: bool,
-    /// Implicit piped stdin with no paths and no index.
+    /// Implicit piped stdin with no paths (ripgrep parity).
     stdin_implicit: bool,
 }
 
@@ -129,13 +129,15 @@ impl InputSources {
 
     /// Read stdin when requested and resolve implicit piped input.
     ///
+    /// When stdin is not a TTY and no paths are given, search the pipe only
+    /// (ripgrep parity), whether or not an index is present.
+    ///
     /// # Errors
     ///
     /// Returns an error if stdin cannot be read.
     pub fn resolve(
         mut self,
         pattern_input: super::pattern::PatternInputUse,
-        indexes_empty: bool,
     ) -> anyhow::Result<Self> {
         if self.stdin_explicit && self.stdin_bytes.is_empty() {
             let mut bytes = Vec::new();
@@ -150,7 +152,6 @@ impl InputSources {
             && !self.stdin_explicit
             && self.paths.is_empty()
             && self.stdin_bytes.is_empty()
-            && indexes_empty
             && stdin_is_pipe();
         if implicit_stream {
             let mut bytes = Vec::new();
