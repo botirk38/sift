@@ -89,7 +89,7 @@ Product model (not flag gaps):
 
 - Requires `sift index build` before indexed search (async via daemon by default, `--wait` for blocking).
 - Search paths must sit under the indexed corpus root.
-- `SIFT_NO_DAEMON=1` disables background indexing.
+- Background daemon is the default; `SIFT_NO_DAEMON=1` is only an escape hatch when a daemon cannot run.
 
 Flag and search UX aim for ripgrep parity; remaining gaps are tracked as GitHub issues.
 

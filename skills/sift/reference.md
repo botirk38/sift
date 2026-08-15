@@ -65,11 +65,9 @@ Environment: `SIFT_REPO`, `SIFT_VERSION`, `PREFIX`, `BIN_DIR` (same as install.s
 
 ## Daemon
 
-After `index build`, `index update`, or search, sift may spawn `sift-daemon` to reconcile index work over IPC and refresh on filesystem changes. Disable for automation:
+After `index build`, `index update`, or search, sift may spawn `sift-daemon` to reconcile index work over IPC and refresh on filesystem changes. Keep the daemon enabled for normal interactive and agent use. Prefer `--wait` on index commands when you need the rebuild to finish before the next search.
 
-```bash
-export SIFT_NO_DAEMON=1
-```
+`SIFT_NO_DAEMON=1` disables daemon spawn when a background process is unavailable (for example constrained CI). It is not required for ordinary workflows.
 
 The daemon prefers the native filesystem watcher from `notify` (`RecommendedWatcher`). If that backend cannot start, it falls back to polling and logs a warning. On macOS this commonly happens under seatbelt sandboxes that deny Mach lookup of `com.apple.FSEvents` (for example Cursor’s default agent sandbox).
 

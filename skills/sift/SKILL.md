@@ -86,7 +86,7 @@ With the daemon enabled (default), filesystem watches also refresh the index in 
 - Rust `regex` syntax by default; `-F` for fixed strings
 - To search for a pattern that matches a subcommand name: `sift -- index` or `sift -e index`
 - `-h` is help (not "no filename"); use `--no-filename` instead
-- Scripts and CI: `export SIFT_NO_DAEMON=1` to disable background daemon
+- Leave the daemon enabled for normal use. Prefer `index build --wait` / `index update --wait` when you need a blocking rebuild. `SIFT_NO_DAEMON=1` is an escape hatch for environments that cannot run a background daemon (for example some CI images), not the default agent workflow.
 
 ## Additional resources
 
