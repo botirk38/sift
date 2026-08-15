@@ -73,7 +73,7 @@ export SIFT_NO_DAEMON=1
 ## Limitations
 
 - Requires `sift index build` for indexed speedup.
-- No PCRE2 (`-P` not supported).
+- PCRE2 via `--pcre2` / `--engine pcre2` (no `-P` short yet; disables index narrowing).
 - Patterns without indexable literals may full-scan at roughly ripgrep speed.
 - Not a replacement for `git log` / history search.
 
