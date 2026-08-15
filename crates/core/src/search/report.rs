@@ -47,9 +47,13 @@ impl Report {
 
         let stats = summary.stats.collect().then_some(Stats {
             matches: match summary.mode {
-                SearchMode::FilesWithMatches
-                | SearchMode::FilesWithoutMatch
-                | SearchMode::Paths => MatchTotals::None,
+                // `-l` / `--files-without-match` stop after the first hit per file
+                // (`max_matches = 1`), so the tally is the number of files that
+                // contained a hit — not a full span scan. `--files` does not search.
+                SearchMode::FilesWithMatches | SearchMode::FilesWithoutMatch => {
+                    MatchTotals::Lines(files_with_matches)
+                }
+                SearchMode::Paths => MatchTotals::None,
                 SearchMode::CountMatches { .. } | SearchMode::Matches => {
                     MatchTotals::Spans(match_spans)
                 }
