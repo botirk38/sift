@@ -31,7 +31,6 @@ pub(super) struct EventRenderer<'a> {
     context_requested: bool,
     bytes: Vec<u8>,
     json_stats: HashMap<Arc<str>, FileJsonStats>,
-    json_begun: HashSet<Arc<str>>,
     headings: HashSet<Arc<str>>,
     binary_paths: HashSet<Arc<str>>,
 }
@@ -52,7 +51,6 @@ impl<'a> EventRenderer<'a> {
             context_requested,
             bytes: Vec::new(),
             json_stats: HashMap::new(),
-            json_begun: HashSet::new(),
             headings: HashSet::new(),
             binary_paths: HashSet::new(),
         }
@@ -495,13 +493,9 @@ impl EventRenderer<'_> {
 
     fn end(&mut self, event: &FileEvent) -> sift_core::Result<()> {
         if matches!(self.output.format, PrintFormat::Json) {
-            if !self.json_begun.remove(event.origin.key().as_ref()) {
+            let Some(stats) = self.json_stats.remove(event.origin.key().as_ref()) else {
                 return Ok(());
-            }
-            let stats = self
-                .json_stats
-                .remove(event.origin.key().as_ref())
-                .unwrap_or_default();
+            };
             let path = event.origin.display(self.output.lines.path_display);
             let value = serde_json::json!({
                 "type": "end",
@@ -520,8 +514,8 @@ impl EventRenderer<'_> {
     }
 
     fn json_begin(&mut self, origin: &Origin) -> sift_core::Result<()> {
-        let key = Arc::from(origin.key().as_ref());
-        if !self.json_begun.insert(key) {
+        let key: Arc<str> = Arc::from(origin.key().as_ref());
+        if self.json_stats.contains_key(key.as_ref()) {
             return Ok(());
         }
         let path = origin.display(self.output.lines.path_display);
@@ -529,7 +523,9 @@ impl EventRenderer<'_> {
             "type": "begin",
             "data": { "path": { "text": Self::display_text(path) } }
         });
-        self.write_json(&value)
+        self.write_json(&value)?;
+        self.json_stats.insert(key, FileJsonStats::default());
+        Ok(())
     }
 
     fn write_json(&mut self, value: &serde_json::Value) -> sift_core::Result<()> {
