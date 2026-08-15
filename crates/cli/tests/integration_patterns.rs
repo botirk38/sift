@@ -11,7 +11,8 @@ fn pattern_file_roundtrip() {
     p.write("patterns.txt", "# comment\nbeta\n");
     p.build_index();
 
-    let out = p.index_output(["-f", "patterns.txt", "beta"]);
+    // With `-f`, leftover positionals are search paths (ripgrep), not extra patterns.
+    let out = p.index_output(["-f", "patterns.txt"]);
     assert_success(&out);
     assert_stdout_contains(&out, "beta");
 }
@@ -30,14 +31,15 @@ fn repeated_e_patterns_are_or_combined() {
 }
 
 #[test]
-fn pattern_file_and_positional_pattern_are_combined() {
-    let p = TestProject::new("patterns-file-plus-positional");
+fn pattern_file_and_regexp_are_combined() {
+    let p = TestProject::new("patterns-file-plus-regexp");
     p.write("a.txt", "alpha\n");
     p.write("b.txt", "beta\n");
     p.write("patterns.txt", "alpha\n");
     p.build_index();
 
-    let out = p.index_output(["-f", "patterns.txt", "beta"]);
+    // Ripgrep: combine `-f` with another pattern via `-e`, not a free positional.
+    let out = p.index_output(["-f", "patterns.txt", "-e", "beta"]);
     assert_success(&out);
     assert_stdout_contains(&out, &rel_match("a.txt", "alpha"));
     assert_stdout_contains(&out, &rel_match("b.txt", "beta"));
