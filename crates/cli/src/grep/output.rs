@@ -542,8 +542,8 @@ impl OutputDecl {
     }
 
     #[must_use]
-    pub const fn print_stats(output_argv: &OutputArgv, mode: SearchMode) -> bool {
-        output_argv.mode.stats || matches!(Self::format(output_argv, mode), PrintFormat::Json)
+    pub const fn print_stats(output_argv: &OutputArgv, _mode: SearchMode) -> bool {
+        output_argv.mode.stats
     }
 
     pub fn write_stats(stats: &Stats) {

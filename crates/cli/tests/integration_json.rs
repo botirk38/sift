@@ -59,7 +59,7 @@ fn json_emits_context_events_with_empty_submatches() {
 }
 
 #[test]
-fn json_implies_stats_on_stderr() {
+fn json_does_not_imply_human_stats_on_stderr() {
     let p = TestProject::new("json-stats-stderr");
     p.write("a.txt", "x\n");
     p.build_index();
@@ -68,8 +68,8 @@ fn json_implies_stats_on_stderr() {
     assert_success(&output);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("matches") && stderr.contains("bytes searched"),
-        "expected --stats-style lines on stderr: {stderr:?}"
+        !stderr.contains("bytes searched"),
+        "expected quiet stderr without --stats, got: {stderr:?}"
     );
 }
 
