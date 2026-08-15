@@ -6,8 +6,8 @@ use crate::format::{
 };
 use clap::{ArgAction, Args};
 use sift_core::SearchMode;
-use sift_core::candidates::ScanScope;
-use sift_core::search::Stats;
+use sift_core::candidates::{ScanScope, SnapshotFreshness};
+use sift_core::search::{Narrowing, Stats};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -176,92 +176,69 @@ pub struct DebugDecl {
     pub debug_flag: bool,
 }
 
-/// Whether an index directory loaded for this search.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum IndexLoad {
-    Absent,
-    Present { queryable: bool },
-}
-
-/// Skip / fallback reasons surfaced by `--debug`.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum DebugNote {
-    IndexAbsent,
-    IndexNotQueryable,
-    NarrowingDisabled,
-    SnapshotStale,
-    StreamsOnly,
-    ContentTransform,
-}
-
-/// Structured `--debug` diagnostics written to stderr (not stdout).
-pub struct SearchDebug<'a> {
+/// Values printed by `--debug` on stderr (not stdout).
+pub struct Debug<'a> {
     pub sift_dir: &'a Path,
     pub corpus_root: &'a Path,
-    pub index: IndexLoad,
-    pub search_mode: SearchMode,
+    pub indexes: Option<&'a sift_core::Indexes>,
+    pub mode: SearchMode,
     pub patterns: &'a [String],
-    pub scan_scope: ScanScope,
-    pub candidate_bound: usize,
-    pub stream_count: usize,
-    pub notes: &'a [DebugNote],
+    pub scan: ScanScope,
+    pub narrowing: Narrowing,
+    pub transform: bool,
+    pub candidates: usize,
+    pub streams: usize,
 }
 
-impl SearchDebug<'_> {
+impl Debug<'_> {
     pub fn write(&self) {
         eprintln!("DEBUG sift-dir: {}", self.sift_dir.display());
         eprintln!("DEBUG corpus-root: {}", self.corpus_root.display());
-        match self.index {
-            IndexLoad::Absent => eprintln!("DEBUG index: absent"),
-            IndexLoad::Present { queryable: true } => {
+        match self.indexes {
+            None => eprintln!("DEBUG index: absent"),
+            Some(indexes) if indexes.queryable() => {
                 eprintln!("DEBUG index: loaded (queryable)");
             }
-            IndexLoad::Present { queryable: false } => {
-                eprintln!("DEBUG index: loaded (not queryable)");
-            }
+            Some(_) => eprintln!("DEBUG index: loaded (not queryable)"),
         }
-        eprintln!("DEBUG search-mode: {:?}", self.search_mode);
+        eprintln!("DEBUG search-mode: {:?}", self.mode);
         eprintln!(
             "DEBUG patterns: {} {:?}",
             self.patterns.len(),
             self.patterns
         );
-        eprintln!(
-            "DEBUG scan-scope: {}",
-            Self::scan_scope_label(self.scan_scope)
-        );
-        eprintln!("DEBUG candidates: {} (upper bound)", self.candidate_bound);
-        eprintln!("DEBUG streams: {}", self.stream_count);
-        for note in self.notes {
-            eprintln!("DEBUG note: {}", Self::note_label(*note));
-        }
-    }
-
-    const fn scan_scope_label(scope: ScanScope) -> &'static str {
-        match scope {
+        let scan = match self.scan {
             ScanScope::StreamsOnly => "streams-only",
             ScanScope::Walk { .. } => "walk",
             ScanScope::Index {
-                freshness: sift_core::SnapshotFreshness::Current,
+                freshness: SnapshotFreshness::Current,
                 ..
             } => "index (freshness=current)",
             ScanScope::Index {
-                freshness: sift_core::SnapshotFreshness::Stale,
+                freshness: SnapshotFreshness::Stale,
                 ..
             } => "index (freshness=stale)",
+        };
+        eprintln!("DEBUG scan-scope: {scan}");
+        eprintln!("DEBUG candidates: {} (upper bound)", self.candidates);
+        eprintln!("DEBUG streams: {}", self.streams);
+        if matches!(self.narrowing, Narrowing::Disabled) {
+            eprintln!("DEBUG note: index narrowing disabled");
         }
-    }
-
-    const fn note_label(note: DebugNote) -> &'static str {
-        match note {
-            DebugNote::IndexAbsent => "index absent; walk or streams only",
-            DebugNote::IndexNotQueryable => "index not queryable; falling back to walk",
-            DebugNote::NarrowingDisabled => "index narrowing disabled",
-            DebugNote::SnapshotStale => "snapshot stale",
-            DebugNote::StreamsOnly => "scan scope is streams-only",
-            DebugNote::ContentTransform => {
-                "content transform active; candidates searched as streams"
+        if matches!(
+            self.scan,
+            ScanScope::Index {
+                freshness: SnapshotFreshness::Stale,
+                ..
             }
+        ) {
+            eprintln!("DEBUG note: snapshot stale");
+        }
+        if matches!(self.scan, ScanScope::StreamsOnly) {
+            eprintln!("DEBUG note: scan scope is streams-only");
+        }
+        if self.transform {
+            eprintln!("DEBUG note: content transform active; candidates searched as streams");
         }
     }
 }

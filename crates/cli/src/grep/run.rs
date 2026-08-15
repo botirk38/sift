@@ -2,9 +2,7 @@ use std::path::PathBuf;
 
 use sift_core::candidates::{Scan, ScanScope, SnapshotFreshness};
 use sift_core::search::{Query, SearchInputs, SearchMode, SearchOptions, Searcher};
-use sift_core::{
-    Candidates, FileFilter, FileOrder, IndexCoverage, Narrowing, Plan, TypeFilterRule,
-};
+use sift_core::{FileFilter, FileOrder, IndexCoverage, Narrowing, Plan, TypeFilterRule};
 
 use crate::index::daemon::Daemon;
 
@@ -12,8 +10,8 @@ use crate::format::PrintFormat;
 
 use super::filter::{FilterConfig, FilterResolution};
 use super::ignore::IgnoreResolution;
-use super::input::{ContentTransform, ContentTransformConfig, InputSources};
-use super::output::{DebugNote, FilenameContext, IndexLoad, OutputArgv, OutputDecl, SearchDebug};
+use super::input::{ContentTransformConfig, InputSources};
+use super::output::{FilenameContext, OutputArgv, OutputDecl};
 use super::paths::CorpusScope;
 use super::pattern::{PatternArgv, PatternDecl, PatternInputUse, ResolvedPatterns};
 
@@ -53,20 +51,6 @@ struct SearchSession {
     scope: CorpusScope,
     search_filter: FileFilter,
     store_meta: Option<sift_core::StoreMeta>,
-}
-
-/// Values captured for `--debug` stderr diagnostics.
-#[derive(Clone, Copy)]
-struct DebugProbe<'a> {
-    session: &'a SearchSession,
-    mode: SearchMode,
-    patterns: &'a [String],
-    scan_scope: ScanScope,
-    narrowing: Narrowing,
-    freshness: SnapshotFreshness,
-    content_transform: bool,
-    candidate_bound: usize,
-    stream_count: usize,
 }
 
 impl RunResult {
@@ -152,9 +136,7 @@ impl Run {
         let sources = InputSources::from_paths(&self.config.search_paths);
         let pattern_argv = &self.config.pattern_argv;
         let output_argv = &self.config.output_argv;
-
         let line_number_override = self.line_number_override();
-
         let session = self.prepare_session(&sources.paths)?;
         let indexes_empty = session
             .indexes
@@ -162,7 +144,6 @@ impl Run {
             .is_none_or(|indexes| !indexes.queryable());
         let sources = sources.resolve(patterns.input, indexes_empty)?;
         let transform = self.config.content.transform()?;
-
         let filename_ctx = Self::filename_context(mode, &sources);
         let print_spec = self
             .config
@@ -179,9 +160,6 @@ impl Run {
         let freshness = Self::snapshot_freshness(&session, daemon);
         let scan_scope = self.scan_scope(freshness, sources.resolve_candidates());
         let scan = Self::scan(&session, scan_scope);
-
-        // Collect stats for `--stats` (human lines) and for `--json` (summary /
-        // end events). Human stderr lines are text-only (`--stats` without JSON).
         let format = OutputDecl::format(output_argv, mode);
         let print_stats = OutputDecl::print_stats(output_argv, format);
         let stats = if print_stats || matches!(format, PrintFormat::Json) {
@@ -189,8 +167,7 @@ impl Run {
         } else {
             sift_core::StatsMode::Off
         };
-        let pattern_summary = patterns.patterns.clone();
-        let query = self.search_query(mode, patterns.patterns, transform.is_some())?;
+        let query = self.query(mode, patterns.patterns, transform.is_some())?;
         let explicit_files = Self::explicit_files(&session);
         let streams = sources.stdin_streams();
         let searcher = Searcher::new(query).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -198,19 +175,27 @@ impl Run {
             .resolve(&scan)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         let candidate_bound = resolved.bound();
-        let (candidates, streams) =
-            Self::apply_transform(transform.as_ref(), resolved, streams, &explicit_files)?;
-        self.emit_debug(DebugProbe {
-            session: &session,
-            mode,
-            patterns: &pattern_summary,
-            scan_scope,
-            narrowing: searcher.query().narrowing(),
-            freshness,
-            content_transform: transform.is_some(),
-            candidate_bound,
-            stream_count: streams.len(),
-        });
+        let (candidates, streams) = match transform.as_ref() {
+            Some(transform) => transform
+                .to_streams(resolved, streams, &explicit_files)
+                .map_err(|e| anyhow::anyhow!("{e}"))?,
+            None => (resolved, streams),
+        };
+        if output_argv.debug {
+            super::output::Debug {
+                sift_dir: &self.config.sift_dir,
+                corpus_root: &session.scope.filter_root,
+                indexes: session.indexes.as_ref(),
+                mode,
+                patterns: searcher.query().patterns(),
+                scan: scan_scope,
+                narrowing: searcher.query().narrowing(),
+                transform: transform.is_some(),
+                candidates: candidate_bound,
+                streams: streams.len(),
+            }
+            .write();
+        }
         let report = print_spec
             .print(
                 &searcher,
@@ -224,8 +209,6 @@ impl Run {
                 &separators,
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-        // Ripgrep emits no human `--stats` for `--files`; path listing is not a search.
         if print_stats
             && !matches!(mode, SearchMode::Paths)
             && let Some(s) = report.stats.as_ref()
@@ -237,11 +220,12 @@ impl Run {
         Ok(selected)
     }
 
-    fn search_query(
+    /// Paths listing uses a dummy pattern; content transforms disable index narrowing.
+    fn query(
         &self,
         mode: SearchMode,
         patterns: Vec<String>,
-        content_transform: bool,
+        transform: bool,
     ) -> anyhow::Result<Query> {
         let query = if matches!(mode, SearchMode::Paths) {
             Query::new(vec![".".to_string()], SearchOptions::default())
@@ -253,57 +237,11 @@ impl Run {
                 .query(patterns, &self.config.pattern_argv)
                 .map_err(|e| anyhow::anyhow!("{e}"))?
         };
-        Ok(if content_transform {
+        Ok(if transform {
             query.with_narrowing(Narrowing::Disabled)
         } else {
             query
         })
-    }
-
-    fn apply_transform<'a>(
-        transform: Option<&ContentTransform>,
-        resolved: Candidates<'a>,
-        mut streams: sift_core::Inputs<'a>,
-        explicit_files: &[PathBuf],
-    ) -> anyhow::Result<(Candidates<'a>, sift_core::Inputs<'a>)> {
-        match transform {
-            Some(transform) => {
-                for candidate in resolved.into_vec() {
-                    let bytes = transform
-                        .read_candidate(&candidate)
-                        .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    let is_explicit = candidate.is_explicit(explicit_files);
-                    streams.push_file_bytes(candidate, bytes, is_explicit);
-                }
-                Ok((Candidates::empty(), streams))
-            }
-            None => Ok((resolved, streams)),
-        }
-    }
-
-    fn emit_debug(&self, probe: DebugProbe<'_>) {
-        if !self.config.output_argv.debug {
-            return;
-        }
-        let notes = Self::debug_notes(
-            probe.session,
-            probe.scan_scope,
-            probe.narrowing,
-            probe.freshness,
-            probe.content_transform,
-        );
-        SearchDebug {
-            sift_dir: &self.config.sift_dir,
-            corpus_root: &probe.session.scope.filter_root,
-            index: Self::index_load(probe.session),
-            search_mode: probe.mode,
-            patterns: probe.patterns,
-            scan_scope: probe.scan_scope,
-            candidate_bound: probe.candidate_bound,
-            stream_count: probe.stream_count,
-            notes: &notes,
-        }
-        .write();
     }
 
     const fn line_number_override(&self) -> Option<bool> {
@@ -354,43 +292,6 @@ impl Run {
         } else {
             FilenameContext::Directory
         }
-    }
-
-    fn index_load(session: &SearchSession) -> IndexLoad {
-        session
-            .indexes
-            .as_ref()
-            .map_or(IndexLoad::Absent, |indexes| IndexLoad::Present {
-                queryable: indexes.queryable(),
-            })
-    }
-
-    fn debug_notes(
-        session: &SearchSession,
-        scan_scope: ScanScope,
-        narrowing: Narrowing,
-        freshness: SnapshotFreshness,
-        content_transform: bool,
-    ) -> Vec<DebugNote> {
-        let mut notes = Vec::new();
-        match session.indexes.as_ref() {
-            None => notes.push(DebugNote::IndexAbsent),
-            Some(indexes) if !indexes.queryable() => notes.push(DebugNote::IndexNotQueryable),
-            Some(_) => {}
-        }
-        if matches!(narrowing, Narrowing::Disabled) {
-            notes.push(DebugNote::NarrowingDisabled);
-        }
-        if matches!(freshness, SnapshotFreshness::Stale) {
-            notes.push(DebugNote::SnapshotStale);
-        }
-        if matches!(scan_scope, ScanScope::StreamsOnly) {
-            notes.push(DebugNote::StreamsOnly);
-        }
-        if content_transform {
-            notes.push(DebugNote::ContentTransform);
-        }
-        notes
     }
 
     fn snapshot_freshness(session: &SearchSession, daemon: Option<&Daemon>) -> SnapshotFreshness {

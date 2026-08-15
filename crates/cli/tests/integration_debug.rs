@@ -69,10 +69,6 @@ fn debug_absent_index_notes_walk() {
         "expected absent index debug line, got: {stderr:?}"
     );
     assert!(
-        stderr.contains("DEBUG note: index absent"),
-        "expected index-absent note, got: {stderr:?}"
-    );
-    assert!(
         !stdout.contains("DEBUG"),
         "debug lines must not appear on stdout, got: {stdout:?}"
     );
