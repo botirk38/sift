@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use sift_core::search::{
-    BinaryEvent, BinaryMode, ContextEvent, ContextKind, FileEvent, Listing, MatchEvent, Report,
-    SearchEvent, SearchSink,
+    BinaryEvent, BinaryMode, ContextEvent, ContextKind, FileEvent, Listing, MatchEvent, Origin,
+    Report, SearchEvent, SearchSink,
 };
 
 use crate::format::output::format::ColumnOverflow;
@@ -31,6 +31,7 @@ pub(super) struct EventRenderer<'a> {
     context_requested: bool,
     bytes: Vec<u8>,
     json_stats: HashMap<Arc<str>, FileJsonStats>,
+    json_begun: HashSet<Arc<str>>,
     headings: HashSet<Arc<str>>,
     binary_paths: HashSet<Arc<str>>,
 }
@@ -51,6 +52,7 @@ impl<'a> EventRenderer<'a> {
             context_requested,
             bytes: Vec::new(),
             json_stats: HashMap::new(),
+            json_begun: HashSet::new(),
             headings: HashSet::new(),
             binary_paths: HashSet::new(),
         }
@@ -414,7 +416,7 @@ impl<'a> EventRenderer<'a> {
 impl SearchSink for EventRenderer<'_> {
     fn event(&mut self, event: SearchEvent) -> sift_core::Result<()> {
         match event {
-            SearchEvent::Begin(event) => self.begin(&event)?,
+            SearchEvent::Begin(_) => {}
             SearchEvent::Match(event) => self.matched(&event)?,
             SearchEvent::Context(event) => self.context(&event)?,
             SearchEvent::ContextBreak => self.write_context_break(),
@@ -426,20 +428,9 @@ impl SearchSink for EventRenderer<'_> {
 }
 
 impl EventRenderer<'_> {
-    fn begin(&mut self, event: &FileEvent) -> sift_core::Result<()> {
-        if matches!(self.output.format, PrintFormat::Json) {
-            let path = event.origin.display(self.output.lines.path_display);
-            let value = serde_json::json!({
-                "type": "begin",
-                "data": { "path": { "text": Self::display_text(path) } }
-            });
-            self.write_json(&value)?;
-        }
-        Ok(())
-    }
-
     fn matched(&mut self, event: &MatchEvent) -> sift_core::Result<()> {
         if matches!(self.output.format, PrintFormat::Json) {
+            self.json_begin(&event.origin)?;
             let stats = self
                 .json_stats
                 .entry(Arc::from(event.origin.key().as_ref()))
@@ -477,6 +468,7 @@ impl EventRenderer<'_> {
 
     fn context(&mut self, event: &ContextEvent) -> sift_core::Result<()> {
         if matches!(self.output.format, PrintFormat::Json) {
+            self.json_begin(&event.origin)?;
             let kind = match event.kind {
                 ContextKind::Before => "before",
                 ContextKind::After => "after",
@@ -503,6 +495,9 @@ impl EventRenderer<'_> {
 
     fn end(&mut self, event: &FileEvent) -> sift_core::Result<()> {
         if matches!(self.output.format, PrintFormat::Json) {
+            if !self.json_begun.remove(event.origin.key().as_ref()) {
+                return Ok(());
+            }
             let stats = self
                 .json_stats
                 .remove(event.origin.key().as_ref())
@@ -522,6 +517,19 @@ impl EventRenderer<'_> {
             self.write_json(&value)?;
         }
         Ok(())
+    }
+
+    fn json_begin(&mut self, origin: &Origin) -> sift_core::Result<()> {
+        let key = Arc::from(origin.key().as_ref());
+        if !self.json_begun.insert(key) {
+            return Ok(());
+        }
+        let path = origin.display(self.output.lines.path_display);
+        let value = serde_json::json!({
+            "type": "begin",
+            "data": { "path": { "text": Self::display_text(path) } }
+        });
+        self.write_json(&value)
     }
 
     fn write_json(&mut self, value: &serde_json::Value) -> sift_core::Result<()> {
