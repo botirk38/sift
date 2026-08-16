@@ -19,6 +19,27 @@ fn search_zip_reads_gzip_content() {
 }
 
 #[test]
+fn search_zip_missing_tool_passthrough() {
+    let p = TestProject::new("search-zip-missing-tool");
+    p.write("hay.txt.gz", GZIP_HAYSTACK);
+    let empty = p.root().join("empty-path");
+    std::fs::create_dir_all(&empty).unwrap();
+
+    let mut cmd = p.sift();
+    cmd.arg("--sift-dir").arg(p.root().join(".sift-not-found"));
+    cmd.env("PATH", &empty);
+    cmd.args(["--search-zip", "needle", "hay.txt.gz"]);
+    let out = cmd.output().unwrap();
+
+    assert_exit_code(&out, 1);
+    assert!(
+        !normalize_stderr(&out).contains("gzip"),
+        "missing decompressor should passthrough, got {:?}",
+        normalize_stderr(&out)
+    );
+}
+
+#[test]
 fn indexed_search_zip_bypasses_raw_index_narrowing() {
     let p = TestProject::new("indexed-search-zip-gzip");
     p.write("hay.txt.gz", GZIP_HAYSTACK).build_index();

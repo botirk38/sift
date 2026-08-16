@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 pub mod format;
+pub mod hyperlink;
 pub mod mode;
 pub mod passthru;
 pub mod style;

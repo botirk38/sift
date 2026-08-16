@@ -1,4 +1,5 @@
-use crate::format::output::style::{ColorSpecs, HyperlinkFormat, OutputBuffering};
+use crate::format::output::hyperlink::Hyperlink;
+use crate::format::output::style::{ColorSpecs, OutputBuffering};
 use crate::format::{
     ColorChoice, ColumnLimit, ColumnOverflow, FilenameMode, LineStyleFlags, OutputEmission,
     PassthruMode, PrintFormat, PrintLineStyle, PrintRecordStyle, PrintSeparators, PrintSpec, Quiet,
@@ -9,7 +10,6 @@ use sift_core::SearchMode;
 use sift_core::candidates::{ScanScope, SnapshotFreshness};
 use sift_core::search::{Narrowing, Stats};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Describes the filename display context for deciding whether to show paths.
 #[derive(Clone, Copy)]
@@ -524,31 +524,12 @@ fn unescape_separator(s: &str) -> Vec<u8> {
     out
 }
 
-fn resolve_hostname(hostname_bin: Option<&str>) -> Result<Option<String>, String> {
-    let Some(command) = hostname_bin else {
-        return Ok(None);
-    };
-    let output = Command::new(command)
-        .output()
-        .map_err(|e| format!("failed to run --hostname-bin '{command}': {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "--hostname-bin '{command}' exited with status {}",
-            output.status
-        ));
-    }
-    let host = String::from_utf8(output.stdout)
-        .map_err(|e| format!("--hostname-bin '{command}' emitted invalid UTF-8: {e}"))?;
-    Ok(Some(host.trim_end_matches(['\r', '\n']).to_string()))
-}
-
 impl OutputDecl {
     /// Build the core grep output from resolved argv and CLI configuration.
     ///
     /// # Errors
     ///
-    /// Returns an error when color specs are invalid, hyperlink formats are invalid,
-    /// or the hostname command fails.
+    /// Returns an error when color specs are invalid or the hostname command fails.
     pub fn print_spec(
         &self,
         output_argv: &OutputArgv,
@@ -568,8 +549,10 @@ impl OutputDecl {
             output_argv.color
         };
         let colors = ColorSpecs::from_specs(&self.colors)?;
-        let hyperlink = HyperlinkFormat::parse(self.hyperlink_format.as_deref())?;
-        let hyperlink_host = resolve_hostname(self.hostname_bin.as_deref())?;
+        let hyperlink = Hyperlink::parse(
+            self.hyperlink_format.as_deref(),
+            self.hostname_bin.as_deref(),
+        )?;
 
         Ok(PrintSpec {
             format: output_format,
@@ -609,7 +592,6 @@ impl OutputDecl {
                     .and_then(|s| s.as_bytes().first().copied()),
                 colors,
                 hyperlink,
-                hyperlink_host,
                 buffering: output_argv.buffering,
             },
             passthru: PassthruMode::Disabled,

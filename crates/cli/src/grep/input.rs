@@ -1,10 +1,10 @@
 use std::borrow::Cow;
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::thread::JoinHandle;
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use grep_cli::DecompressionReaderBuilder;
 use sift_core::{Candidates, File};
 
 #[derive(Debug, Clone, Default)]
@@ -32,7 +32,6 @@ impl ContentTransformConfig {
             } else {
                 None
             },
-            decompressor: DecompressionReaderBuilder::new(),
         }))
     }
 
@@ -44,7 +43,6 @@ impl ContentTransformConfig {
 pub struct ContentTransform {
     search_zip: bool,
     pre: Option<Preprocessor>,
-    decompressor: DecompressionReaderBuilder,
 }
 
 impl ContentTransform {
@@ -79,20 +77,192 @@ impl ContentTransform {
             return pre.read(candidate.abs_path());
         }
         if self.search_zip {
-            return self.read_decompressed(candidate.abs_path());
+            return Self::read_decompressed(candidate.abs_path());
         }
         Ok(std::fs::read(candidate.abs_path())?)
     }
 
-    fn read_decompressed(&self, path: &Path) -> sift_core::Result<Vec<u8>> {
+    fn read_decompressed(path: &Path) -> sift_core::Result<Vec<u8>> {
         let path = external_tool_path(path);
-        let mut reader = self
-            .decompressor
-            .build(path.as_ref())
-            .map_err(|err| std::io::Error::other(err.to_string()))?;
-        let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes)?;
-        Ok(bytes)
+        match ZipTool::from_path(path.as_ref()) {
+            Some(tool) => tool.read(path.as_ref()),
+            None => Ok(std::fs::read(path.as_ref())?),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ZipTool {
+    Gzip,
+    Bzip2,
+    Xz,
+    Lzma,
+    Lz4,
+    Zstd,
+    Brotli,
+    Compress,
+}
+
+impl ZipTool {
+    fn from_path(path: &Path) -> Option<Self> {
+        let name = path.file_name()?.to_str()?;
+        [
+            (".zstd", Self::Zstd),
+            (".tbz2", Self::Bzip2),
+            (".lzma", Self::Lzma),
+            (".txz", Self::Xz),
+            (".tgz", Self::Gzip),
+            (".bz2", Self::Bzip2),
+            (".lz4", Self::Lz4),
+            (".zst", Self::Zstd),
+            (".xz", Self::Xz),
+            (".br", Self::Brotli),
+            (".gz", Self::Gzip),
+            (".Z", Self::Compress),
+        ]
+        .into_iter()
+        .find_map(|(suffix, tool)| name.ends_with(suffix).then_some(tool))
+    }
+
+    const fn bin(self) -> &'static str {
+        match self {
+            Self::Gzip => "gzip",
+            Self::Bzip2 => "bzip2",
+            Self::Xz | Self::Lzma => "xz",
+            Self::Lz4 => "lz4",
+            Self::Zstd => "zstd",
+            Self::Brotli => "brotli",
+            Self::Compress => "uncompress",
+        }
+    }
+
+    const fn args(self) -> &'static [&'static str] {
+        match self {
+            Self::Lzma => &["--format=lzma", "-d", "-c"],
+            Self::Zstd => &["-q", "-d", "-c"],
+            Self::Compress => &["-c"],
+            Self::Gzip | Self::Bzip2 | Self::Xz | Self::Lz4 | Self::Brotli => &["-d", "-c"],
+        }
+    }
+
+    fn read(self, path: &Path) -> sift_core::Result<Vec<u8>> {
+        let Some(mut command) = ToolProgram::new(self.bin()).command() else {
+            return Ok(std::fs::read(path)?);
+        };
+        command.args(self.args()).arg(path);
+        match ToolOutput::spawn(command) {
+            Err(_) => Ok(std::fs::read(path)?),
+            Ok(output) => output.finish(&format!("`{}`", self.bin()), path),
+        }
+    }
+}
+
+/// Named program spawned for `--search-zip` / `--pre`.
+struct ToolProgram<'a> {
+    name: &'a Path,
+}
+
+impl<'a> ToolProgram<'a> {
+    fn new(name: &'a str) -> Self {
+        Self {
+            name: Path::new(name),
+        }
+    }
+
+    const fn from_path(name: &'a Path) -> Self {
+        Self { name }
+    }
+
+    fn command(self) -> Option<Command> {
+        Some(Command::new(self.resolve()?))
+    }
+
+    fn resolve(self) -> Option<PathBuf> {
+        if self.name.is_absolute() {
+            return Some(self.name.to_path_buf());
+        }
+        self.on_path()
+    }
+
+    fn on_path(self) -> Option<PathBuf> {
+        let paths = std::env::var_os("PATH")?;
+        for dir in std::env::split_paths(&paths) {
+            if dir.as_os_str().is_empty() {
+                continue;
+            }
+            let candidate = dir.join(self.name);
+            if Self::is_exe(&candidate) {
+                return Some(candidate);
+            }
+            #[cfg(windows)]
+            if candidate.extension().is_none() {
+                for extension in ["com", "exe"] {
+                    let candidate = candidate.with_extension(extension);
+                    if Self::is_exe(&candidate) {
+                        return Some(candidate);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn is_exe(path: &Path) -> bool {
+        path.metadata().is_ok_and(|meta| !meta.is_dir())
+    }
+}
+
+/// Streaming stdout of a spawned decompressor or preprocessor.
+struct ToolOutput {
+    child: Child,
+    stdout: std::process::ChildStdout,
+    stderr: JoinHandle<Vec<u8>>,
+}
+
+impl ToolOutput {
+    fn spawn(mut command: Command) -> std::io::Result<Self> {
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = command.spawn()?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| std::io::Error::other("child stdout was not piped"))?;
+        let mut stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| std::io::Error::other("child stderr was not piped"))?;
+        let stderr = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stderr.read_to_end(&mut buf);
+            buf
+        });
+        Ok(Self {
+            child,
+            stdout,
+            stderr,
+        })
+    }
+
+    fn finish(mut self, label: &str, path: &Path) -> sift_core::Result<Vec<u8>> {
+        let mut stdout = Vec::new();
+        let read_err = self.stdout.read_to_end(&mut stdout).err();
+        drop(self.stdout);
+        let status = self.child.wait()?;
+        let stderr = self.stderr.join().unwrap_or_default();
+        if let Some(err) = read_err {
+            return Err(err.into());
+        }
+        if status.success() {
+            Ok(stdout)
+        } else {
+            let stderr = String::from_utf8_lossy(&stderr);
+            Err(std::io::Error::other(format!(
+                "{label} failed for {}: {}",
+                path.display(),
+                stderr.trim()
+            ))
+            .into())
+        }
     }
 }
 
@@ -210,19 +380,16 @@ impl Preprocessor {
             .into());
         }
         let path = external_tool_path(path);
-        let output = Command::new(&self.command).arg(path.as_ref()).output()?;
-        if output.status.success() {
-            Ok(output.stdout)
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(std::io::Error::other(format!(
-                "preprocessor `{}` failed for {}: {}",
-                self.command,
-                path.display(),
-                stderr.trim()
-            ))
-            .into())
-        }
+        let Some(mut command) = ToolProgram::from_path(Path::new(&self.command)).command() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("preprocessor `{}` not found on PATH", self.command),
+            )
+            .into());
+        };
+        command.arg(path.as_ref());
+        ToolOutput::spawn(command)?
+            .finish(&format!("preprocessor `{}`", self.command), path.as_ref())
     }
 }
 
@@ -383,5 +550,33 @@ mod tests {
             panic!("invalid glob unexpectedly succeeded");
         };
         assert!(err.to_string().contains("invalid --pre-glob"));
+    }
+
+    #[test]
+    fn zip_tool_matches_gzip_and_zstd_suffixes() {
+        assert_eq!(ZipTool::from_path(Path::new("a.gz")), Some(ZipTool::Gzip));
+        assert_eq!(ZipTool::from_path(Path::new("a.tgz")), Some(ZipTool::Gzip));
+        assert_eq!(ZipTool::from_path(Path::new("a.zst")), Some(ZipTool::Zstd));
+        assert_eq!(ZipTool::from_path(Path::new("a.zstd")), Some(ZipTool::Zstd));
+        assert_eq!(
+            ZipTool::from_path(Path::new("a.Z")),
+            Some(ZipTool::Compress)
+        );
+        assert_eq!(ZipTool::from_path(Path::new("a.rs")), None);
+    }
+
+    #[test]
+    fn zip_tool_reports_decompressor_failure() {
+        if ToolProgram::new("gzip").command().is_none() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.gz");
+        std::fs::write(&path, b"not gzip").unwrap();
+        let err = ZipTool::Gzip.read(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("gzip"),
+            "expected decompressor failure, got {err}"
+        );
     }
 }

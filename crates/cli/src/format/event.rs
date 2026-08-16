@@ -3,6 +3,7 @@ use std::io::Write as _;
 use std::sync::Arc;
 use std::time::Instant;
 
+use sift_core::SearchMode;
 use sift_core::search::{
     BinaryEvent, BinaryMode, ContextEvent, ContextKind, FileEvent, Listing, MatchEvent, Origin,
     Report, SearchEvent, SearchSink,
@@ -11,10 +12,10 @@ use sift_core::search::{
 use crate::format::output::format::ColumnOverflow;
 use crate::format::output::mode::OutputEmission;
 use crate::format::output::style::{
-    ColorOutput, FilenameMode, LineStyleFlags, PrintSeparators, RecordTerminator,
+    AnsiStyle, ColorOutput, FilenameMode, LineStyleFlags, PrintSeparators, RecordTerminator,
 };
 use crate::format::output::{PrintFormat, PrintSpec};
-use sift_core::SearchMode;
+use std::path::Path;
 
 #[derive(Default)]
 struct FileJsonStats {
@@ -33,6 +34,7 @@ pub(super) struct EventRenderer<'a> {
     json_stats: HashMap<Arc<str>, FileJsonStats>,
     headings: HashSet<Arc<str>>,
     binary_paths: HashSet<Arc<str>>,
+    hyperlink_open: bool,
 }
 
 impl<'a> EventRenderer<'a> {
@@ -53,6 +55,7 @@ impl<'a> EventRenderer<'a> {
             json_stats: HashMap::new(),
             headings: HashSet::new(),
             binary_paths: HashSet::new(),
+            hyperlink_open: false,
         }
     }
 
@@ -74,28 +77,21 @@ impl<'a> EventRenderer<'a> {
     }
 
     fn render_summary_modes(&mut self, report: &Report) {
-        let path_display = self.output.lines.path_display;
         match (&self.output.mode, &report.listed) {
             (SearchMode::CountLines { .. }, Listing::LineCounts(counts)) => {
                 for count in counts {
-                    self.write_path_record(
-                        count.file.display(path_display).as_ref(),
-                        &count.lines.to_string(),
-                    );
+                    self.write_path_record(&count.file.origin, &count.lines.to_string());
                 }
             }
             (SearchMode::CountMatches { .. }, Listing::SpanCounts(counts)) => {
                 for count in counts {
-                    self.write_path_record(
-                        count.file.display(path_display).as_ref(),
-                        &count.spans.to_string(),
-                    );
+                    self.write_path_record(&count.file.origin, &count.spans.to_string());
                 }
             }
             (SearchMode::FilesWithMatches | SearchMode::Paths, Listing::MatchingPaths(files))
             | (SearchMode::FilesWithoutMatch, Listing::NonMatchingPaths(files)) => {
                 for file in files {
-                    self.write_path_only(file.display(path_display).as_ref());
+                    self.write_path_only(&file.origin);
                 }
             }
             _ => {}
@@ -118,11 +114,18 @@ impl<'a> EventRenderer<'a> {
         {
             return;
         }
-        let path_display = self.output.lines.path_display;
         if self.output.lines.heading()
             && self.headings.insert(Arc::from(event.origin.key().as_ref()))
         {
-            self.write_display_path(event.origin.display(path_display).as_ref());
+            self.write_display_path(
+                &event.origin,
+                event.line_number,
+                event.ranges.first().and_then(|range| {
+                    u64::try_from(range.start)
+                        .ok()
+                        .and_then(|start| start.checked_add(1))
+                }),
+            );
             self.terminator();
         }
         if matches!(self.output.mode, SearchMode::Matches) {
@@ -158,16 +161,15 @@ impl<'a> EventRenderer<'a> {
             return;
         }
         self.write_display_prefix(
-            event
-                .origin
-                .display(self.output.lines.path_display)
-                .as_ref(),
+            &event.origin,
+            event.line_number,
+            None,
             &self.separators.field_context_separator,
         );
         if self.line_numbers()
             && let Some(line) = event.line_number
         {
-            self.bytes.extend(line.to_string().as_bytes());
+            self.write_styled_number(line, self.output.records.colors.line());
             self.bytes.extend(&self.separators.field_context_separator);
         }
         let bytes = if self.output.lines.trim() {
@@ -181,17 +183,19 @@ impl<'a> EventRenderer<'a> {
     }
 
     fn write_prefix(&mut self, event: &MatchEvent, column_offset: usize) {
+        let column = u64::try_from(column_offset)
+            .ok()
+            .and_then(|offset| offset.checked_add(1));
         self.write_display_prefix(
-            event
-                .origin
-                .display(self.output.lines.path_display)
-                .as_ref(),
+            &event.origin,
+            event.line_number,
+            column,
             &self.separators.field_match_separator,
         );
         if self.line_numbers()
             && let Some(line) = event.line_number
         {
-            self.bytes.extend(line.to_string().as_bytes());
+            self.write_styled_number(line, self.output.records.colors.line());
             self.bytes.extend(&self.separators.field_match_separator);
         }
         if self.output.lines.byte_offset()
@@ -200,28 +204,37 @@ impl<'a> EventRenderer<'a> {
             self.bytes.extend(offset.to_string().as_bytes());
             self.bytes.extend(&self.separators.field_match_separator);
         }
-        if self.output.lines.flags.contains(LineStyleFlags::COLUMN) {
-            self.bytes
-                .extend((column_offset + 1).to_string().as_bytes());
+        if self.output.lines.flags.contains(LineStyleFlags::COLUMN)
+            && let Some(column) = column
+        {
+            self.write_styled_number(column, self.output.records.colors.column());
             self.bytes.extend(&self.separators.field_match_separator);
         }
     }
 
-    fn write_display_prefix(&mut self, path: &str, separator: &[u8]) {
+    fn write_display_prefix(
+        &mut self,
+        origin: &Origin,
+        line: Option<u64>,
+        column: Option<u64>,
+        separator: &[u8],
+    ) {
         if self.output.lines.heading()
             || matches!(self.output.lines.filename_mode, FilenameMode::Never)
         {
             return;
         }
-        self.write_display_path(path);
+        self.write_display_path(origin, line, column);
         self.bytes.extend(separator);
     }
 
-    fn write_display_path(&mut self, path: &str) {
-        let display =
-            Self::with_path_separator(path.to_owned(), self.output.records.path_separator);
-        self.write_hyperlink_start(display.as_str());
-        if let Some(color) = self.ansi_for(self.output.records.colors.as_grep().path()) {
+    fn write_display_path(&mut self, origin: &Origin, line: Option<u64>, column: Option<u64>) {
+        let display = Self::with_path_separator(
+            origin.display(self.output.lines.path_display).into_owned(),
+            self.output.records.path_separator,
+        );
+        self.write_hyperlink_start(origin.abs_path(), line, column);
+        if let Some(color) = self.ansi_for(self.output.records.colors.path()) {
             self.bytes.extend(color);
             self.bytes.extend(display.as_bytes());
             self.bytes.extend(b"\x1b[0m");
@@ -231,21 +244,32 @@ impl<'a> EventRenderer<'a> {
         self.write_hyperlink_end();
     }
 
-    fn write_hyperlink_start(&mut self, display: &str) {
-        if matches!(self.output.records.color_output(), ColorOutput::Ansi)
-            && !self.output.records.hyperlink.is_empty()
-        {
-            self.bytes.extend(b"\x1b]8;;vscode://file");
-            self.bytes.extend(display.as_bytes());
-            self.bytes.extend(b"\x1b\\");
+    fn write_hyperlink_start(
+        &mut self,
+        path: Option<&Path>,
+        line: Option<u64>,
+        column: Option<u64>,
+    ) {
+        self.hyperlink_open = false;
+        if !matches!(self.output.records.color_output(), ColorOutput::Ansi) {
+            return;
         }
+        let Some(path) = path else {
+            return;
+        };
+        let Some(uri) = self.output.records.hyperlink.render(path, line, column) else {
+            return;
+        };
+        self.bytes.extend(b"\x1b]8;;");
+        self.bytes.extend(&uri);
+        self.bytes.extend(b"\x1b\\");
+        self.hyperlink_open = true;
     }
 
     fn write_hyperlink_end(&mut self) {
-        if matches!(self.output.records.color_output(), ColorOutput::Ansi)
-            && !self.output.records.hyperlink.is_empty()
-        {
+        if self.hyperlink_open {
             self.bytes.extend(b"\x1b]8;;\x1b\\");
+            self.hyperlink_open = false;
         }
     }
 
@@ -257,38 +281,55 @@ impl<'a> EventRenderer<'a> {
     }
 
     fn write_colored_match_line(&mut self, event: &MatchEvent, line: &[u8]) {
-        let Some(color) = self.ansi_for(self.output.records.colors.as_grep().matched()) else {
+        let highlight = self.ansi_for(self.output.records.colors.highlight());
+        let matched = self.ansi_for(self.output.records.colors.matched());
+        if highlight.is_none() && matched.is_none() {
             self.bytes.extend(line);
             return;
-        };
+        }
+        if let Some(color) = highlight.as_ref() {
+            self.bytes.extend(color);
+        }
         let mut cursor = 0;
         for range in &event.ranges {
             let end = range.end.min(line.len());
             let start = range.start.min(end);
             self.bytes.extend(&line[cursor..start]);
-            self.bytes.extend(&color);
-            self.bytes.extend(&line[start..end]);
-            self.bytes.extend(b"\x1b[0m");
+            if let Some(color) = matched.as_ref() {
+                self.bytes.extend(color);
+                self.bytes.extend(&line[start..end]);
+                if let Some(color) = highlight.as_ref() {
+                    self.bytes.extend(color);
+                } else {
+                    self.bytes.extend(b"\x1b[0m");
+                }
+            } else {
+                self.bytes.extend(&line[start..end]);
+            }
             cursor = end;
         }
         self.bytes.extend(&line[cursor..]);
+        if highlight.is_some() {
+            self.bytes.extend(b"\x1b[0m");
+        }
     }
 
-    fn ansi_for(&self, spec: &termcolor::ColorSpec) -> Option<Vec<u8>> {
+    fn write_styled_number(&mut self, n: u64, style: AnsiStyle) {
+        let text = n.to_string();
+        if let Some(color) = self.ansi_for(style) {
+            self.bytes.extend(color);
+            self.bytes.extend(text.as_bytes());
+            self.bytes.extend(b"\x1b[0m");
+        } else {
+            self.bytes.extend(text.as_bytes());
+        }
+    }
+
+    fn ansi_for(&self, style: AnsiStyle) -> Option<Vec<u8>> {
         if !matches!(self.output.records.color_output(), ColorOutput::Ansi) {
             return None;
         }
-        let mut codes = Vec::new();
-        if spec.bold() {
-            codes.push("1".to_string());
-        }
-        if let Some(color) = spec.fg().copied().and_then(Self::ansi_fg) {
-            codes.push(color.to_string());
-        }
-        if codes.is_empty() {
-            return None;
-        }
-        Some(format!("\x1b[0m\x1b[{}m", codes.join(";")).into_bytes())
+        style.sequence()
     }
 
     fn write_line(&mut self, line: &[u8]) {
@@ -317,15 +358,14 @@ impl<'a> EventRenderer<'a> {
         self.output.lines.line_number() || self.context_requested
     }
 
-    fn write_path_only(&mut self, path: &str) {
-        self.write_display_path(path);
+    fn write_path_only(&mut self, origin: &Origin) {
+        self.write_display_path(origin, None, None);
         self.terminator();
     }
 
-    fn write_path_record(&mut self, path: &str, value: &str) {
-        if matches!(self.output.lines.filename_mode, FilenameMode::Never) {
-        } else {
-            self.write_display_path(path);
+    fn write_path_record(&mut self, origin: &Origin, value: &str) {
+        if !matches!(self.output.lines.filename_mode, FilenameMode::Never) {
+            self.write_display_path(origin, None, None);
             if matches!(self.output.records.terminator, RecordTerminator::Nul) {
                 self.bytes.push(0);
             } else {
@@ -349,17 +389,12 @@ impl<'a> EventRenderer<'a> {
             return;
         }
         if !matches!(self.output.lines.filename_mode, FilenameMode::Never) {
-            self.write_display_path(
-                event
-                    .origin
-                    .display(self.output.lines.path_display)
-                    .as_ref(),
-            );
+            self.write_display_path(&event.origin, None, None);
             self.bytes.extend(b": ");
         }
         self.bytes.extend(
             format!(
-                "binary file matches (found \"\\0\" byte around offset {})",
+                "binary file matches (found NUL byte around offset {})",
                 event.absolute_byte_offset
             )
             .as_bytes(),
@@ -557,19 +592,5 @@ impl EventRenderer<'_> {
         let mut buf = [0u8; 4];
         let separator = (separator as char).encode_utf8(&mut buf);
         path.replace(std::path::MAIN_SEPARATOR, separator)
-    }
-
-    const fn ansi_fg(color: termcolor::Color) -> Option<u8> {
-        match color {
-            termcolor::Color::Black => Some(30),
-            termcolor::Color::Blue => Some(34),
-            termcolor::Color::Green => Some(32),
-            termcolor::Color::Red => Some(31),
-            termcolor::Color::Cyan => Some(36),
-            termcolor::Color::Magenta => Some(35),
-            termcolor::Color::Yellow => Some(33),
-            termcolor::Color::White => Some(37),
-            _ => None,
-        }
     }
 }

@@ -99,7 +99,7 @@ fn binary_flag_reports_binary_match_walk() {
     assert_success(&out);
     assert_stdout_contains(
         &out,
-        "mixed.txt: binary file matches (found \"/0\" byte around offset 11)",
+        "mixed.txt: binary file matches (found NUL byte around offset 11)",
     );
     assert_stdout_not_contains(&out, "findme");
     assert_stderr_empty(&out);
@@ -115,7 +115,7 @@ fn binary_flag_reports_binary_match_index() {
     assert_success(&out);
     assert_stdout_contains(
         &out,
-        "mixed.txt: binary file matches (found \"/0\" byte around offset 11)",
+        "mixed.txt: binary file matches (found NUL byte around offset 11)",
     );
     assert_stdout_not_contains(&out, "findme");
     assert_stderr_empty(&out);
@@ -130,7 +130,7 @@ fn explicit_binary_file_reports_match_before_nul() {
     assert_success(&out);
     assert_stdout_contains(
         &out,
-        "binary.txt: binary file matches (found \"/0\" byte around offset 6)",
+        "binary.txt: binary file matches (found NUL byte around offset 6)",
     );
     assert_stdout_not_contains(&out, "findme");
     assert_stderr_empty(&out);
@@ -146,7 +146,7 @@ fn indexed_explicit_binary_file_reports_match_before_nul() {
     assert_success(&out);
     assert_stdout_contains(
         &out,
-        "binary.txt: binary file matches (found \"/0\" byte around offset 6)",
+        "binary.txt: binary file matches (found NUL byte around offset 6)",
     );
     assert_stdout_not_contains(&out, "findme");
     assert_stderr_empty(&out);
@@ -161,7 +161,7 @@ fn no_messages_does_not_suppress_binary_match_output() {
     assert_success(&out);
     assert_stdout_contains(
         &out,
-        "binary.txt: binary file matches (found \"/0\" byte around offset 6)",
+        "binary.txt: binary file matches (found NUL byte around offset 6)",
     );
     assert_stderr_empty(&out);
 }

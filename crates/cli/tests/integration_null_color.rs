@@ -225,7 +225,65 @@ fn hyperlink_format_vscode_wraps_path() {
 
     let s = String::from_utf8_lossy(&output.stdout);
     assert!(
-        s.contains("\x1b]8;;vscode://file") && s.contains("t.txt") && s.contains("\x1b]8;;\x1b\\:"),
-        "expected OSC-8 vscode hyperlink around path, got {s:?}"
+        s.contains("\x1b]8;;vscode://file")
+            && s.contains("t.txt")
+            && s.contains(":1:1")
+            && s.contains("\x1b]8;;\x1b\\:"),
+        "expected OSC-8 vscode hyperlink with path:line:column, got {s:?}"
+    );
+}
+
+#[test]
+fn colors_256_and_line_number() {
+    let p = TestProject::new("integration-colors-256-line");
+    p.write("t.txt", "needle\n");
+
+    let output = p.walk_output([
+        "--color=always",
+        "--colors",
+        "match:fg:32",
+        "--colors",
+        "match:style:nobold",
+        "--line-number",
+        "needle",
+        "t.txt",
+    ]);
+    common::assert_success(&output);
+
+    let s = common::normalize_stdout(&output);
+    assert!(
+        s.contains("\x1b[0m\x1b[32m1\x1b[0m:") && s.contains("\x1b[0m\x1b[38;5;32mneedle\x1b[0m"),
+        "expected green line number and 256-color match, got {s:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn hyperlink_hostname_bin_interpolates_host() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let p = TestProject::new("integration-hyperlink-host");
+    p.write("t.txt", "needle\n");
+    p.write("host.sh", "#!/bin/sh\necho testhost\n");
+    let script = p.root().join("host.sh");
+    let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&script, permissions).unwrap();
+
+    let output = p.walk_output([
+        "--color=always",
+        "--hyperlink-format=file://{host}{path}",
+        "--hostname-bin",
+        script.to_str().unwrap(),
+        "--with-filename",
+        "needle",
+        "t.txt",
+    ]);
+    common::assert_success(&output);
+
+    let s = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        s.contains("\x1b]8;;file://testhost/") && s.contains("t.txt"),
+        "expected file://testhost hyperlink, got {s:?}"
     );
 }
