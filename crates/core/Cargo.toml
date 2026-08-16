@@ -17,17 +17,14 @@ workspace = true
 
 [dependencies]
 bitflags = { version = "2", features = ["serde"] }
-bitpacking = "0.9"
-bstr = "1"
+bitpacking = { version = "0.9", default-features = false, features = ["bitpacker4x"] }
 fslock = "0.2"
-grep-cli = "0.1"
 grep-matcher = "0.1"
 grep-pcre2 = "0.1"
 grep-regex = "0.1"
 grep-searcher = "0.1"
 ignore = "0.4"
 integer-encoding = "4"
-memchr = "2"
 memmap2 = "0.9"
 rayon = "1"
 regex-syntax = "0.8"

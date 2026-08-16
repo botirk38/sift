@@ -109,7 +109,7 @@ impl<'searcher, 'input> SearchTask<'searcher, 'input> {
     fn searcher(options: &SearchOptions, mode: SearchMode, origin: InputOrigin) -> RegexSearcher {
         let mut builder = RegexSearcherBuilder::new();
         builder
-            .encoding(options.input_encoding.explicit())
+            .encoding(options.input_encoding.searcher_encoding())
             .bom_sniffing(options.input_encoding.bom_sniffing())
             .binary_detection(Self::binary_detection_for(options, origin))
             .line_terminator(LineTerminator::byte(options.line_terminator()))
