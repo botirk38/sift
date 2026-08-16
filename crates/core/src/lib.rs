@@ -15,11 +15,10 @@ pub use corpus::{
     TypeFilterRule, VisibilityConfig, WalkFile, WalkMetadata,
 };
 pub use search::{
-    BinaryEvent, BinaryMode, Case, CaseMode, ContextEvent, ContextKind, Error as SearchError,
-    Events, FileEvent, Input, InputEncoding, Inputs, Io, LineCount, ListedFile, Listing, Match,
-    MatchEvent, MatchTotals, MatchedFile, Narrowing, Origin, Query, RegexEngine, SearchBound,
-    SearchEvent, SearchFlags, SearchMode, SearchOptions, SearchReport, SearchSink, Searcher,
-    SpanCount, Stats, StatsMode, ZeroCounts,
+    BinaryEvent, BinaryMode, Case, CaseMode, ContextEvent, ContextKind, Count,
+    Error as SearchError, Events, Hit, Input, InputEncoding, Inputs, Io, Listing, Match,
+    MatchEvent, MatchedFile, Mention, Narrowing, Origin, Query, RegexEngine, SearchBound,
+    SearchEvent, SearchFlags, SearchMode, SearchOptions, SearchReport, Searcher, Stats, ZeroCounts,
 };
 
 pub use index::meta::StoreMeta;

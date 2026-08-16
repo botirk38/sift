@@ -13,11 +13,11 @@ enum Source<'a> {
     Memory(OwnedBytes),
 }
 
-pub(super) struct Haystack<'a> {
+pub(super) struct Bytes<'a> {
     source: Source<'a>,
 }
 
-impl<'a> Haystack<'a> {
+impl<'a> Bytes<'a> {
     pub(super) fn open(input: &'a Input<'a>, io: Io) -> std::io::Result<Self> {
         match input {
             Input::Bytes { bytes, .. } => Ok(Self {
@@ -61,7 +61,7 @@ impl<'a> Haystack<'a> {
         }
     }
 
-    pub(super) fn bytes(&self) -> &[u8] {
+    pub(super) fn as_slice(&self) -> &[u8] {
         match &self.source {
             Source::Slice(bytes) => bytes,
             Source::Memory(bytes) => bytes.as_ref(),
@@ -69,7 +69,7 @@ impl<'a> Haystack<'a> {
     }
 
     pub(super) fn decode(&mut self, encoding: &InputEncoding) {
-        let Some(decoded) = Self::decoded(self.bytes(), encoding) else {
+        let Some(decoded) = Self::decoded(self.as_slice(), encoding) else {
             return;
         };
         self.source = Source::Memory(decoded);
@@ -150,8 +150,8 @@ impl<'a> Haystack<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::Haystack;
-    use crate::search::input::{Input, Origin};
+    use super::Bytes;
+    use crate::search::input::{Input, Mention, Origin};
     use crate::search::options::{InputEncoding, Io};
     use std::borrow::Cow;
 
@@ -164,11 +164,11 @@ mod tests {
         let input = Input::Bytes {
             origin: Origin::stream("t"),
             bytes: Cow::Owned(raw),
-            explicit: true,
+            mention: Mention::Explicit,
         };
-        let mut haystack = Haystack::open(&input, Io::Sync).expect("open");
-        haystack.decode(&InputEncoding::Auto);
-        assert_eq!(haystack.bytes(), b"needle\n");
+        let mut loaded = Bytes::open(&input, Io::Sync).expect("open");
+        loaded.decode(&InputEncoding::Auto);
+        assert_eq!(loaded.as_slice(), b"needle\n");
     }
 
     #[test]
@@ -176,13 +176,13 @@ mod tests {
         let input = Input::Bytes {
             origin: Origin::stream("t"),
             bytes: Cow::Borrowed(b"needle\n"),
-            explicit: true,
+            mention: Mention::Explicit,
         };
-        let mut haystack = Haystack::open(&input, Io::Sync).expect("open");
-        let ptr = haystack.bytes().as_ptr();
-        haystack.decode(&InputEncoding::Explicit(encoding_rs::UTF_8));
-        assert_eq!(haystack.bytes().as_ptr(), ptr);
-        assert_eq!(haystack.bytes(), b"needle\n");
+        let mut loaded = Bytes::open(&input, Io::Sync).expect("open");
+        let ptr = loaded.as_slice().as_ptr();
+        loaded.decode(&InputEncoding::Explicit(encoding_rs::UTF_8));
+        assert_eq!(loaded.as_slice().as_ptr(), ptr);
+        assert_eq!(loaded.as_slice(), b"needle\n");
     }
 
     #[test]
@@ -190,10 +190,10 @@ mod tests {
         let input = Input::Bytes {
             origin: Origin::stream("t"),
             bytes: Cow::Borrowed(b"ab\0cd"),
-            explicit: true,
+            mention: Mention::Explicit,
         };
-        let mut haystack = Haystack::open(&input, Io::Sync).expect("open");
-        assert_eq!(haystack.convert_nul(b'\n'), Some(2));
-        assert_eq!(haystack.bytes(), b"ab\ncd");
+        let mut loaded = Bytes::open(&input, Io::Sync).expect("open");
+        assert_eq!(loaded.convert_nul(b'\n'), Some(2));
+        assert_eq!(loaded.as_slice(), b"ab\ncd");
     }
 }

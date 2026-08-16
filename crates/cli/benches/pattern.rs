@@ -1,9 +1,8 @@
 use criterion::{BatchSize, Criterion};
 use std::hint::black_box;
 
-use sift_core::{Searcher, ZeroCounts};
+use sift_core::{Hit, Searcher, ZeroCounts};
 use sift_grep::Argv;
-use sift_grep::format::InvertMatch;
 use sift_grep::pattern::{PatternArgv, ResolvedPatterns};
 
 use crate::support::{args, parse_cli};
@@ -61,7 +60,7 @@ fn argv_flags(c: &mut Criterion) {
         b.iter(|| {
             black_box(PatternArgv::output_mode(
                 &Argv::new(black_box(&argv_output_lw)),
-                InvertMatch::Off,
+                false,
                 ZeroCounts::Omit,
             ))
         });
@@ -76,7 +75,8 @@ fn patterns(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 ResolvedPatterns::resolve(black_box(
-                    &cli.pattern_config(sift_core::SearchMode::Lines).0,
+                    &cli.pattern_config(sift_core::SearchMode::Print(Hit::Line))
+                        .0,
                 ))
                 .unwrap(),
             )
@@ -87,7 +87,8 @@ fn patterns(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 ResolvedPatterns::resolve(black_box(
-                    &cli.pattern_config(sift_core::SearchMode::Lines).0,
+                    &cli.pattern_config(sift_core::SearchMode::Print(Hit::Line))
+                        .0,
                 ))
                 .unwrap(),
             )
@@ -102,7 +103,8 @@ fn patterns(c: &mut Criterion) {
             |cli| {
                 black_box(
                     ResolvedPatterns::resolve(black_box(
-                        &cli.pattern_config(sift_core::SearchMode::Lines).0,
+                        &cli.pattern_config(sift_core::SearchMode::Print(Hit::Line))
+                            .0,
                     ))
                     .unwrap(),
                 )
@@ -118,7 +120,7 @@ fn patterns(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 cli_default
-                    .pattern_config(sift_core::SearchMode::Lines)
+                    .pattern_config(sift_core::SearchMode::Print(Hit::Line))
                     .0
                     .query(vec!["pattern".to_string()], black_box(&pattern_argv))
                     .and_then(Searcher::new)

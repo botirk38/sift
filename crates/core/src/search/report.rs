@@ -1,435 +1,162 @@
 use std::time::Duration;
 
-use grep_matcher::{Captures, Matcher as GrepMatcher};
-
-use crate::search::event::{
-    BinaryEvent, ContextEvent, ContextKind, Events, FileEvent, MatchEvent, SearchEvent,
-};
-use crate::search::hit::{
-    LineCount, ListedFile, ListedRow, Listing, Match, MatchedFile, SpanCount,
-};
-use crate::search::input::Origin;
-use crate::search::line::Line;
-use crate::search::matcher::Matcher;
+use crate::search::hit::{Count, Listing, Match, MatchedFile};
+use crate::search::input::{Input, Origin};
 use crate::search::mode::SearchMode;
-use crate::search::options::SearchOptions;
-use crate::search::stats::{MatchTotals, Stats, StatsMode};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Buffer {
-    Discard,
-    Collect,
-}
-
-impl Buffer {
-    pub(super) const fn from(events: &Events<'_>) -> Self {
-        match events {
-            Events::Discard => Self::Discard,
-            Events::Emit(_) => Self::Collect,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MatchEmission {
-    Presence,
-    LineCount,
-    Lines,
-    Spans,
-}
-
-impl MatchEmission {
-    const fn from(mode: SearchMode, options: &SearchOptions) -> Self {
-        if options.replace.is_some() {
-            return if matches!(mode, SearchMode::Matches) || options.only_matching() {
-                Self::Spans
-            } else {
-                Self::Lines
-            };
-        }
-        match mode {
-            SearchMode::FilesWithMatches | SearchMode::FilesWithoutMatch | SearchMode::Paths => {
-                Self::Presence
-            }
-            SearchMode::CountLines { .. } => Self::LineCount,
-            SearchMode::CountMatches { .. } | SearchMode::Matches => Self::Spans,
-            SearchMode::Lines if options.only_matching() => Self::Spans,
-            SearchMode::Lines => Self::Lines,
-        }
-    }
-}
+use crate::search::stats::Stats;
 
 pub(super) struct FileReport {
-    pub(crate) matched: bool,
-    pub(crate) row: Option<ListedRow>,
-    pub(crate) events: Vec<SearchEvent>,
-    pub(crate) line_matches: usize,
-    pub(crate) match_spans: usize,
-    pub(crate) bytes_searched: u64,
-    matches: Vec<Match>,
-    binary_byte_offset: Option<u64>,
+    pub origin: Origin,
+    pub matched: bool,
+    pub hits: usize,
+    pub matches: Vec<Match>,
+    pub bytes_searched: u64,
+    pub binary: Option<u64>,
 }
 
 impl FileReport {
-    pub(super) const fn new() -> Self {
+    pub(super) const fn new(origin: Origin) -> Self {
         Self {
+            origin,
             matched: false,
-            row: None,
-            events: Vec::new(),
-            line_matches: 0,
-            match_spans: 0,
-            bytes_searched: 0,
+            hits: 0,
             matches: Vec::new(),
-            binary_byte_offset: None,
+            bytes_searched: 0,
+            binary: None,
         }
     }
 
     pub(super) const fn listed(origin: Origin) -> Self {
         Self {
-            matched: true,
-            row: Some(ListedRow::MatchingPath(ListedFile {
-                origin,
-                binary_byte_offset: None,
-            })),
-            events: Vec::new(),
-            line_matches: 0,
-            match_spans: 0,
-            bytes_searched: 0,
-            matches: Vec::new(),
-            binary_byte_offset: None,
-        }
-    }
-
-    pub(super) fn drain_events(&mut self) -> impl Iterator<Item = SearchEvent> + '_ {
-        self.events.drain(..)
-    }
-
-    pub(super) fn begin(&mut self, origin: &Origin, buffer: Buffer) {
-        match buffer {
-            Buffer::Discard => {}
-            Buffer::Collect => self.events.push(SearchEvent::Begin(FileEvent {
-                origin: origin.clone(),
-            })),
-        }
-    }
-
-    pub(super) fn hit(
-        &mut self,
-        origin: &Origin,
-        line: &Line<'_>,
-        matcher: &Matcher,
-        mode: SearchMode,
-        buffer: Buffer,
-        options: &SearchOptions,
-    ) {
-        self.line_matches += 1;
-        self.matched = true;
-        match matcher {
-            Matcher::Rust(inner) => {
-                self.record_match(origin, line, inner, mode, buffer, options);
-            }
-            Matcher::Pcre2(inner) => {
-                self.record_match(origin, line, inner, mode, buffer, options);
-            }
-        }
-    }
-
-    pub(super) fn context(
-        &mut self,
-        origin: &Origin,
-        kind: ContextKind,
-        line: &Line<'_>,
-        buffer: Buffer,
-    ) {
-        match buffer {
-            Buffer::Discard => {}
-            Buffer::Collect => self.events.push(SearchEvent::Context(ContextEvent {
-                origin: origin.clone(),
-                kind,
-                line_number: line.number,
-                absolute_byte_offset: line.offset,
-                bytes: line.bytes().to_vec(),
-            })),
-        }
-    }
-
-    pub(super) fn gap(&mut self, buffer: Buffer) {
-        match buffer {
-            Buffer::Discard => {}
-            Buffer::Collect => self.events.push(SearchEvent::ContextBreak),
-        }
-    }
-
-    pub(super) fn binary(&mut self, origin: &Origin, offset: u64, explicit: bool, buffer: Buffer) {
-        self.binary_byte_offset.get_or_insert(offset);
-        match buffer {
-            Buffer::Discard => {}
-            Buffer::Collect => self.events.push(SearchEvent::Binary(BinaryEvent {
-                origin: origin.clone(),
-                absolute_byte_offset: offset,
-                explicit,
-            })),
-        }
-    }
-
-    pub(super) fn finish(
-        &mut self,
-        origin: Origin,
-        mode: SearchMode,
-        buffer: Buffer,
-        bytes_searched: u64,
-    ) {
-        self.bytes_searched = bytes_searched;
-        match buffer {
-            Buffer::Discard => {}
-            Buffer::Collect => self.events.push(SearchEvent::End(FileEvent {
-                origin: origin.clone(),
-            })),
-        }
-        let listed_file = ListedFile {
             origin,
-            binary_byte_offset: self.binary_byte_offset,
-        };
-        self.row = if mode.admits(self.matched) {
-            Some(match mode {
-                SearchMode::FilesWithMatches | SearchMode::Paths => {
-                    ListedRow::MatchingPath(listed_file)
-                }
-                SearchMode::FilesWithoutMatch => ListedRow::NonMatchingPath(listed_file),
-                SearchMode::CountLines { .. } => ListedRow::LineCount(LineCount {
-                    file: listed_file,
-                    lines: self.line_matches,
-                }),
-                SearchMode::CountMatches { .. } => ListedRow::SpanCount(SpanCount {
-                    file: listed_file,
-                    spans: self.match_spans,
-                }),
-                SearchMode::Lines => ListedRow::Lines(MatchedFile {
-                    file: listed_file,
-                    matches: std::mem::take(&mut self.matches),
-                }),
-                SearchMode::Matches => ListedRow::Spans(MatchedFile {
-                    file: listed_file,
-                    matches: std::mem::take(&mut self.matches),
-                }),
-            })
-        } else {
-            None
-        };
-    }
-
-    fn record_match<M: GrepMatcher>(
-        &mut self,
-        origin: &Origin,
-        line: &Line<'_>,
-        matcher: &M,
-        mode: SearchMode,
-        buffer: Buffer,
-        options: &SearchOptions,
-    ) {
-        let emission = MatchEmission::from(mode, options);
-        let replacement = options.replace.as_deref().map(str::as_bytes);
-        let line_no = usize::try_from(line.number.unwrap_or(0)).unwrap_or(0);
-        let line_bytes = line.bytes();
-        match emission {
-            MatchEmission::Presence | MatchEmission::LineCount => {
-                if matches!(buffer, Buffer::Collect) {
-                    self.events.push(SearchEvent::Match(MatchEvent {
-                        origin: origin.clone(),
-                        line_number: line.number,
-                        absolute_byte_offset: Some(line.offset),
-                        bytes: Vec::new(),
-                        ranges: Vec::new(),
-                        replacement: None,
-                        replacement_matches: Vec::new(),
-                    }));
-                }
-            }
-            MatchEmission::Lines if matches!(buffer, Buffer::Discard) => {
-                if replacement.is_some() {
-                    self.count_spans(matcher, line_bytes);
-                }
-                self.matches.push(Match {
-                    line: line_no,
-                    text: String::from_utf8_lossy(line_bytes).into_owned(),
-                });
-            }
-            MatchEmission::Lines => {
-                let expanded = replacement.and_then(|replacement| {
-                    Replacement::expand(matcher, line_bytes, replacement).ok()
-                });
-                let mut ranges = Vec::new();
-                let _ = matcher.find_iter(line_bytes, |m: grep_matcher::Match| {
-                    ranges.push(m.start()..m.end());
-                    self.match_spans += 1;
-                    true
-                });
-                self.events.push(SearchEvent::Match(MatchEvent {
-                    origin: origin.clone(),
-                    line_number: line.number,
-                    absolute_byte_offset: Some(line.offset),
-                    bytes: line_bytes.to_vec(),
-                    ranges,
-                    replacement: expanded
-                        .as_ref()
-                        .map(|replacement| replacement.line.clone()),
-                    replacement_matches: expanded.map_or_else(Vec::new, |r| r.matches),
-                }));
-            }
-            MatchEmission::Spans if matches!(buffer, Buffer::Discard) => match mode {
-                SearchMode::CountMatches { .. } | SearchMode::CountLines { .. } => {
-                    self.count_spans(matcher, line_bytes);
-                }
-                _ if replacement.is_some() => self.count_spans(matcher, line_bytes),
-                _ => self.collect_span_matches(matcher, line_no, line_bytes),
-            },
-            MatchEmission::Spans => {
-                self.emit_span_event(origin, matcher, line, line_bytes, replacement);
-            }
+            matched: true,
+            hits: 0,
+            matches: Vec::new(),
+            bytes_searched: 0,
+            binary: None,
         }
     }
 
-    fn count_spans<M: GrepMatcher>(&mut self, matcher: &M, line_bytes: &[u8]) {
-        let _ = matcher.find_iter(line_bytes, |_m: grep_matcher::Match| {
-            self.match_spans += 1;
-            true
-        });
-    }
-
-    fn collect_span_matches<M: GrepMatcher>(
-        &mut self,
-        matcher: &M,
-        line: usize,
-        line_bytes: &[u8],
-    ) {
-        let _ = matcher.find_iter(line_bytes, |m: grep_matcher::Match| {
-            self.match_spans += 1;
-            self.matches.push(Match {
-                line,
-                text: String::from_utf8_lossy(&line_bytes[m.start()..m.end()]).into_owned(),
-            });
-            true
-        });
-    }
-
-    fn emit_span_event<M: GrepMatcher>(
-        &mut self,
-        origin: &Origin,
-        matcher: &M,
-        line: &Line<'_>,
-        line_bytes: &[u8],
-        replacement: Option<&[u8]>,
-    ) {
-        let expanded = replacement
-            .and_then(|replacement| Replacement::expand(matcher, line_bytes, replacement).ok());
-        let mut ranges = Vec::new();
-        let _ = matcher.find_iter(line_bytes, |m: grep_matcher::Match| {
-            ranges.push(m.start()..m.end());
-            self.match_spans += 1;
-            true
-        });
-        self.events.push(SearchEvent::Match(MatchEvent {
-            origin: origin.clone(),
-            line_number: line.number,
-            absolute_byte_offset: Some(line.offset),
-            bytes: line_bytes.to_vec(),
-            ranges,
-            replacement: expanded
-                .as_ref()
-                .map(|replacement| replacement.line.clone()),
-            replacement_matches: expanded.map_or_else(Vec::new, |r| r.matches),
-        }));
+    pub(super) fn push_match(&mut self, m: Match) {
+        self.matches.push(m);
     }
 }
 
-struct Replacement {
-    line: Vec<u8>,
-    matches: Vec<Vec<u8>>,
+/// Result of searching a set of inputs.
+pub(super) struct Reports {
+    items: Vec<FileReport>,
+    searched: usize,
+    bytes: u64,
 }
 
-impl Replacement {
-    fn expand<M: GrepMatcher>(
-        matcher: &M,
-        bytes: &[u8],
-        replacement: &[u8],
-    ) -> Result<Self, M::Error> {
-        let mut caps = matcher.new_captures()?;
-        let mut line = Vec::new();
-        let mut spans = Vec::new();
-        matcher.replace_with_captures(bytes, &mut caps, &mut line, |captures, dst| {
-            let start = dst.len();
-            captures.interpolate(|name| matcher.capture_index(name), bytes, replacement, dst);
-            spans.push(dst[start..].to_vec());
-            true
-        })?;
-        Ok(Self {
-            line,
-            matches: spans,
-        })
+impl Reports {
+    pub(super) fn listed(inputs: &[Input<'_>]) -> Self {
+        Self::new(
+            inputs
+                .iter()
+                .map(|input| FileReport::listed(input.origin().clone()))
+                .collect(),
+            inputs.len(),
+            0,
+        )
+    }
+
+    pub(super) fn exhaustive(items: Vec<FileReport>, searched: usize) -> Self {
+        let bytes = items.iter().fold(0u64, |bytes, report| {
+            bytes.saturating_add(report.bytes_searched)
+        });
+        Self::new(items, searched, bytes)
+    }
+
+    pub(super) const fn empty() -> Self {
+        Self::new(Vec::new(), 0, 0)
+    }
+
+    /// Account for one attempted input. Returns whether `FirstMatch` should stop.
+    pub(super) fn tried(&mut self, report: Option<FileReport>, mode: SearchMode) -> bool {
+        self.searched += 1;
+        let Some(report) = report else {
+            return false;
+        };
+        self.bytes = self.bytes.saturating_add(report.bytes_searched);
+        if !mode.settles(report.matched) {
+            return false;
+        }
+        self.items.push(report);
+        true
+    }
+
+    const fn new(items: Vec<FileReport>, searched: usize, bytes: u64) -> Self {
+        Self {
+            items,
+            searched,
+            bytes,
+        }
+    }
+}
+
+impl Listing {
+    fn push(&mut self, report: FileReport) {
+        match self {
+            Self::MatchingPaths(v) | Self::NonMatchingPaths(v) => v.push(report.origin),
+            Self::Counts(v) => v.push(Count {
+                origin: report.origin,
+                hits: report.hits,
+            }),
+            Self::Matches(v) => v.push(MatchedFile {
+                origin: report.origin,
+                matches: report.matches,
+            }),
+        }
     }
 }
 
 /// Result of a search run.
 pub struct SearchReport {
     pub listed: Listing,
-    pub stats: Option<Stats>,
+    pub stats: Stats,
 }
 
 impl SearchReport {
-    pub(crate) fn empty(stats: StatsMode, mode: SearchMode) -> Self {
+    pub(crate) fn empty(mode: SearchMode) -> Self {
         Self {
             listed: Listing::empty(mode),
-            stats: stats.collect().then(Stats::default),
+            stats: Stats::default(),
         }
     }
 
-    pub(super) fn from(
-        reports: Vec<FileReport>,
-        mode: SearchMode,
-        stats: StatsMode,
-        inputs_len: usize,
-        elapsed: Duration,
-    ) -> Self {
+    pub(super) fn from(reports: Reports, mode: SearchMode, elapsed: Duration) -> Self {
         let mut listed = Listing::empty(mode);
         let mut files_with_matches = 0usize;
-        let mut match_lines = 0usize;
-        let mut match_spans = 0usize;
-        let mut bytes_searched = 0u64;
+        let mut hits = 0usize;
 
-        for report in reports {
+        for report in reports.items {
             if report.matched {
                 files_with_matches += 1;
             }
-            match_lines = match_lines.saturating_add(report.line_matches);
-            match_spans = match_spans.saturating_add(report.match_spans);
-            bytes_searched = bytes_searched.saturating_add(report.bytes_searched);
-            if let Some(row) = report.row {
-                listed.push_row(row);
+            hits = hits.saturating_add(report.hits);
+            if mode.admits(report.matched) {
+                listed.push(report);
             }
         }
 
-        let stats = stats.collect().then_some(Stats {
+        let stats = Stats {
             matches: match mode {
+                SearchMode::Print(_) | SearchMode::Count { .. } => Some(hits),
                 SearchMode::FilesWithMatches | SearchMode::FilesWithoutMatch => {
-                    MatchTotals::Lines(files_with_matches)
+                    Some(files_with_matches)
                 }
-                SearchMode::Paths => MatchTotals::None,
-                SearchMode::CountMatches { .. } | SearchMode::Matches => {
-                    MatchTotals::Spans(match_spans)
-                }
-                SearchMode::Lines | SearchMode::CountLines { .. } => {
-                    MatchTotals::Lines(match_lines)
-                }
+                SearchMode::Paths => None,
             },
             files_with_matches: match mode {
                 SearchMode::Paths => 0,
                 _ => files_with_matches,
             },
-            files_searched: inputs_len,
+            files_searched: reports.searched,
             bytes_printed: 0,
-            bytes_searched,
+            bytes_searched: reports.bytes,
             elapsed,
-        });
+        };
 
         Self { listed, stats }
     }
@@ -442,14 +169,8 @@ impl SearchReport {
     pub fn found(&self) -> bool {
         match &self.listed {
             Listing::MatchingPaths(v) | Listing::NonMatchingPaths(v) => !v.is_empty(),
-            Listing::Lines(v) | Listing::Spans(v) => !v.is_empty(),
-            Listing::LineCounts(v) => v.iter().any(|c| c.lines > 0),
-            Listing::SpanCounts(v) => v.iter().any(|c| c.spans > 0),
+            Listing::Matches(v) => !v.is_empty(),
+            Listing::Counts(v) => v.iter().any(|count| count.hits > 0),
         }
-    }
-
-    #[must_use]
-    pub const fn stats(&self) -> Option<&Stats> {
-        self.stats.as_ref()
     }
 }

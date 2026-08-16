@@ -203,3 +203,21 @@ fn no_json_with_count_uses_count_output() {
     assert_success(&output);
     assert_stdout_eq(&output, &rel_match("a.txt", "1\n"));
 }
+
+#[test]
+fn json_binary_emits_binary_type_and_omits_match_text() {
+    let p = TestProject::new("json-binary");
+    p.write("binary.txt", b"findme\x00later\n");
+
+    let output = p.walk_output(["--json", "--binary", "findme", "binary.txt"]);
+    assert_success(&output);
+    let lines = json_lines(&output);
+    assert!(
+        lines.iter().any(|line| line["type"] == "binary"),
+        "expected binary JSON record, got {lines:?}"
+    );
+    assert!(
+        lines.iter().all(|line| line["type"] != "match"),
+        "binary JSON should omit match text, got {lines:?}"
+    );
+}

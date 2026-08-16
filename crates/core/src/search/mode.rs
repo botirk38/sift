@@ -1,12 +1,16 @@
+/// What one listed hit is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SearchMode {
+pub enum Hit {
     #[default]
-    Lines,
-    Matches,
-    CountLines {
-        zeros: ZeroCounts,
-    },
-    CountMatches {
+    Line,
+    Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchMode {
+    Print(Hit),
+    Count {
+        hit: Hit,
         zeros: ZeroCounts,
     },
     FilesWithMatches,
@@ -15,18 +19,30 @@ pub enum SearchMode {
     Paths,
 }
 
+impl Default for SearchMode {
+    fn default() -> Self {
+        Self::Print(Hit::Line)
+    }
+}
+
 impl SearchMode {
     /// File coverage required for this search mode.
     #[must_use]
     pub const fn coverage(self) -> crate::candidates::Coverage {
         use crate::candidates::Coverage;
         match self {
-            Self::FilesWithoutMatch | Self::Paths => Coverage::Complete,
-            Self::CountLines { zeros } | Self::CountMatches { zeros } => match zeros {
-                ZeroCounts::Include => Coverage::Complete,
-                ZeroCounts::Omit => Coverage::PotentialMatches,
-            },
-            Self::Lines | Self::Matches | Self::FilesWithMatches => Coverage::PotentialMatches,
+            Self::FilesWithoutMatch
+            | Self::Paths
+            | Self::Count {
+                zeros: ZeroCounts::Include,
+                ..
+            } => Coverage::Complete,
+            Self::Print(_)
+            | Self::Count {
+                zeros: ZeroCounts::Omit,
+                ..
+            }
+            | Self::FilesWithMatches => Coverage::PotentialMatches,
         }
     }
 
@@ -35,19 +51,14 @@ impl SearchMode {
         match self {
             Self::FilesWithoutMatch => !matched,
             Self::Paths
-            | Self::CountLines {
+            | Self::Count {
                 zeros: ZeroCounts::Include,
-            }
-            | Self::CountMatches {
-                zeros: ZeroCounts::Include,
+                ..
             } => true,
-            Self::Lines
-            | Self::Matches
-            | Self::CountLines {
+            Self::Print(_)
+            | Self::Count {
                 zeros: ZeroCounts::Omit,
-            }
-            | Self::CountMatches {
-                zeros: ZeroCounts::Omit,
+                ..
             }
             | Self::FilesWithMatches => matched,
         }
@@ -60,25 +71,14 @@ impl SearchMode {
         match self {
             Self::FilesWithoutMatch => !matched,
             Self::Paths => true,
-            Self::Lines
-            | Self::Matches
-            | Self::CountLines { .. }
-            | Self::CountMatches { .. }
-            | Self::FilesWithMatches => matched,
+            Self::Print(_) | Self::Count { .. } | Self::FilesWithMatches => matched,
         }
     }
 
     /// Summary modes render from the report and do not need streamed match events.
     #[must_use]
     pub const fn is_summary(self) -> bool {
-        matches!(
-            self,
-            Self::CountLines { .. }
-                | Self::CountMatches { .. }
-                | Self::FilesWithMatches
-                | Self::FilesWithoutMatch
-                | Self::Paths
-        )
+        !matches!(self, Self::Print(_))
     }
 
     /// Path-only listing modes (`-l`, `--files-without-match`, `--files`).
@@ -88,6 +88,15 @@ impl SearchMode {
             self,
             Self::FilesWithMatches | Self::FilesWithoutMatch | Self::Paths
         )
+    }
+
+    /// Listing unit for content modes.
+    #[must_use]
+    pub const fn hit(self) -> Option<Hit> {
+        match self {
+            Self::Print(hit) | Self::Count { hit, .. } => Some(hit),
+            Self::FilesWithMatches | Self::FilesWithoutMatch | Self::Paths => None,
+        }
     }
 }
 

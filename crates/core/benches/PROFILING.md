@@ -28,7 +28,7 @@ Search/planner fixtures default to monorepo scale (~32k files / ~5M lines;
 ### 2026-08-16 — own scan loop (grep-searcher removed)
 
 - **Tool:** none yet (implementation change; re-profile before claiming wins)
-- **Change:** `Searcher` reads via `Haystack` + `fastio` (`Io::{Sync,Mmap,Uring}` all `read_all` / `map`). No windowed uring. Rayon over files.
+- **Change:** `Searcher` reads via `Bytes` + `fastio` (`Io::{Sync,Mmap,Uring}` all `read_all` / `map`). No windowed uring. Rayon over files.
 - **Expected still:** per-file `__open` dominates on macOS (fastio uring open is still `std::fs` open; mmap/sync also open per file).
 - **Before / after:** not measured this session. Re-run `grep_search/full_scan` and `invert_match` with samply/xctrace after the next dedicated profiling pass.
 

@@ -405,12 +405,13 @@ impl IndexCommands {
 mod tests {
     use super::*;
     use clap::Parser;
+    use sift_core::Hit;
     use std::path::Path;
 
     #[test]
     fn cli_parses_positional_pattern() {
         let cli = Cli::try_parse_from(["sift", "pattern"]).unwrap();
-        let (config, paths) = cli.pattern_config(SearchMode::Lines);
+        let (config, paths) = cli.pattern_config(SearchMode::Print(Hit::Line));
         assert_eq!(config.patterns.pattern.as_deref(), Some("pattern"));
         assert!(paths.is_empty());
     }
@@ -496,14 +497,14 @@ mod tests {
     fn cli_parses_no_search_scope() {
         let cli = Cli::try_parse_from(["sift", "pattern"]).unwrap();
         assert_eq!(cli.search_scope.args, vec!["pattern"]);
-        let (_, paths) = cli.pattern_config(SearchMode::Lines);
+        let (_, paths) = cli.pattern_config(SearchMode::Print(Hit::Line));
         assert!(paths.is_empty());
     }
 
     #[test]
     fn cli_parses_search_scope() {
         let cli = Cli::try_parse_from(["sift", "pattern", "src/"]).unwrap();
-        let (config, paths) = cli.pattern_config(SearchMode::Lines);
+        let (config, paths) = cli.pattern_config(SearchMode::Print(Hit::Line));
         assert_eq!(config.patterns.pattern.as_deref(), Some("pattern"));
         assert_eq!(paths, vec![PathBuf::from("src/")]);
     }
@@ -511,7 +512,7 @@ mod tests {
     #[test]
     fn cli_parses_multiple_paths() {
         let cli = Cli::try_parse_from(["sift", "pattern", "src/", "tests/"]).unwrap();
-        let (_, paths) = cli.pattern_config(SearchMode::Lines);
+        let (_, paths) = cli.pattern_config(SearchMode::Print(Hit::Line));
         assert_eq!(paths, vec![PathBuf::from("src/"), PathBuf::from("tests/")]);
     }
 
@@ -530,7 +531,7 @@ mod tests {
     #[test]
     fn cli_pattern_and_search_scope() {
         let cli = Cli::try_parse_from(["sift", "pat", "dir1", "dir2"]).unwrap();
-        let (config, paths) = cli.pattern_config(SearchMode::Lines);
+        let (config, paths) = cli.pattern_config(SearchMode::Print(Hit::Line));
         assert_eq!(config.patterns.pattern.as_deref(), Some("pat"));
         assert_eq!(paths, vec![PathBuf::from("dir1"), PathBuf::from("dir2")]);
     }
@@ -538,7 +539,7 @@ mod tests {
     #[test]
     fn cli_regexp_positional_becomes_search_path() {
         let cli = Cli::try_parse_from(["sift", "-e", "foo", "dir1"]).unwrap();
-        let (config, paths) = cli.pattern_config(SearchMode::Lines);
+        let (config, paths) = cli.pattern_config(SearchMode::Print(Hit::Line));
         assert_eq!(config.patterns.regexp, vec!["foo"]);
         assert!(config.patterns.pattern.is_none());
         assert_eq!(paths, vec![PathBuf::from("dir1")]);
@@ -547,7 +548,7 @@ mod tests {
     #[test]
     fn cli_multiple_regexp_positional_becomes_search_path() {
         let cli = Cli::try_parse_from(["sift", "-e", "foo", "-e", "bar", "dir1"]).unwrap();
-        let (config, paths) = cli.pattern_config(SearchMode::Lines);
+        let (config, paths) = cli.pattern_config(SearchMode::Print(Hit::Line));
         assert_eq!(config.patterns.regexp, vec!["foo", "bar"]);
         assert!(config.patterns.pattern.is_none());
         assert_eq!(paths, vec![PathBuf::from("dir1")]);
@@ -556,7 +557,7 @@ mod tests {
     #[test]
     fn cli_regexp_preserves_path_order_with_extra_paths() {
         let cli = Cli::try_parse_from(["sift", "-e", "foo", "dir1", "dir2"]).unwrap();
-        let (config, paths) = cli.pattern_config(SearchMode::Lines);
+        let (config, paths) = cli.pattern_config(SearchMode::Print(Hit::Line));
         assert_eq!(config.patterns.regexp, vec!["foo"]);
         assert!(config.patterns.pattern.is_none());
         assert_eq!(paths, vec![PathBuf::from("dir1"), PathBuf::from("dir2")]);
@@ -565,7 +566,7 @@ mod tests {
     #[test]
     fn cli_pattern_file_positional_becomes_search_path() {
         let cli = Cli::try_parse_from(["sift", "-f", "pats.txt", "dir1"]).unwrap();
-        let (config, paths) = cli.pattern_config(SearchMode::Lines);
+        let (config, paths) = cli.pattern_config(SearchMode::Print(Hit::Line));
         assert_eq!(
             config.patterns.pattern_file.as_deref(),
             Some(Path::new("pats.txt"))
@@ -577,7 +578,7 @@ mod tests {
     #[test]
     fn cli_regexp_without_path_leaves_paths_empty() {
         let cli = Cli::try_parse_from(["sift", "-e", "foo"]).unwrap();
-        let (config, paths) = cli.pattern_config(SearchMode::Lines);
+        let (config, paths) = cli.pattern_config(SearchMode::Print(Hit::Line));
         assert_eq!(config.patterns.regexp, vec!["foo"]);
         assert!(config.patterns.pattern.is_none());
         assert!(paths.is_empty());
@@ -586,7 +587,7 @@ mod tests {
     #[test]
     fn cli_positional_only_keeps_pattern_and_paths() {
         let cli = Cli::try_parse_from(["sift", "pat", "dir1", "dir2"]).unwrap();
-        let (config, paths) = cli.pattern_config(SearchMode::Lines);
+        let (config, paths) = cli.pattern_config(SearchMode::Print(Hit::Line));
         assert_eq!(config.patterns.pattern.as_deref(), Some("pat"));
         assert!(config.patterns.regexp.is_empty());
         assert_eq!(paths, vec![PathBuf::from("dir1"), PathBuf::from("dir2")]);
@@ -595,7 +596,7 @@ mod tests {
     #[test]
     fn cli_regexp_double_dash_path_becomes_search_path() {
         let cli = Cli::try_parse_from(["sift", "-e", "foo", "--", "dir1"]).unwrap();
-        let (config, paths) = cli.pattern_config(SearchMode::Lines);
+        let (config, paths) = cli.pattern_config(SearchMode::Print(Hit::Line));
         assert_eq!(config.patterns.regexp, vec!["foo"]);
         assert!(config.patterns.pattern.is_none());
         assert_eq!(paths, vec![PathBuf::from("dir1")]);
@@ -604,7 +605,7 @@ mod tests {
     #[test]
     fn cli_regexp_double_dash_hyphen_path() {
         let cli = Cli::try_parse_from(["sift", "-e", "foo", "--", "-weird"]).unwrap();
-        let (config, paths) = cli.pattern_config(SearchMode::Lines);
+        let (config, paths) = cli.pattern_config(SearchMode::Print(Hit::Line));
         assert_eq!(config.patterns.regexp, vec!["foo"]);
         assert!(config.patterns.pattern.is_none());
         assert_eq!(paths, vec![PathBuf::from("-weird")]);
@@ -613,7 +614,7 @@ mod tests {
     #[test]
     fn cli_regexp_and_pattern_file_positional_is_path() {
         let cli = Cli::try_parse_from(["sift", "-e", "foo", "-f", "pats.txt", "dir1"]).unwrap();
-        let (config, paths) = cli.pattern_config(SearchMode::Lines);
+        let (config, paths) = cli.pattern_config(SearchMode::Print(Hit::Line));
         assert_eq!(config.patterns.regexp, vec!["foo"]);
         assert_eq!(
             config.patterns.pattern_file.as_deref(),

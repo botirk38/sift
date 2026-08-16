@@ -1,7 +1,9 @@
 mod pcre2;
 mod rust;
 
-use grep_matcher::{Match, Matcher as GrepMatcher};
+use std::ops::Range;
+
+use grep_matcher::{Captures, Match, Matcher as GrepMatcher};
 use grep_pcre2::RegexMatcher as Pcre2Matcher;
 use grep_regex::RegexMatcher;
 
@@ -54,5 +56,58 @@ impl Matcher {
                 .find(haystack)
                 .map_err(|err| SearchError::Match(err.to_string())),
         }
+    }
+
+    pub(super) fn ranges(&self, bytes: &[u8]) -> Result<Vec<Range<usize>>, SearchError> {
+        match self {
+            Self::Rust(matcher) => Self::collect_ranges(matcher, bytes),
+            Self::Pcre2(matcher) => Self::collect_ranges(matcher, bytes),
+        }
+    }
+
+    pub(super) fn expand(
+        &self,
+        bytes: &[u8],
+        replacement: &[u8],
+    ) -> Result<(Vec<u8>, Vec<Vec<u8>>), SearchError> {
+        match self {
+            Self::Rust(matcher) => Self::expand_with(matcher, bytes, replacement),
+            Self::Pcre2(matcher) => Self::expand_with(matcher, bytes, replacement),
+        }
+    }
+
+    fn collect_ranges<M: GrepMatcher>(
+        matcher: &M,
+        bytes: &[u8],
+    ) -> Result<Vec<Range<usize>>, SearchError> {
+        let mut ranges = Vec::new();
+        matcher
+            .find_iter(bytes, |m| {
+                ranges.push(m.start()..m.end());
+                true
+            })
+            .map_err(|err| SearchError::Match(err.to_string()))?;
+        Ok(ranges)
+    }
+
+    fn expand_with<M: GrepMatcher>(
+        matcher: &M,
+        bytes: &[u8],
+        replacement: &[u8],
+    ) -> Result<(Vec<u8>, Vec<Vec<u8>>), SearchError> {
+        let mut caps = matcher
+            .new_captures()
+            .map_err(|err| SearchError::Match(err.to_string()))?;
+        let mut line = Vec::new();
+        let mut spans = Vec::new();
+        matcher
+            .replace_with_captures(bytes, &mut caps, &mut line, |captures, dst| {
+                let start = dst.len();
+                captures.interpolate(|name| matcher.capture_index(name), bytes, replacement, dst);
+                spans.push(dst[start..].to_vec());
+                true
+            })
+            .map_err(|err| SearchError::Match(err.to_string()))?;
+        Ok((line, spans))
     }
 }
