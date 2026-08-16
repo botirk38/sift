@@ -1,6 +1,7 @@
 use std::io::IsTerminal;
 
 use crate::format::output::format::ColumnLimit;
+use crate::format::output::hyperlink::Hyperlink;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FilenameMode {
@@ -88,8 +89,7 @@ pub struct PrintRecordStyle {
     pub color: ColorChoice,
     pub path_separator: Option<u8>,
     pub colors: ColorSpecs,
-    pub hyperlink: HyperlinkFormat,
-    pub hyperlink_host: Option<String>,
+    pub hyperlink: Hyperlink,
     pub buffering: OutputBuffering,
 }
 
@@ -113,27 +113,41 @@ impl PrintRecordStyle {
     }
 }
 
-/// ANSI SGR style applied to paths or match text.
+/// ANSI SGR style applied to a printer field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AnsiStyle {
-    fg: Option<u8>,
+    fg: Option<AnsiColor>,
+    bg: Option<AnsiColor>,
     bold: bool,
 }
 
 impl AnsiStyle {
     #[must_use]
     pub fn sequence(self) -> Option<Vec<u8>> {
-        let mut codes = Vec::new();
-        if self.bold {
-            codes.push("1".to_string());
-        }
-        if let Some(fg) = self.fg {
-            codes.push(fg.to_string());
-        }
-        if codes.is_empty() {
+        if self.fg.is_none() && self.bg.is_none() && !self.bold {
             return None;
         }
-        Some(format!("\x1b[0m\x1b[{}m", codes.join(";")).into_bytes())
+        let mut out = b"\x1b[0m\x1b[".to_vec();
+        let mut first = true;
+        if self.bold {
+            Self::push_code(&mut out, &mut first, b"1");
+        }
+        if let Some(fg) = self.fg {
+            fg.write(&mut out, &mut first, true);
+        }
+        if let Some(bg) = self.bg {
+            bg.write(&mut out, &mut first, false);
+        }
+        out.push(b'm');
+        Some(out)
+    }
+
+    fn push_code(out: &mut Vec<u8>, first: &mut bool, code: &[u8]) {
+        if !*first {
+            out.push(b';');
+        }
+        *first = false;
+        out.extend(code);
     }
 
     fn clear(&mut self) {
@@ -141,99 +155,126 @@ impl AnsiStyle {
     }
 
     fn set_fg(&mut self, name: &str) -> Result<(), String> {
-        self.fg = NamedFg::parse(name)?.code();
+        self.fg = Some(AnsiColor::parse(name)?);
+        Ok(())
+    }
+
+    fn set_bg(&mut self, name: &str) -> Result<(), String> {
+        self.bg = Some(AnsiColor::parse(name)?);
         Ok(())
     }
 
     fn apply_style(&mut self, name: &str) -> Result<(), String> {
-        match Self::style_name(name)? {
+        match StyleName::parse(name)? {
             StyleName::Bold => self.bold = true,
             StyleName::NoBold => self.bold = false,
             StyleName::Ignored => {}
         }
         Ok(())
     }
-
-    fn style_name(name: &str) -> Result<StyleName, String> {
-        Ok(if name.eq_ignore_ascii_case("bold") {
-            StyleName::Bold
-        } else if name.eq_ignore_ascii_case("nobold") {
-            StyleName::NoBold
-        } else if name.eq_ignore_ascii_case("intense")
-            || name.eq_ignore_ascii_case("nointense")
-            || name.eq_ignore_ascii_case("underline")
-            || name.eq_ignore_ascii_case("nounderline")
-            || name.eq_ignore_ascii_case("italic")
-            || name.eq_ignore_ascii_case("noitalic")
-        {
-            StyleName::Ignored
-        } else {
-            return Err(format!(
-                "unrecognized style attribute '{name}'. Choose from: \
-                 nobold, bold, nointense, intense, nounderline, \
-                 underline, noitalic, italic."
-            ));
-        })
-    }
 }
 
-enum NamedFg {
-    Black,
-    Blue,
-    Green,
-    Red,
-    Cyan,
-    Magenta,
-    Yellow,
-    White,
-    Extended,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnsiColor {
+    Named(u8),
+    Indexed(u8),
+    Rgb(u8, u8, u8),
 }
 
-impl NamedFg {
+impl AnsiColor {
     fn parse(name: &str) -> Result<Self, String> {
         Ok(if name.eq_ignore_ascii_case("black") {
-            Self::Black
+            Self::Named(0)
         } else if name.eq_ignore_ascii_case("blue") {
-            Self::Blue
+            Self::Named(4)
         } else if name.eq_ignore_ascii_case("green") {
-            Self::Green
+            Self::Named(2)
         } else if name.eq_ignore_ascii_case("red") {
-            Self::Red
+            Self::Named(1)
         } else if name.eq_ignore_ascii_case("cyan") {
-            Self::Cyan
+            Self::Named(6)
         } else if name.eq_ignore_ascii_case("magenta") {
-            Self::Magenta
+            Self::Named(5)
         } else if name.eq_ignore_ascii_case("yellow") {
-            Self::Yellow
+            Self::Named(3)
         } else if name.eq_ignore_ascii_case("white") {
-            Self::White
-        } else if Self::extended(name) {
-            Self::Extended
+            Self::Named(7)
         } else {
-            return Err(format!(
-                "unrecognized color name '{name}'. Choose from: \
-                 black, blue, green, red, cyan, magenta, yellow, white."
-            ));
+            Self::extended(name)?
         })
     }
 
-    fn extended(name: &str) -> bool {
-        name.starts_with("0x")
-            || name.contains(',')
-            || name.bytes().all(|byte| byte.is_ascii_digit())
+    fn number(s: &str) -> Option<u8> {
+        s.strip_prefix("0x")
+            .or_else(|| s.strip_prefix("0X"))
+            .map_or_else(|| s.parse().ok(), |hex| u8::from_str_radix(hex, 16).ok())
     }
 
-    const fn code(self) -> Option<u8> {
+    fn extended(name: &str) -> Result<Self, String> {
+        let parts: Vec<&str> = name.split(',').collect();
+        match parts.as_slice() {
+            [one] => {
+                let n = Self::number(one).ok_or_else(|| {
+                    if one.chars().all(|ch| ch.is_ascii_hexdigit()) {
+                        format!(
+                            "unrecognized ansi256 color number, \
+                             should be '[0-255]' (or a hex number), but is '{name}'"
+                        )
+                    } else {
+                        format!(
+                            "unrecognized color name '{name}'. Choose from: \
+                             black, blue, green, red, cyan, magenta, yellow, white."
+                        )
+                    }
+                })?;
+                Ok(Self::Indexed(n))
+            }
+            [r, g, b] => {
+                let err = || {
+                    format!(
+                        "unrecognized RGB color triple, \
+                         should be '[0-255],[0-255],[0-255]' (or a hex \
+                         triple), but is '{name}'"
+                    )
+                };
+                Ok(Self::Rgb(
+                    Self::number(r).ok_or_else(err)?,
+                    Self::number(g).ok_or_else(err)?,
+                    Self::number(b).ok_or_else(err)?,
+                ))
+            }
+            _ if name.contains(',') => Err(format!(
+                "unrecognized RGB color triple, \
+                 should be '[0-255],[0-255],[0-255]' (or a hex \
+                 triple), but is '{name}'"
+            )),
+            _ => Err(format!(
+                "unrecognized color name '{name}'. Choose from: \
+                 black, blue, green, red, cyan, magenta, yellow, white."
+            )),
+        }
+    }
+
+    fn write(self, out: &mut Vec<u8>, first: &mut bool, fg: bool) {
         match self {
-            Self::Black => Some(30),
-            Self::Blue => Some(34),
-            Self::Green => Some(32),
-            Self::Red => Some(31),
-            Self::Cyan => Some(36),
-            Self::Magenta => Some(35),
-            Self::Yellow => Some(33),
-            Self::White => Some(37),
-            Self::Extended => None,
+            Self::Named(n) => {
+                let code = if fg { 30 + n } else { 40 + n };
+                AnsiStyle::push_code(out, first, code.to_string().as_bytes());
+            }
+            Self::Indexed(n) => {
+                AnsiStyle::push_code(out, first, if fg { b"38;5" } else { b"48;5" });
+                out.push(b';');
+                out.extend(n.to_string().as_bytes());
+            }
+            Self::Rgb(r, g, b) => {
+                AnsiStyle::push_code(out, first, if fg { b"38;2" } else { b"48;2" });
+                out.push(b';');
+                out.extend(r.to_string().as_bytes());
+                out.push(b';');
+                out.extend(g.to_string().as_bytes());
+                out.push(b';');
+                out.extend(b.to_string().as_bytes());
+            }
         }
     }
 }
@@ -270,26 +311,37 @@ impl OutputKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColorSpecs {
     path: AnsiStyle,
+    line: AnsiStyle,
+    column: AnsiStyle,
     matched: AnsiStyle,
+    highlight: AnsiStyle,
 }
 
 impl Default for ColorSpecs {
     fn default() -> Self {
-        let mut specs = Self {
-            path: AnsiStyle::default(),
-            matched: AnsiStyle::default(),
-        };
-        #[cfg(unix)]
-        {
-            specs.path.fg = NamedFg::Magenta.code();
+        Self {
+            path: AnsiStyle {
+                fg: Some(if cfg!(windows) {
+                    AnsiColor::Named(6)
+                } else {
+                    AnsiColor::Named(5)
+                }),
+                bg: None,
+                bold: false,
+            },
+            line: AnsiStyle {
+                fg: Some(AnsiColor::Named(2)),
+                bg: None,
+                bold: false,
+            },
+            column: AnsiStyle::default(),
+            matched: AnsiStyle {
+                fg: Some(AnsiColor::Named(1)),
+                bg: None,
+                bold: true,
+            },
+            highlight: AnsiStyle::default(),
         }
-        #[cfg(windows)]
-        {
-            specs.path.fg = NamedFg::Cyan.code();
-        }
-        specs.matched.fg = NamedFg::Red.code();
-        specs.matched.bold = true;
-        specs
     }
 }
 
@@ -311,8 +363,23 @@ impl ColorSpecs {
     }
 
     #[must_use]
+    pub const fn line(&self) -> AnsiStyle {
+        self.line
+    }
+
+    #[must_use]
+    pub const fn column(&self) -> AnsiStyle {
+        self.column
+    }
+
+    #[must_use]
     pub const fn matched(&self) -> AnsiStyle {
         self.matched
+    }
+
+    #[must_use]
+    pub const fn highlight(&self) -> AnsiStyle {
+        self.highlight
     }
 
     fn apply(&mut self, spec: &str) -> Result<(), String> {
@@ -327,29 +394,24 @@ impl ColorSpecs {
         if parts.next().is_some() {
             return Err(Self::invalid_format(spec));
         }
-        let kind = OutputKind::parse(kind)?;
-        let target = match kind {
-            OutputKind::Path => Some(&mut self.path),
-            OutputKind::Match => Some(&mut self.matched),
-            OutputKind::Line | OutputKind::Column | OutputKind::Highlight => None,
+        let style = match OutputKind::parse(kind)? {
+            OutputKind::Path => &mut self.path,
+            OutputKind::Line => &mut self.line,
+            OutputKind::Column => &mut self.column,
+            OutputKind::Match => &mut self.matched,
+            OutputKind::Highlight => &mut self.highlight,
         };
         if attr.eq_ignore_ascii_case("none") {
-            if let Some(style) = target {
-                style.clear();
-            }
+            style.clear();
             return Ok(());
         }
         let Some(value) = value else {
             return Err(Self::invalid_format(spec));
         };
-        let Some(style) = target else {
-            Self::validate_attr(attr, value)?;
-            return Ok(());
-        };
         if attr.eq_ignore_ascii_case("fg") {
             style.set_fg(value)?;
         } else if attr.eq_ignore_ascii_case("bg") {
-            NamedFg::parse(value)?;
+            style.set_bg(value)?;
         } else if attr.eq_ignore_ascii_case("style") {
             style.apply_style(value)?;
         } else {
@@ -359,19 +421,6 @@ impl ColorSpecs {
             ));
         }
         Ok(())
-    }
-
-    fn validate_attr(attr: &str, value: &str) -> Result<(), String> {
-        if attr.eq_ignore_ascii_case("fg") || attr.eq_ignore_ascii_case("bg") {
-            NamedFg::parse(value).map(|_| ())
-        } else if attr.eq_ignore_ascii_case("style") {
-            AnsiStyle::style_name(value).map(|_| ())
-        } else {
-            Err(format!(
-                "unrecognized spec type '{attr}'. Choose from: \
-                 fg, bg, style, none."
-            ))
-        }
     }
 
     fn invalid_format(spec: &str) -> String {
@@ -388,26 +437,27 @@ enum StyleName {
     Ignored,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct HyperlinkFormat {
-    enabled: bool,
-}
-
-impl HyperlinkFormat {
-    #[must_use]
-    pub fn parse(value: Option<&str>) -> Self {
-        Self {
-            enabled: match value {
-                None | Some("") => false,
-                Some(format) if format.eq_ignore_ascii_case("none") => false,
-                Some(_) => true,
-            },
-        }
-    }
-
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        !self.enabled
+impl StyleName {
+    fn parse(name: &str) -> Result<Self, String> {
+        Ok(if name.eq_ignore_ascii_case("bold") {
+            Self::Bold
+        } else if name.eq_ignore_ascii_case("nobold") {
+            Self::NoBold
+        } else if name.eq_ignore_ascii_case("intense")
+            || name.eq_ignore_ascii_case("nointense")
+            || name.eq_ignore_ascii_case("underline")
+            || name.eq_ignore_ascii_case("nounderline")
+            || name.eq_ignore_ascii_case("italic")
+            || name.eq_ignore_ascii_case("noitalic")
+        {
+            Self::Ignored
+        } else {
+            return Err(format!(
+                "unrecognized style attribute '{name}'. Choose from: \
+                 nobold, bold, nointense, intense, nounderline, \
+                 underline, noitalic, italic."
+            ));
+        })
     }
 }
 
@@ -477,15 +527,44 @@ mod tests {
     }
 
     #[test]
-    fn colors_reject_unknown_output_type() {
-        let err = ColorSpecs::from_specs(&["bogus:fg:red".into()]).unwrap_err();
-        assert!(err.contains("unrecognized output type 'bogus'"));
+    fn colors_emit_256_and_truecolor() {
+        let indexed =
+            ColorSpecs::from_specs(&["match:fg:32".into(), "match:style:nobold".into()]).unwrap();
+        assert_eq!(
+            indexed.matched().sequence(),
+            Some(b"\x1b[0m\x1b[38;5;32m".to_vec())
+        );
+        let rgb =
+            ColorSpecs::from_specs(&["match:fg:255,128,0".into(), "match:style:nobold".into()])
+                .unwrap();
+        assert_eq!(
+            rgb.matched().sequence(),
+            Some(b"\x1b[0m\x1b[38;2;255;128;0m".to_vec())
+        );
     }
 
     #[test]
-    fn hyperlink_none_is_empty() {
-        assert!(HyperlinkFormat::parse(None).is_empty());
-        assert!(HyperlinkFormat::parse(Some("none")).is_empty());
-        assert!(!HyperlinkFormat::parse(Some("vscode")).is_empty());
+    fn colors_line_column_highlight_apply() {
+        let colors = ColorSpecs::from_specs(&[
+            "line:fg:blue".into(),
+            "column:fg:yellow".into(),
+            "highlight:bg:blue".into(),
+        ])
+        .unwrap();
+        assert_eq!(colors.line().sequence(), Some(b"\x1b[0m\x1b[34m".to_vec()));
+        assert_eq!(
+            colors.column().sequence(),
+            Some(b"\x1b[0m\x1b[33m".to_vec())
+        );
+        assert_eq!(
+            colors.highlight().sequence(),
+            Some(b"\x1b[0m\x1b[44m".to_vec())
+        );
+    }
+
+    #[test]
+    fn colors_reject_unknown_output_type() {
+        let err = ColorSpecs::from_specs(&["bogus:fg:red".into()]).unwrap_err();
+        assert!(err.contains("unrecognized output type 'bogus'"));
     }
 }
