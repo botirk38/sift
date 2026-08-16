@@ -23,6 +23,14 @@ pub enum RegexEngine {
     Auto,
 }
 
+impl RegexEngine {
+    /// Linked PCRE2 library version (`major`, `minor`).
+    #[must_use]
+    pub fn pcre2_version() -> (u32, u32) {
+        grep_pcre2::version()
+    }
+}
+
 impl FromStr for RegexEngine {
     type Err = String;
 
@@ -86,7 +94,7 @@ pub enum InputEncoding {
     #[default]
     Auto,
     Raw,
-    Explicit(grep_searcher::Encoding),
+    Explicit(String),
 }
 
 impl InputEncoding {
@@ -96,11 +104,16 @@ impl InputEncoding {
     }
 
     #[must_use]
-    pub fn explicit(&self) -> Option<grep_searcher::Encoding> {
+    pub fn label(&self) -> Option<&str> {
         match self {
-            Self::Explicit(encoding) => Some(encoding.clone()),
+            Self::Explicit(label) => Some(label),
             Self::Auto | Self::Raw => None,
         }
+    }
+
+    pub(super) fn searcher_encoding(&self) -> Option<grep_searcher::Encoding> {
+        self.label()
+            .and_then(|label| grep_searcher::Encoding::new(label).ok())
     }
 
     #[must_use]
@@ -129,7 +142,7 @@ impl FromStr for InputEncoding {
             return Ok(Self::Raw);
         }
         grep_searcher::Encoding::new(value)
-            .map(Self::Explicit)
+            .map(|_| Self::Explicit(value.to_string()))
             .map_err(|e| e.to_string())
     }
 }

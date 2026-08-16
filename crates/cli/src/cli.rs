@@ -235,7 +235,7 @@ impl Cli {
     #[must_use]
     pub fn dispatch(self, argv: &Argv<'_>) -> ExitCode {
         if self.engine_decl.regex.pcre2_version {
-            let (major, minor) = grep_pcre2::version();
+            let (major, minor) = sift_core::search::RegexEngine::pcre2_version();
             println!("PCRE2 {major}.{minor}");
             return ExitCode::SUCCESS;
         }
