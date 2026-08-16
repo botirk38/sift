@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use sift_core::{
     CaseMode, CorpusMeta, FileFilter, FileFilterConfig, FileOrder, Files, FilterMeta, GramNorm,
-    GramWidth, IndexCoverage, IndexRecord, Indexes, NGramIndex, Plan, Query, Scan, ScanScope,
+    GramWidth, Hit, IndexCoverage, IndexRecord, Indexes, NGramIndex, Plan, Query, Scan, ScanScope,
     SearchMode, SearchOptions, Searcher, SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta,
 };
 
@@ -69,10 +69,14 @@ fn index_candidate_vec(
     );
     let query = Query::new(patterns.to_vec(), options).unwrap();
     let searcher = Searcher::new(query).unwrap();
-    Plan::new(&source, searcher.query(), SearchMode::Lines.coverage())
-        .resolve(&source)
-        .unwrap()
-        .into_vec()
+    Plan::new(
+        &source,
+        searcher.query(),
+        SearchMode::Print(Hit::Line).coverage(),
+    )
+    .resolve(&source)
+    .unwrap()
+    .into_vec()
 }
 
 struct IndexOpenFixture {

@@ -2,7 +2,7 @@ use crate::format::output::hyperlink::Hyperlink;
 use crate::format::output::style::{ColorSpecs, OutputBuffering};
 use crate::format::{
     ColorChoice, ColumnLimit, ColumnOverflow, FilenameMode, LineStyleFlags, OutputEmission,
-    PassthruMode, PrintFormat, PrintLineStyle, PrintRecordStyle, PrintSeparators, PrintSpec, Quiet,
+    PassthruMode, PrintFormat, PrintLineStyle, PrintRecordStyle, PrintSeparators, PrintSpec,
     RecordTerminator,
 };
 use clap::{ArgAction, Args};
@@ -534,7 +534,7 @@ impl OutputDecl {
         &self,
         output_argv: &OutputArgv,
         mode: SearchMode,
-        quiet: Quiet,
+        quiet: bool,
         line_number_override: Option<bool>,
         filename_ctx: FilenameContext,
     ) -> Result<PrintSpec, String> {
@@ -557,10 +557,12 @@ impl OutputDecl {
         Ok(PrintSpec {
             format: output_format,
             mode,
-            emission: match quiet {
-                Quiet::On => OutputEmission::Quiet,
-                Quiet::Off if mode.is_summary() => OutputEmission::Summary,
-                Quiet::Off => OutputEmission::Normal,
+            emission: if quiet {
+                OutputEmission::Quiet
+            } else if mode.is_summary() {
+                OutputEmission::Summary
+            } else {
+                OutputEmission::Normal
             },
             lines: PrintLineStyle {
                 filename_mode: Self::filename_mode(output_argv.with_filename, filename_ctx),
@@ -600,7 +602,7 @@ impl OutputDecl {
 
     #[must_use]
     pub const fn format(output_argv: &OutputArgv, mode: SearchMode) -> PrintFormat {
-        if output_argv.mode.json && matches!(mode, SearchMode::Lines | SearchMode::Matches) {
+        if output_argv.mode.json && matches!(mode, SearchMode::Print(_)) {
             PrintFormat::Json
         } else {
             PrintFormat::Text
@@ -618,10 +620,7 @@ impl OutputDecl {
     }
 
     pub fn write_stats(stats: &Stats) {
-        let matches = match stats.matches {
-            sift_core::MatchTotals::None => 0,
-            sift_core::MatchTotals::Lines(n) | sift_core::MatchTotals::Spans(n) => n,
-        };
+        let matches = stats.matches.unwrap_or(0);
         eprintln!("{matches} matches");
         eprintln!("{} files contained matches", stats.files_with_matches);
         eprintln!("{} files searched", stats.files_searched);

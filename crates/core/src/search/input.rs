@@ -68,12 +68,24 @@ impl Origin {
             Self::Stream { .. } => None,
         }
     }
+}
 
+/// How an input entered the search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mention {
+    /// Named on argv (a file path or `-`).
+    Explicit,
+    /// Found by walking a search path.
+    Discovered,
+}
+
+impl Mention {
     #[must_use]
-    pub fn is_explicit(&self, explicit: &[PathBuf]) -> bool {
-        match self {
-            Self::File(file) => file.is_explicit(explicit),
-            Self::Stream { .. } => true,
+    pub fn of(file: &File, explicit: &[PathBuf]) -> Self {
+        if file.is_explicit(explicit) {
+            Self::Explicit
+        } else {
+            Self::Discovered
         }
     }
 }
@@ -81,12 +93,12 @@ impl Origin {
 pub enum Input<'a> {
     Path {
         origin: Origin,
-        explicit: bool,
+        mention: Mention,
     },
     Bytes {
         origin: Origin,
         bytes: Cow<'a, [u8]>,
-        explicit: bool,
+        mention: Mention,
     },
 }
 
@@ -99,34 +111,19 @@ impl Input<'_> {
     }
 
     #[must_use]
-    pub const fn explicit(&self) -> bool {
+    pub const fn mention(&self) -> Mention {
         match self {
-            Self::Path { explicit, .. } | Self::Bytes { explicit, .. } => *explicit,
+            Self::Path { mention, .. } | Self::Bytes { mention, .. } => *mention,
         }
     }
 
-    #[must_use]
-    pub fn byte_len(&self) -> u64 {
-        match self {
-            Self::Path { origin, .. } => origin.cached_size().unwrap_or_else(|| {
-                origin
-                    .abs_path()
-                    .and_then(|path| std::fs::metadata(path).ok())
-                    .map_or(0, |m| m.len())
-            }),
-            Self::Bytes { bytes, .. } => u64::try_from(bytes.len()).unwrap_or(u64::MAX),
-        }
-    }
-}
-
-impl Input<'_> {
     /// Open a corpus file as a path input for search.
     #[must_use]
     pub fn from_file(file: File, explicit: &[PathBuf]) -> Self {
-        let explicit = file.is_explicit(explicit);
+        let mention = Mention::of(&file, explicit);
         Self::Path {
             origin: Origin::file(file),
-            explicit,
+            mention,
         }
     }
 }
@@ -160,11 +157,6 @@ impl<'a> Inputs<'a> {
     #[must_use]
     pub const fn len(&self) -> usize {
         self.items.len()
-    }
-
-    #[must_use]
-    pub fn as_slice(&self) -> &[Input<'_>] {
-        &self.items
     }
 
     #[must_use]

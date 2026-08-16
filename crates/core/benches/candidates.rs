@@ -7,7 +7,7 @@ use std::hint::black_box;
 use std::path::Path;
 
 use sift_core::{
-    CorpusMeta, FileFilter, FileFilterConfig, FileOrder, FilterMeta, GramWidth, IndexCoverage,
+    CorpusMeta, FileFilter, FileFilterConfig, FileOrder, FilterMeta, GramWidth, Hit, IndexCoverage,
     IndexRecord, Indexes, Plan, Query, Scan, ScanScope, SearchMode, SearchOptions, Searcher,
     SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta, ZeroCounts,
 };
@@ -113,7 +113,7 @@ fn bench_candidate_planner(c: &mut Criterion) {
                 &literal,
                 SearchOptions::default(),
                 index_scope(SnapshotFreshness::Current),
-                SearchMode::Lines,
+                SearchMode::Print(Hit::Line),
                 Some(&fixture.complete_meta),
             ));
         });
@@ -126,7 +126,8 @@ fn bench_candidate_planner(c: &mut Criterion) {
                 &no_literal,
                 SearchOptions::default(),
                 index_scope(SnapshotFreshness::Current),
-                SearchMode::CountLines {
+                SearchMode::Count {
+                    hit: Hit::Line,
                     zeros: ZeroCounts::Include,
                 },
                 Some(&fixture.complete_meta),
@@ -141,7 +142,7 @@ fn bench_candidate_planner(c: &mut Criterion) {
                 &literal,
                 SearchOptions::default(),
                 index_scope(SnapshotFreshness::Current),
-                SearchMode::Lines,
+                SearchMode::Print(Hit::Line),
                 Some(&fixture.lazy_meta),
             ));
         });
@@ -155,7 +156,7 @@ fn bench_candidate_planner_walk(c: &mut Criterion) {
     let patterns = vec!["beta".to_string()];
     let query = Query::new(patterns, SearchOptions::default()).unwrap();
     let searcher = Searcher::new(query).unwrap();
-    let mode = SearchMode::Lines;
+    let mode = SearchMode::Print(Hit::Line);
     let scope = ScanScope::Index {
         order: FileOrder::default(),
         freshness: SnapshotFreshness::Current,

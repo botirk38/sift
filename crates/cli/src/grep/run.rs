@@ -6,8 +6,6 @@ use sift_core::{FileFilter, FileOrder, IndexCoverage, Narrowing, Plan, TypeFilte
 
 use crate::index::daemon::Daemon;
 
-use crate::format::PrintFormat;
-
 use super::filter::{FilterConfig, FilterResolution};
 use super::ignore::IgnoreResolution;
 use super::input::{ContentTransformConfig, InputSources};
@@ -166,11 +164,6 @@ impl Run {
         let scan = Self::scan(&session, scan_scope);
         let format = OutputDecl::format(output_argv, mode);
         let print_stats = OutputDecl::print_stats(output_argv, format);
-        let stats = if print_stats || matches!(format, PrintFormat::Json) {
-            sift_core::StatsMode::On
-        } else {
-            sift_core::StatsMode::Off
-        };
         let query = self.query(mode, patterns.patterns, transform.is_some())?;
         let explicit_files = Self::explicit_files(&session);
         let streams = sources.stdin_streams();
@@ -208,13 +201,10 @@ impl Run {
             inputs.push(stream);
         }
         let report = print_spec
-            .print(&searcher, inputs, mode, stats, &separators)
+            .print(&searcher, inputs, mode, &separators)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-        if print_stats
-            && !matches!(mode, SearchMode::Paths)
-            && let Some(s) = report.stats.as_ref()
-        {
-            OutputDecl::write_stats(s);
+        if print_stats && !matches!(mode, SearchMode::Paths) {
+            OutputDecl::write_stats(&report.stats);
         }
         let selected = report.found();
         Self::queue_lazy_hits(daemon, &session, report.listed.corpus_hit_paths());

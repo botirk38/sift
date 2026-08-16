@@ -3,11 +3,11 @@ use std::io::Write as _;
 use std::sync::Arc;
 use std::time::Instant;
 
-use sift_core::SearchMode;
 use sift_core::search::{
-    BinaryEvent, BinaryMode, ContextEvent, ContextKind, FileEvent, Listing, MatchEvent, Origin,
-    SearchEvent, SearchReport, SearchSink,
+    BinaryEvent, BinaryMode, ContextEvent, ContextKind, Listing, MatchEvent, Origin, SearchEvent,
+    SearchReport,
 };
+use sift_core::{Hit, SearchMode};
 
 use crate::format::output::format::ColumnOverflow;
 use crate::format::output::mode::OutputEmission;
@@ -70,28 +70,21 @@ impl<'a> EventRenderer<'a> {
         }
         let bytes_printed = self.bytes.len() as u64;
         std::io::stdout().lock().write_all(&self.bytes)?;
-        if let Some(stats) = report.stats.as_mut() {
-            stats.bytes_printed = bytes_printed;
-        }
+        report.stats.bytes_printed = bytes_printed;
         Ok(())
     }
 
     fn render_summary_modes(&mut self, report: &SearchReport) {
         match (&self.output.mode, &report.listed) {
-            (SearchMode::CountLines { .. }, Listing::LineCounts(counts)) => {
+            (SearchMode::Count { .. }, Listing::Counts(counts)) => {
                 for count in counts {
-                    self.write_path_record(&count.file.origin, &count.lines.to_string());
-                }
-            }
-            (SearchMode::CountMatches { .. }, Listing::SpanCounts(counts)) => {
-                for count in counts {
-                    self.write_path_record(&count.file.origin, &count.spans.to_string());
+                    self.write_path_record(&count.origin, &count.hits.to_string());
                 }
             }
             (SearchMode::FilesWithMatches | SearchMode::Paths, Listing::MatchingPaths(files))
             | (SearchMode::FilesWithoutMatch, Listing::NonMatchingPaths(files)) => {
                 for file in files {
-                    self.write_path_only(&file.origin);
+                    self.write_path_only(file);
                 }
             }
             _ => {}
@@ -99,14 +92,7 @@ impl<'a> EventRenderer<'a> {
     }
 
     fn write_text_match(&mut self, event: &MatchEvent) {
-        if matches!(
-            self.output.mode,
-            SearchMode::CountLines { .. }
-                | SearchMode::CountMatches { .. }
-                | SearchMode::FilesWithMatches
-                | SearchMode::FilesWithoutMatch
-                | SearchMode::Paths
-        ) {
+        if !matches!(self.output.mode, SearchMode::Print(_)) {
             return;
         }
         if self.binary_paths.contains(event.origin.key().as_ref())
@@ -128,7 +114,7 @@ impl<'a> EventRenderer<'a> {
             );
             self.terminator();
         }
-        if matches!(self.output.mode, SearchMode::Matches) {
+        if matches!(self.output.mode, SearchMode::Print(Hit::Span)) {
             for (index, range) in event.ranges.iter().enumerate() {
                 self.write_prefix(event, range.start);
                 if let Some(replacement) = event.replacement_matches.get(index) {
@@ -157,7 +143,7 @@ impl<'a> EventRenderer<'a> {
     }
 
     fn write_text_context(&mut self, event: &ContextEvent) {
-        if !matches!(self.output.mode, SearchMode::Lines | SearchMode::Matches) {
+        if !matches!(self.output.mode, SearchMode::Print(_)) {
             return;
         }
         self.write_display_prefix(
@@ -376,17 +362,23 @@ impl<'a> EventRenderer<'a> {
         self.terminator();
     }
 
-    fn write_binary(&mut self, event: &BinaryEvent) {
+    fn write_binary(&mut self, event: &BinaryEvent) -> sift_core::Result<()> {
         self.binary_paths
             .insert(Arc::from(event.origin.key().as_ref()));
-        if !matches!(self.output.mode, SearchMode::Lines | SearchMode::Matches) {
-            return;
+        if matches!(self.output.format, PrintFormat::Json) {
+            self.json_begin(&event.origin)?;
+            let path = event.origin.display(self.output.lines.path_display);
+            let value = serde_json::json!({
+                "type": "binary",
+                "data": {
+                    "path": { "text": Self::display_text(path) },
+                    "binary_offset": event.absolute_byte_offset,
+                }
+            });
+            return self.write_json(&value);
         }
-        if matches!(self.output.emission, OutputEmission::Quiet) {
-            return;
-        }
-        if matches!(self.binary_mode, BinaryMode::Quit) && !event.explicit {
-            return;
+        if !matches!(self.output.mode, SearchMode::Print(_)) {
+            return Ok(());
         }
         if !matches!(self.output.lines.filename_mode, FilenameMode::Never) {
             self.write_display_path(&event.origin, None, None);
@@ -400,6 +392,7 @@ impl<'a> EventRenderer<'a> {
             .as_bytes(),
         );
         self.terminator();
+        Ok(())
     }
 
     fn write_context_break(&mut self) {
@@ -410,7 +403,7 @@ impl<'a> EventRenderer<'a> {
     }
 
     fn write_json_summary(&mut self, report: &SearchReport) -> sift_core::Result<()> {
-        let stats = report.stats.as_ref();
+        let stats = &report.stats;
         let elapsed = self.started.elapsed();
         let value = serde_json::json!({
             "type": "summary",
@@ -421,11 +414,8 @@ impl<'a> EventRenderer<'a> {
                     "human": format!("{:.6}s", elapsed.as_secs_f64()),
                 },
                 "stats": {
-                    "matches": stats.map_or(0, |stats| match stats.matches {
-                        sift_core::MatchTotals::None => 0,
-                        sift_core::MatchTotals::Lines(n) | sift_core::MatchTotals::Spans(n) => n,
-                    }),
-                    "bytes_searched": stats.map_or(0, |stats| stats.bytes_searched),
+                    "matches": stats.matches.unwrap_or(0),
+                    "bytes_searched": stats.bytes_searched,
                 }
             }
         });
@@ -446,15 +436,15 @@ impl<'a> EventRenderer<'a> {
     }
 }
 
-impl SearchSink for EventRenderer<'_> {
-    fn event(&mut self, event: SearchEvent) -> sift_core::Result<()> {
+impl EventRenderer<'_> {
+    pub(super) fn event(&mut self, event: SearchEvent) -> sift_core::Result<()> {
         match event {
             SearchEvent::Begin(_) => {}
             SearchEvent::Match(event) => self.matched(&event)?,
             SearchEvent::Context(event) => self.context(&event)?,
             SearchEvent::ContextBreak => self.write_context_break(),
-            SearchEvent::Binary(event) => self.write_binary(&event),
-            SearchEvent::End(event) => self.end(&event)?,
+            SearchEvent::Binary(event) => self.write_binary(&event)?,
+            SearchEvent::End(origin) => self.end(&origin)?,
         }
         Ok(())
     }
@@ -462,6 +452,11 @@ impl SearchSink for EventRenderer<'_> {
 
 impl EventRenderer<'_> {
     fn matched(&mut self, event: &MatchEvent) -> sift_core::Result<()> {
+        if self.binary_paths.contains(event.origin.key().as_ref())
+            && !matches!(self.binary_mode, BinaryMode::AsText)
+        {
+            return Ok(());
+        }
         if matches!(self.output.format, PrintFormat::Json) {
             self.json_begin(&event.origin)?;
             let stats = self
@@ -526,12 +521,12 @@ impl EventRenderer<'_> {
         Ok(())
     }
 
-    fn end(&mut self, event: &FileEvent) -> sift_core::Result<()> {
+    fn end(&mut self, origin: &Origin) -> sift_core::Result<()> {
         if matches!(self.output.format, PrintFormat::Json) {
-            let Some(stats) = self.json_stats.remove(event.origin.key().as_ref()) else {
+            let Some(stats) = self.json_stats.remove(origin.key().as_ref()) else {
                 return Ok(());
             };
-            let path = event.origin.display(self.output.lines.path_display);
+            let path = origin.display(self.output.lines.path_display);
             let value = serde_json::json!({
                 "type": "end",
                 "data": {

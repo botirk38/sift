@@ -36,7 +36,7 @@ Two-layer flag model:
 RunConfig → Run::execute
 InputSources → stdin_streams → Inputs
 Scan + Plan::resolve → Candidates
-Searcher::execute → PrintSpec::print → SearchReport
+Searcher::execute / stream → PrintSpec::print → SearchReport
 ```
 
 Index lifecycle: `IndexJob::run` → `ReconcileOutcome::rebuild` (full rebuild from

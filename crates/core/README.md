@@ -23,7 +23,7 @@ StoreMeta + IndexRecord ──Indexes::build──> snapshot on disk
                                         │
                   Plan::new → Plan::resolve
                                         │
-                              Searcher::execute
+                    Searcher::execute / stream
 ```
 
 | Type | Role |
@@ -32,8 +32,8 @@ StoreMeta + IndexRecord ──Indexes::build──> snapshot on disk
 | `IndexRecord` | Typed catalog entry; builds and privately opens a kind |
 | `Files` | Snapshot-owned `FileId → File` map |
 | `Indexes` | Open/load/build + query/hydrate |
-| `Query` / `Searcher` | Patterns + execute |
-| `Haystack` / `Lines` | Resident bytes; `Lines` iterates `Line` |
+| `Query` / `Searcher` | Patterns + `execute` / `stream` |
+| `Bytes` / `Lines` | Resident bytes; `Lines` iterates `Line` |
 | `FileReport` / `SearchReport` | Per-input result; listing + stats |
 | `Io` | File read backend (`Sync` / `Mmap` / `Uring`; default `Mmap`) |
 | `Plan` / `Candidates` | Pure plan then resolve |
@@ -51,8 +51,8 @@ StoreMeta + IndexRecord ──Indexes::build──> snapshot on disk
 
 ```rust
 use sift_core::{
-    Scan, Events, Input, Inputs, Plan, Query, ScanScope, SearchMode,
-    SearchOptions, Searcher, SnapshotFreshness, StatsMode,
+    Scan, Input, Inputs, Plan, Query, ScanScope, Hit, SearchMode, SearchOptions, Searcher,
+    SnapshotFreshness,
 };
 
 let searcher = Searcher::new(Query::new(vec!["pattern".into()], SearchOptions::default())?)?;
@@ -65,18 +65,13 @@ let source = Scan::new(
         freshness: SnapshotFreshness::Current,
     },
 );
-let candidates = Plan::new(&source, searcher.query(), SearchMode::Lines.coverage())
+let candidates = Plan::new(&source, searcher.query(), SearchMode::Print(Hit::Line).coverage())
     .resolve(&source)?;
 let mut inputs = Inputs::with_capacity(candidates.bound());
 for file in candidates.into_vec() {
     inputs.push(Input::from_file(file, &[]));
 }
-let report = searcher.execute(
-    inputs,
-    StatsMode::Off,
-    SearchMode::Lines,
-    Events::Discard,
-)?;
+let report = searcher.execute(inputs, SearchMode::Print(Hit::Line))?;
 ```
 
 Formatting lives in `sift-grep`.

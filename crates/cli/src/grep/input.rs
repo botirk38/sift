@@ -5,7 +5,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread::JoinHandle;
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use sift_core::search::{Input, Origin};
+use sift_core::search::{Input, Mention, Origin};
 use sift_core::{Candidates, File};
 
 #[derive(Debug, Clone, Default)]
@@ -60,11 +60,11 @@ impl ContentTransform {
     ) -> sift_core::Result<(Candidates<'a>, sift_core::Inputs<'a>)> {
         for candidate in resolved.into_vec() {
             let bytes = self.read_candidate(&candidate)?;
-            let is_explicit = candidate.is_explicit(explicit);
+            let mention = Mention::of(&candidate, explicit);
             streams.push(Input::Bytes {
                 origin: Origin::file(candidate),
                 bytes: Cow::Owned(bytes),
-                explicit: is_explicit,
+                mention,
             });
         }
         Ok((Candidates::empty(), streams))
@@ -359,7 +359,7 @@ impl InputSources {
             streams.push(Input::Bytes {
                 origin: Origin::stream("<stdin>"),
                 bytes: Cow::Borrowed(bytes.as_slice()),
-                explicit: true,
+                mention: Mention::Explicit,
             });
         }
         streams

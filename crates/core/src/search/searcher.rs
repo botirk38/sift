@@ -1,21 +1,21 @@
 use std::collections::VecDeque;
-use std::ops::Range;
 use std::time::Instant;
 
 use rayon::prelude::*;
 
 use crate::Error;
+use crate::search::bytes::Bytes;
 use crate::search::error::Error as SearchError;
-use crate::search::event::{ContextKind, Events};
-use crate::search::haystack::Haystack;
-use crate::search::input::{Input, Inputs};
-use crate::search::line::{Line, Lines};
+use crate::search::event::{BinaryEvent, ContextEvent, MatchEvent, SearchEvent};
+use crate::search::hit::Match;
+use crate::search::input::{Input, Inputs, Origin};
+use crate::search::line::{Line, Multiline};
 use crate::search::matcher::Matcher;
-use crate::search::mode::SearchMode;
-use crate::search::options::{SearchBound, SearchOptions};
+use crate::search::mode::{Hit, SearchMode};
+use crate::search::options::{Nul, SearchBound, SearchOptions};
 use crate::search::query::Query;
-use crate::search::report::{Buffer, FileReport, SearchReport};
-use crate::search::stats::StatsMode;
+use crate::search::report::{FileReport, Reports, SearchReport};
+use crate::search::scan::{FileScan, Item};
 
 #[derive(Debug, Clone)]
 pub struct Searcher {
@@ -50,191 +50,106 @@ impl Searcher {
         &self.query.options
     }
 
-    /// Search inputs and optionally emit semantic events.
+    /// Search inputs and materialize a listing report.
     ///
     /// # Errors
     ///
-    /// Returns an error if search execution or sink handling fails.
-    pub fn execute(
-        &self,
-        inputs: Inputs<'_>,
-        stats: StatsMode,
-        mode: SearchMode,
-        events: Events<'_>,
-    ) -> crate::Result<SearchReport> {
+    /// Returns an error if search execution fails.
+    pub fn execute(&self, inputs: Inputs<'_>, mode: SearchMode) -> crate::Result<SearchReport> {
         if self.options().max_results == Some(0) {
             return Err(Error::Search(SearchError::InvalidMaxCount));
         }
         if inputs.is_empty() {
-            return Ok(SearchReport::empty(stats, mode));
+            return Ok(SearchReport::empty(mode));
         }
 
         let started = Instant::now();
-        let buffer = Buffer::from(&events);
         let items = inputs.into_vec();
-        let (mut reports, files_searched) = match mode {
-            SearchMode::Paths => (
-                items
-                    .iter()
-                    .map(|input| FileReport::listed(input.origin().clone()))
-                    .collect(),
-                items.len(),
-            ),
+        let reports = match mode {
+            SearchMode::Paths => Reports::listed(&items),
             _ => match self.options().search_bound {
-                SearchBound::Exhaustive => (
-                    items
+                SearchBound::Exhaustive => {
+                    let files = items
                         .par_iter()
-                        .filter_map(|input| self.search(input, mode, buffer).transpose())
-                        .collect::<crate::Result<Vec<_>>>()?,
-                    items.len(),
-                ),
+                        .filter_map(|input| self.search_one(input, mode).transpose())
+                        .collect::<crate::Result<Vec<_>>>()?;
+                    Reports::exhaustive(files, items.len())
+                }
                 SearchBound::FirstMatch => {
-                    let mut reports = Vec::new();
-                    let mut searched = 0usize;
+                    let mut reports = Reports::empty();
                     for input in &items {
-                        searched += 1;
-                        let Some(report) = self.search(input, mode, buffer)? else {
-                            continue;
-                        };
-                        if mode.settles(report.matched) {
-                            reports.push(report);
+                        if reports.tried(self.search_one(input, mode)?, mode) {
                             break;
                         }
                     }
-                    (reports, searched)
+                    reports
                 }
             },
         };
-        Self::emit(events, &mut reports)?;
-        Ok(SearchReport::from(
-            reports,
-            mode,
-            stats,
-            files_searched,
-            started.elapsed(),
-        ))
+        Ok(SearchReport::from(reports, mode, started.elapsed()))
     }
 
-    fn emit(events: Events<'_>, reports: &mut [FileReport]) -> crate::Result<()> {
-        let Events::Emit(sink) = events else {
-            return Ok(());
-        };
-        for event in reports.iter_mut().flat_map(FileReport::drain_events) {
-            sink.event(event)?;
-        }
-        Ok(())
+    /// Stream semantic events for each input. Pull to completion, then [`Events::into_report`].
+    #[must_use]
+    pub fn stream<'a>(&'a self, inputs: Inputs<'a>, mode: SearchMode) -> Events<'a> {
+        Events::new(self, inputs, mode)
     }
 
-    fn search(
-        &self,
-        input: &Input<'_>,
-        mode: SearchMode,
-        buffer: Buffer,
-    ) -> crate::Result<Option<FileReport>> {
-        let Ok(mut haystack) = Haystack::open(input, self.options().io) else {
+    fn search_one(&self, input: &Input<'_>, mode: SearchMode) -> crate::Result<Option<FileReport>> {
+        let Ok(mut loaded) = Bytes::open(input, self.options().io) else {
             return Ok(None);
         };
-        let origin = input.origin();
-        let explicit = input.explicit();
-        let options = self.options();
-        let mut report = FileReport::new();
-        report.begin(origin, buffer);
-        haystack.decode(&options.input_encoding);
-        if options.binary_mode.converts(explicit, options.null_data())
-            && let Some(offset) = haystack.convert_nul(options.line_terminator())
-        {
-            report.binary(origin, offset, explicit, buffer);
-        }
-        let chunk = haystack.bytes();
-        let searched = u64::try_from(chunk.len()).unwrap_or(u64::MAX);
-        let ranges = options
-            .multiline()
-            .then(|| self.match_ranges(chunk))
-            .transpose()?;
-        let passthru = options.passthru();
-        let before_n = if passthru { 0 } else { options.before_context };
-        let after_n = if passthru { 0 } else { options.after_context };
-        let context_on = before_n > 0 || after_n > 0;
-        let limit = match mode {
-            SearchMode::FilesWithMatches | SearchMode::FilesWithoutMatch | SearchMode::Paths => {
-                Some(1usize)
-            }
-            _ => options.max_results,
-        };
-        let mut before: VecDeque<Line<'static>> = VecDeque::new();
-        let mut after_left = 0usize;
-        let mut has_sunk = false;
-        let mut last_end = 0u64;
-        let mut hits = 0usize;
-        for line in Lines::new(chunk, options.line_terminator(), !mode.is_path_mode()) {
-            if options.binary_mode.quits(explicit, options.null_data())
-                && let Some(idx) = memchr::memchr(0, line.bytes())
-            {
-                let offset = line.offset + u64::try_from(idx).unwrap_or(u64::MAX);
-                report.binary(origin, offset, explicit, buffer);
-                break;
-            }
-            let matched = match ranges.as_deref() {
-                None => self
-                    .matcher
-                    .is_match(line.without_terminator(options.line_terminator(), options.crlf()))?,
-                Some(ranges) => {
-                    let start = usize::try_from(line.offset).unwrap_or(usize::MAX);
-                    let line_end = start.saturating_add(line.bytes().len());
-                    ranges
-                        .iter()
-                        .any(|range| start < range.end && line_end > range.start)
+        loaded.decode(&self.options().input_encoding);
+        let nul = self.nul(input);
+        let binary = self.convert(&mut loaded, nul);
+        let multiline = self.multiline(loaded.as_slice())?;
+        let mut scan = FileScan::new(
+            loaded.as_slice(),
+            &self.matcher,
+            self.options(),
+            mode,
+            nul,
+            multiline,
+            binary,
+        );
+        let mut report = FileReport::new(input.origin().clone());
+        while let Some(item) = scan.next_item() {
+            if let Item::Hit(line) = item? {
+                for listed in self.listed_matches(&line, mode, scan.slice(), scan.spans())? {
+                    report.push_match(listed);
                 }
-            };
-            let hit = matched != options.invert_match();
-            let accepting = limit.is_none_or(|n| hits < n);
-            if hit && accepting {
-                if context_on && has_sunk && last_end < line.offset {
-                    report.gap(buffer);
-                }
-                while let Some(held) = before.pop_front() {
-                    report.context(origin, ContextKind::Before, &held, buffer);
-                }
-                report.hit(origin, &line, &self.matcher, mode, buffer, options);
-                hits += 1;
-                after_left = after_n;
-                has_sunk = true;
-                last_end = line.offset + u64::try_from(line.bytes().len()).unwrap_or(u64::MAX);
-                if limit.is_some_and(|n| hits >= n) && after_left == 0 {
-                    break;
-                }
-                continue;
-            }
-            if passthru {
-                report.context(origin, ContextKind::Other, &line, buffer);
-                has_sunk = true;
-                last_end = line.offset + u64::try_from(line.bytes().len()).unwrap_or(u64::MAX);
-                continue;
-            }
-            if after_left > 0 {
-                report.context(origin, ContextKind::After, &line, buffer);
-                after_left -= 1;
-                has_sunk = true;
-                last_end = line.offset + u64::try_from(line.bytes().len()).unwrap_or(u64::MAX);
-                if limit.is_some_and(|n| hits >= n) && after_left == 0 {
-                    break;
-                }
-                continue;
-            }
-            if before_n > 0 {
-                if before.len() == before_n {
-                    before.pop_front();
-                }
-                before.push_back(line.into_owned());
             }
         }
-        report.finish(origin.clone(), mode, buffer, searched);
+        report.matched = scan.matched();
+        report.hits = scan.hits();
+        report.bytes_searched = scan.bytes_searched();
+        report.binary = scan.binary();
         Ok(Some(report))
     }
 
-    fn match_ranges(&self, bytes: &[u8]) -> Result<Vec<Range<usize>>, SearchError> {
-        let term = self.options().line_terminator();
-        let mut ranges = Vec::new();
+    const fn nul(&self, input: &Input<'_>) -> Nul {
+        let options = self.options();
+        options
+            .binary_mode
+            .nul(input.mention(), options.null_data())
+    }
+
+    fn convert(&self, loaded: &mut Bytes<'_>, nul: Nul) -> Option<u64> {
+        let options = self.options();
+        if matches!(nul, Nul::Convert) && options.multiline() {
+            loaded.convert_nul(options.line_terminator())
+        } else if matches!(nul, Nul::Convert) {
+            memchr::memchr(0, loaded.as_slice()).map(|idx| u64::try_from(idx).unwrap_or(u64::MAX))
+        } else {
+            None
+        }
+    }
+
+    fn multiline(&self, bytes: &[u8]) -> Result<Option<Multiline>, SearchError> {
+        if !self.options().multiline() {
+            return Ok(None);
+        }
+        let mut spans = Vec::new();
         let mut pos = 0usize;
         while pos < bytes.len() {
             let Some(found) = self.matcher.find(&bytes[pos..])? else {
@@ -242,11 +157,290 @@ impl Searcher {
             };
             let start = pos + found.start();
             let end = pos + found.end();
-            ranges.push(Lines::covering(bytes, term, start..end));
+            spans.push(start..end);
             pos = if found.end() == 0 { pos + 1 } else { end };
         }
-        Lines::merge(&mut ranges);
-        Ok(ranges)
+        Ok(Some(Multiline::new(spans)))
+    }
+
+    fn listed_matches(
+        &self,
+        line: &Line<'_>,
+        mode: SearchMode,
+        chunk: &[u8],
+        spans: Option<&Multiline>,
+    ) -> Result<Vec<Match>, SearchError> {
+        if !matches!(mode, SearchMode::Print(_)) {
+            return Ok(Vec::new());
+        }
+        let line_no = usize::try_from(line.number.unwrap_or(0)).unwrap_or(0);
+        let replacement = self.options().replace.as_deref().map(str::as_bytes);
+        let invert = self.options().invert_match();
+        Ok(match (mode.hit(), spans, replacement, invert) {
+            (Some(Hit::Span), Some(spans), repl, false) => {
+                let mut out = Vec::new();
+                for span in spans.starting_on(line) {
+                    let slice = chunk.get(span.clone()).unwrap_or(b"");
+                    let text = match repl {
+                        Some(repl) => String::from_utf8_lossy(&self.matcher.expand(slice, repl)?.0)
+                            .into_owned(),
+                        None => String::from_utf8_lossy(slice).into_owned(),
+                    };
+                    out.push(Match {
+                        line: line_no,
+                        text,
+                    });
+                }
+                out
+            }
+            (Some(Hit::Span), None, repl, false) => {
+                let mut out = Vec::new();
+                for range in self.matcher.ranges(line.bytes())? {
+                    let slice = line.bytes().get(range).unwrap_or(b"");
+                    let text = match repl {
+                        Some(repl) => String::from_utf8_lossy(&self.matcher.expand(slice, repl)?.0)
+                            .into_owned(),
+                        None => String::from_utf8_lossy(slice).into_owned(),
+                    };
+                    out.push(Match {
+                        line: line_no,
+                        text,
+                    });
+                }
+                out
+            }
+            (Some(Hit::Line), Some(spans), Some(repl), false) => {
+                let mut out = Vec::new();
+                for span in spans.starting_on(line) {
+                    let slice = chunk.get(span.clone()).unwrap_or(b"");
+                    let text =
+                        String::from_utf8_lossy(&self.matcher.expand(slice, repl)?.0).into_owned();
+                    out.push(Match {
+                        line: line_no,
+                        text,
+                    });
+                }
+                out
+            }
+            (Some(Hit::Line), _, Some(repl), false) => {
+                let text = String::from_utf8_lossy(&self.matcher.expand(line.bytes(), repl)?.0)
+                    .into_owned();
+                vec![Match {
+                    line: line_no,
+                    text,
+                }]
+            }
+            (Some(Hit::Line), _, _, _) | (Some(Hit::Span), _, _, true) => vec![Match {
+                line: line_no,
+                text: String::from_utf8_lossy(line.bytes()).into_owned(),
+            }],
+            _ => Vec::new(),
+        })
+    }
+
+    fn match_event(
+        &self,
+        origin: Origin,
+        line: &Line<'_>,
+        chunk: &[u8],
+        spans: Option<&Multiline>,
+    ) -> Result<MatchEvent, SearchError> {
+        let invert = self.options().invert_match();
+        let replacement = self.options().replace.as_deref().map(str::as_bytes);
+        if self.options().multiline()
+            && !invert
+            && let Some(span) = spans.and_then(|spans| spans.starting_on(line).next())
+        {
+            let bytes = chunk.get(span).unwrap_or(b"").to_vec();
+            let ranges = std::iter::once(0..bytes.len()).collect();
+            let expanded = replacement
+                .map(|repl| self.matcher.expand(&bytes, repl))
+                .transpose()?;
+            return Ok(MatchEvent {
+                origin,
+                line_number: line.number,
+                absolute_byte_offset: Some(line.offset),
+                bytes,
+                ranges,
+                replacement: expanded.as_ref().map(|e| e.0.clone()),
+                replacement_matches: expanded.map_or_else(Vec::new, |e| e.1),
+            });
+        }
+        let bytes = line.bytes().to_vec();
+        let ranges = if invert {
+            Vec::new()
+        } else {
+            self.matcher.ranges(line.bytes())?
+        };
+        let expanded = replacement
+            .map(|repl| self.matcher.expand(line.bytes(), repl))
+            .transpose()?;
+        Ok(MatchEvent {
+            origin,
+            line_number: line.number,
+            absolute_byte_offset: Some(line.offset),
+            bytes,
+            ranges,
+            replacement: expanded.as_ref().map(|e| e.0.clone()),
+            replacement_matches: expanded.map_or_else(Vec::new, |e| e.1),
+        })
+    }
+}
+
+/// Streaming search output. Pull events, then [`Self::into_report`].
+pub struct Events<'a> {
+    searcher: &'a Searcher,
+    mode: SearchMode,
+    inputs: Vec<Input<'a>>,
+    index: usize,
+    pending: VecDeque<SearchEvent>,
+    reports: Reports,
+    started: Instant,
+    invalid: bool,
+    exhausted: bool,
+}
+
+impl<'a> Events<'a> {
+    fn new(searcher: &'a Searcher, inputs: Inputs<'a>, mode: SearchMode) -> Self {
+        Self {
+            searcher,
+            mode,
+            inputs: inputs.into_vec(),
+            index: 0,
+            pending: VecDeque::new(),
+            reports: if matches!(mode, SearchMode::Paths) {
+                Reports::listed(&[])
+            } else {
+                Reports::empty()
+            },
+            started: Instant::now(),
+            invalid: searcher.options().max_results == Some(0),
+            exhausted: false,
+        }
+    }
+
+    /// Finish the report after events have been pulled.
+    #[must_use]
+    pub fn into_report(mut self) -> SearchReport {
+        if matches!(self.mode, SearchMode::Paths) {
+            self.reports = Reports::listed(&self.inputs);
+        }
+        SearchReport::from(self.reports, self.mode, self.started.elapsed())
+    }
+
+    fn fill(&mut self) -> crate::Result<()> {
+        while self.pending.is_empty() && !self.exhausted && self.index < self.inputs.len() {
+            let i = self.index;
+            self.index += 1;
+            if matches!(self.mode, SearchMode::Paths) {
+                continue;
+            }
+            if self.open_file(i)?.is_none() {
+                self.reports.tried(None, self.mode);
+            }
+        }
+        Ok(())
+    }
+
+    fn open_file(&mut self, i: usize) -> crate::Result<Option<()>> {
+        let io = self.searcher.options().io;
+        let encoding = self.searcher.options().input_encoding;
+        let (origin, chunk, nul, binary) = {
+            let input = &self.inputs[i];
+            let Ok(mut loaded) = Bytes::open(input, io) else {
+                return Ok(None);
+            };
+            loaded.decode(&encoding);
+            let nul = self.searcher.nul(input);
+            let binary = self.searcher.convert(&mut loaded, nul);
+            (
+                input.origin().clone(),
+                loaded.as_slice().to_vec(),
+                nul,
+                binary,
+            )
+        };
+        let multiline = self.searcher.multiline(&chunk)?;
+        let mut scan = FileScan::new(
+            &chunk,
+            &self.searcher.matcher,
+            self.searcher.options(),
+            self.mode,
+            nul,
+            multiline,
+            binary,
+        );
+        self.pending.push_back(SearchEvent::Begin(origin.clone()));
+        let mut body = VecDeque::new();
+        while let Some(item) = scan.next_item() {
+            match item? {
+                Item::Hit(line) => {
+                    let event = self.searcher.match_event(
+                        origin.clone(),
+                        &line,
+                        scan.slice(),
+                        scan.spans(),
+                    )?;
+                    body.push_back(SearchEvent::Match(event));
+                }
+                Item::Context { line, kind } => {
+                    body.push_back(SearchEvent::Context(ContextEvent {
+                        origin: origin.clone(),
+                        kind,
+                        line_number: line.number,
+                        absolute_byte_offset: line.offset,
+                        bytes: line.bytes().to_vec(),
+                    }));
+                }
+                Item::Break => body.push_back(SearchEvent::ContextBreak),
+            }
+        }
+        if scan.matched()
+            && let Some(offset) = scan.binary()
+        {
+            self.pending.push_back(SearchEvent::Binary(BinaryEvent {
+                origin: origin.clone(),
+                absolute_byte_offset: offset,
+            }));
+        }
+        self.pending.append(&mut body);
+        self.pending.push_back(SearchEvent::End(origin.clone()));
+        let mut report = FileReport::new(origin);
+        report.matched = scan.matched();
+        report.hits = scan.hits();
+        report.bytes_searched = scan.bytes_searched();
+        report.binary = scan.binary();
+        if self.reports.tried(Some(report), self.mode)
+            && matches!(
+                self.searcher.options().search_bound,
+                SearchBound::FirstMatch
+            )
+        {
+            self.exhausted = true;
+        }
+        Ok(Some(()))
+    }
+}
+
+impl Iterator for Events<'_> {
+    type Item = crate::Result<SearchEvent>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.invalid {
+            self.invalid = false;
+            self.exhausted = true;
+            return Some(Err(Error::Search(SearchError::InvalidMaxCount)));
+        }
+        if let Some(event) = self.pending.pop_front() {
+            return Some(Ok(event));
+        }
+        match self.fill() {
+            Err(err) => {
+                self.exhausted = true;
+                Some(Err(err))
+            }
+            Ok(()) => self.pending.pop_front().map(Ok),
+        }
     }
 }
 
@@ -254,10 +448,11 @@ impl Searcher {
 mod tests {
     use super::*;
     use crate::File;
-    use crate::search::event::{SearchEvent, SearchSink};
+    use crate::search::event::SearchEvent;
     use crate::search::hit::Listing;
-    use crate::search::input::Origin;
-    use crate::search::options::{BinaryMode, Io, RegexEngine, SearchFlags};
+    use crate::search::input::{Mention, Origin};
+    use crate::search::mode::{Hit, SearchMode, ZeroCounts};
+    use crate::search::options::{BinaryMode, Io, RegexEngine, SearchBound, SearchFlags};
     use crate::search::query::Query;
     use std::borrow::Cow;
     use std::path::PathBuf;
@@ -281,21 +476,25 @@ mod tests {
         );
     }
 
-    struct Collect(Vec<SearchEvent>);
-
-    impl SearchSink for Collect {
-        fn event(&mut self, event: SearchEvent) -> crate::Result<()> {
-            self.0.push(event);
-            Ok(())
+    fn collect(
+        searcher: &Searcher,
+        inputs: Inputs<'_>,
+        mode: SearchMode,
+    ) -> (Vec<SearchEvent>, SearchReport) {
+        let mut events = searcher.stream(inputs, mode);
+        let mut out = Vec::new();
+        for event in events.by_ref() {
+            out.push(event.expect("event"));
         }
+        (out, events.into_report())
     }
 
-    fn stream(bytes: &[u8], explicit: bool) -> Inputs<'_> {
+    fn stream(bytes: &[u8], mention: Mention) -> Inputs<'_> {
         let mut inputs = Inputs::empty();
         inputs.push(Input::Bytes {
             origin: Origin::stream("t"),
             bytes: Cow::Borrowed(bytes),
-            explicit,
+            mention,
         });
         inputs
     }
@@ -315,10 +514,8 @@ mod tests {
             },
         )
         .execute(
-            stream(b"findme\0later\n", false),
-            StatsMode::Off,
-            SearchMode::Lines,
-            Events::Discard,
+            stream(b"findme\0later\n", Mention::Discovered),
+            SearchMode::Print(Hit::Line),
         )
         .expect("execute");
         assert!(!report.found());
@@ -334,15 +531,13 @@ mod tests {
             },
         )
         .execute(
-            stream(b"findme\0later\n", false),
-            StatsMode::Off,
-            SearchMode::Lines,
-            Events::Discard,
+            stream(b"findme\0later\n", Mention::Discovered),
+            SearchMode::Print(Hit::Line),
         )
         .expect("execute");
         assert!(report.found());
-        let Listing::Lines(files) = &report.listed else {
-            panic!("expected Lines");
+        let Listing::Matches(files) = &report.listed else {
+            panic!("expected Matches");
         };
         assert!(files[0].matches.iter().any(|m| m.text.contains("later")));
     }
@@ -357,10 +552,8 @@ mod tests {
             },
         )
         .execute(
-            stream(b"findme\0later\n", false),
-            StatsMode::Off,
-            SearchMode::Lines,
-            Events::Discard,
+            stream(b"findme\0later\n", Mention::Discovered),
+            SearchMode::Print(Hit::Line),
         )
         .expect("execute");
         assert!(report.found());
@@ -376,44 +569,38 @@ mod tests {
             },
         )
         .execute(
-            stream(b"needle\nneedle\nneedle\n", true),
-            StatsMode::Off,
-            SearchMode::Lines,
-            Events::Discard,
+            stream(b"needle\nneedle\nneedle\n", Mention::Explicit),
+            SearchMode::Print(Hit::Line),
         )
         .expect("execute");
-        let Listing::Lines(files) = &report.listed else {
-            panic!("expected Lines");
+        let Listing::Matches(files) = &report.listed else {
+            panic!("expected Matches");
         };
         assert_eq!(files[0].matches.len(), 2);
     }
 
     #[test]
     fn passthru_emits_non_matching_lines() {
-        let mut sink = Collect(Vec::new());
-        searcher(
-            "needle",
-            SearchOptions {
-                flags: SearchFlags::PASSTHRU,
-                ..SearchOptions::default()
-            },
-        )
-        .execute(
-            stream(b"keep\nneedle\n", true),
-            StatsMode::Off,
-            SearchMode::Lines,
-            Events::Emit(&mut sink),
-        )
-        .expect("execute");
+        let (events, _) = collect(
+            &searcher(
+                "needle",
+                SearchOptions {
+                    flags: SearchFlags::PASSTHRU,
+                    ..SearchOptions::default()
+                },
+            ),
+            stream(b"keep\nneedle\n", Mention::Explicit),
+            SearchMode::Print(Hit::Line),
+        );
         assert!(
-            sink.0.iter().any(|event| matches!(
+            events.iter().any(|event| matches!(
                 event,
                 SearchEvent::Context(ctx) if ctx.bytes == b"keep\n"
             )),
             "passthru should emit the non-matching line"
         );
         assert!(
-            sink.0
+            events
                 .iter()
                 .any(|event| matches!(event, SearchEvent::Match(_))),
             "passthru should still emit the matching line"
@@ -430,10 +617,8 @@ mod tests {
             },
         )
         .execute(
-            stream(b"foo\nbar\n", true),
-            StatsMode::Off,
-            SearchMode::Lines,
-            Events::Discard,
+            stream(b"foo\nbar\n", Mention::Explicit),
+            SearchMode::Print(Hit::Line),
         )
         .expect("execute");
         assert!(report.found());
@@ -448,13 +633,13 @@ mod tests {
         let mut inputs = Inputs::empty();
         inputs.push(Input::from_file(file, &[]));
         let report = searcher("needle", SearchOptions::default())
-            .execute(inputs, StatsMode::On, SearchMode::Lines, Events::Discard)
+            .execute(inputs, SearchMode::Print(Hit::Line))
             .expect("execute");
         assert!(!report.found());
-        let stats = report.stats.as_ref().expect("stats");
+        let stats = &report.stats;
         assert_eq!(stats.files_searched, 1);
         assert_eq!(stats.bytes_searched, 0);
-        assert!(matches!(report.listed, Listing::Lines(ref files) if files.is_empty()));
+        assert!(matches!(report.listed, Listing::Matches(ref files) if files.is_empty()));
     }
 
     #[test]
@@ -472,9 +657,220 @@ mod tests {
                     ..SearchOptions::default()
                 },
             )
-            .execute(inputs, StatsMode::Off, SearchMode::Lines, Events::Discard)
+            .execute(inputs, SearchMode::Print(Hit::Line))
             .expect("execute");
             assert!(report.found(), "{io:?}");
         }
+    }
+
+    #[test]
+    fn first_match_counts_bytes_from_files_before_settling() {
+        let mut inputs = Inputs::empty();
+        inputs.push(Input::Bytes {
+            origin: Origin::stream("miss"),
+            bytes: Cow::Borrowed(b"aaaa\n"),
+            mention: Mention::Explicit,
+        });
+        inputs.push(Input::Bytes {
+            origin: Origin::stream("hit"),
+            bytes: Cow::Borrowed(b"needle\n"),
+            mention: Mention::Explicit,
+        });
+        let report = searcher(
+            "needle",
+            SearchOptions {
+                search_bound: SearchBound::FirstMatch,
+                ..SearchOptions::default()
+            },
+        )
+        .execute(inputs, SearchMode::Print(Hit::Line))
+        .expect("execute");
+        assert!(report.found());
+        let stats = &report.stats;
+        assert_eq!(stats.files_searched, 2);
+        assert_eq!(stats.bytes_searched, 5 + 7);
+    }
+
+    #[test]
+    fn stream_exhaustive_keeps_opening_after_a_hit() {
+        let mut inputs = Inputs::empty();
+        inputs.push(Input::Bytes {
+            origin: Origin::stream("a"),
+            bytes: Cow::Borrowed(b"needle\n"),
+            mention: Mention::Explicit,
+        });
+        inputs.push(Input::Bytes {
+            origin: Origin::stream("b"),
+            bytes: Cow::Borrowed(b"needle\n"),
+            mention: Mention::Explicit,
+        });
+        let (events, report) = collect(
+            &searcher("needle", SearchOptions::default()),
+            inputs,
+            SearchMode::Print(Hit::Line),
+        );
+        let matches = events
+            .iter()
+            .filter(|event| matches!(event, SearchEvent::Match(_)))
+            .count();
+        assert_eq!(matches, 2);
+        assert_eq!(report.stats.files_searched, 2);
+        let Listing::Matches(files) = &report.listed else {
+            panic!("expected Matches");
+        };
+        assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn stream_first_match_stops_after_settling() {
+        let mut inputs = Inputs::empty();
+        inputs.push(Input::Bytes {
+            origin: Origin::stream("hit"),
+            bytes: Cow::Borrowed(b"needle\n"),
+            mention: Mention::Explicit,
+        });
+        inputs.push(Input::Bytes {
+            origin: Origin::stream("later"),
+            bytes: Cow::Borrowed(b"needle\n"),
+            mention: Mention::Explicit,
+        });
+        let (events, report) = collect(
+            &searcher(
+                "needle",
+                SearchOptions {
+                    search_bound: SearchBound::FirstMatch,
+                    ..SearchOptions::default()
+                },
+            ),
+            inputs,
+            SearchMode::Print(Hit::Line),
+        );
+        let matches = events
+            .iter()
+            .filter(|event| matches!(event, SearchEvent::Match(_)))
+            .count();
+        assert_eq!(matches, 1);
+        assert_eq!(report.stats.files_searched, 1);
+    }
+
+    #[test]
+    fn convert_without_pattern_hit_emits_no_binary_event() {
+        let (events, report) = collect(
+            &searcher(
+                "zzz",
+                SearchOptions {
+                    binary_mode: BinaryMode::Binary,
+                    ..SearchOptions::default()
+                },
+            ),
+            stream(b"abc\0def\n", Mention::Discovered),
+            SearchMode::Print(Hit::Line),
+        );
+        assert!(!report.found());
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, SearchEvent::Binary(_))),
+            "Binary is only announced when the file matched"
+        );
+    }
+
+    #[test]
+    fn multiline_count_matches_counts_spans_not_overlapping_lines() {
+        let options = SearchOptions {
+            flags: SearchFlags::MULTILINE,
+            ..SearchOptions::default()
+        };
+        let lines = searcher(r"foo\nbar", options.clone())
+            .execute(
+                stream(b"foo\nbar\n", Mention::Explicit),
+                SearchMode::Count {
+                    hit: Hit::Line,
+                    zeros: ZeroCounts::Omit,
+                },
+            )
+            .expect("execute");
+        let Listing::Counts(counts) = &lines.listed else {
+            panic!("expected Counts");
+        };
+        assert_eq!(counts[0].hits, 2);
+
+        let spans = searcher(r"foo\nbar", options)
+            .execute(
+                stream(b"foo\nbar\n", Mention::Explicit),
+                SearchMode::Count {
+                    hit: Hit::Span,
+                    zeros: ZeroCounts::Omit,
+                },
+            )
+            .expect("execute");
+        let Listing::Counts(counts) = &spans.listed else {
+            panic!("expected Counts");
+        };
+        assert_eq!(counts[0].hits, 1);
+    }
+
+    #[test]
+    fn multiline_only_matching_emits_full_span() {
+        let report = searcher(
+            r"foo\nbar",
+            SearchOptions {
+                flags: SearchFlags::MULTILINE,
+                ..SearchOptions::default()
+            },
+        )
+        .execute(
+            stream(b"foo\nbar\n", Mention::Explicit),
+            SearchMode::Print(Hit::Span),
+        )
+        .expect("execute");
+        let Listing::Matches(files) = &report.listed else {
+            panic!("expected Matches");
+        };
+        assert_eq!(files[0].matches.len(), 1);
+        assert_eq!(files[0].matches[0].text, "foo\nbar");
+    }
+
+    #[test]
+    fn multiline_replace_collapses_span_to_replacement() {
+        let report = searcher(
+            r"foo\nbar",
+            SearchOptions {
+                flags: SearchFlags::MULTILINE,
+                replace: Some("X".into()),
+                ..SearchOptions::default()
+            },
+        )
+        .execute(
+            stream(b"foo\nbar\n", Mention::Explicit),
+            SearchMode::Print(Hit::Line),
+        )
+        .expect("execute");
+        let Listing::Matches(files) = &report.listed else {
+            panic!("expected Matches");
+        };
+        assert_eq!(files[0].matches.len(), 1);
+        assert_eq!(files[0].matches[0].text.trim(), "X");
+    }
+
+    #[test]
+    fn multiline_max_results_caps_matching_lines() {
+        let report = searcher(
+            r"foo\nbar",
+            SearchOptions {
+                flags: SearchFlags::MULTILINE,
+                max_results: Some(1),
+                ..SearchOptions::default()
+            },
+        )
+        .execute(
+            stream(b"foo\nbar\nfoo\nbar\n", Mention::Explicit),
+            SearchMode::Print(Hit::Line),
+        )
+        .expect("execute");
+        let Listing::Matches(files) = &report.listed else {
+            panic!("expected Matches");
+        };
+        assert_eq!(files[0].matches.len(), 1);
     }
 }

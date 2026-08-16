@@ -1,5 +1,7 @@
 use std::str::FromStr;
 
+use super::input::Mention;
+
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
     pub struct SearchFlags: u16 {
@@ -7,12 +9,11 @@ bitflags::bitflags! {
         const FIXED_STRINGS    = 1 << 1;
         const WORD_REGEXP      = 1 << 2;
         const LINE_REGEXP      = 1 << 3;
-        const ONLY_MATCHING    = 1 << 4;
-        const MULTILINE        = 1 << 5;
-        const MULTILINE_DOTALL = 1 << 6;
-        const CRLF             = 1 << 7;
-        const NULL_DATA        = 1 << 8;
-        const PASSTHRU         = 1 << 9;
+        const MULTILINE        = 1 << 4;
+        const MULTILINE_DOTALL = 1 << 5;
+        const CRLF             = 1 << 6;
+        const NULL_DATA        = 1 << 7;
+        const PASSTHRU         = 1 << 8;
     }
 }
 
@@ -80,22 +81,27 @@ pub enum BinaryMode {
     AsText,
 }
 
-impl BinaryMode {
-    #[must_use]
-    pub const fn converts(self, explicit: bool, null_data: bool) -> bool {
-        if null_data {
-            return false;
-        }
-        match self {
-            Self::AsText => false,
-            Self::Binary => true,
-            Self::Quit => explicit,
-        }
-    }
+/// How NULs in a haystack are treated for one input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Nul {
+    /// Leave NULs in place and search through them.
+    Keep,
+    /// Replace NULs with the line terminator, then search.
+    Convert,
+    /// Stop the scan at the first NUL.
+    Quit,
+}
 
-    #[must_use]
-    pub const fn quits(self, explicit: bool, null_data: bool) -> bool {
-        !explicit && !null_data && matches!(self, Self::Quit)
+impl BinaryMode {
+    pub(crate) const fn nul(self, mention: Mention, null_data: bool) -> Nul {
+        if null_data {
+            return Nul::Keep;
+        }
+        match (self, mention) {
+            (Self::AsText, _) => Nul::Keep,
+            (Self::Binary, _) | (Self::Quit, Mention::Explicit) => Nul::Convert,
+            (Self::Quit, Mention::Discovered) => Nul::Quit,
+        }
     }
 }
 
@@ -234,11 +240,6 @@ impl SearchOptions {
     #[must_use]
     pub const fn line_regexp(&self) -> bool {
         self.flags.contains(SearchFlags::LINE_REGEXP)
-    }
-
-    #[must_use]
-    pub const fn only_matching(&self) -> bool {
-        self.flags.contains(SearchFlags::ONLY_MATCHING)
     }
 
     #[must_use]

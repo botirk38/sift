@@ -65,6 +65,20 @@ fn replace_with_capture_groups_index() {
     );
 }
 
+#[test]
+fn replace_multiline_collapses_span_walk() {
+    let p = TestProject::new("replace-multiline-walk");
+    p.write("a.txt", "foo\nbar\n");
+    let out = p.walk_output(["-U", "-r", "X", r"foo\nbar"]);
+    assert_success(&out);
+    let stdout = normalize_stdout(&out);
+    assert!(stdout.contains('X'), "expected replacement, got: {stdout}");
+    assert!(
+        !stdout.contains("foo") && !stdout.contains("bar"),
+        "replaced span should not print original lines, got: {stdout}"
+    );
+}
+
 // ─── --trim ──────────────────────────────────────────────────────────────────
 
 #[test]

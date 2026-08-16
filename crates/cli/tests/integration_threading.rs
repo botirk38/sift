@@ -144,6 +144,19 @@ fn multiline_long_flag_walk() {
     );
 }
 
+#[test]
+fn multiline_only_matching_prints_span_walk() {
+    let p = TestProject::new("multiline-only-matching");
+    p.write("a.txt", "foo\nbar\n");
+    let out = p.walk_output(["-U", "-o", "--no-filename", r"foo\nbar"]);
+    assert_success(&out);
+    let stdout = normalize_stdout(&out);
+    assert!(
+        stdout.contains("foo") && stdout.contains("bar"),
+        "expected full multiline span, got: {stdout}"
+    );
+}
+
 // ─── --multiline-dotall ────────────────────────────────────────────────────────
 
 #[test]

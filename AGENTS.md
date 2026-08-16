@@ -67,21 +67,25 @@ evidence for performance PRs.
 | `Plan` | `candidates` | Pure discovery decision |
 | `Candidates` | `candidates` | Output of `Plan::resolve` |
 | `Query` | `search` | Patterns + options |
-| `Searcher` | `search` | `Searcher::new(Query)` + `execute`; private `search` walks one input |
-| `Haystack` | `search` | Resident searchable bytes (`Slice` or `Memory`) |
+| `Searcher` | `search` | `Searcher::new(Query)` + `execute` / `stream` |
+| `Bytes` | `search` | Resident searchable bytes for one input (`Slice` or `Memory`) |
+| `Events` | `search` | Stream output: `Iterator<SearchEvent>` + `into_report` |
 | `Lines` | `search` | Iterator that materializes `Line` |
-| `FileReport` | `search` | Per-input result (not an actor) |
+| `FileReport` | `search` | Per-input result data (built by execute / `Events::into_report`) |
+| `Reports` | `search` | Result of searching a set of inputs |
+| `Mention` | `search` | How an input was requested (`Explicit` / `Discovered`) |
 | `Io` | `search` | How file bytes are read (`Sync` / `Mmap` / `Uring`; default `Mmap`) |
-| `SearchReport` | `search` | Listing + optional stats |
+| `Hit` | `search` | Listing unit (`Line` or `Span`) |
+| `SearchMode` | `search` | How results are listed (`Print` / `Count` / path modes) |
+| `SearchReport` | `search` | Listing + `Stats` |
 | `File` | `corpus` | Indexed path identity |
 | `Origin` | `search` | `File` or `Stream { label }` search identity |
 | `Run` | `cli/grep` | Resolved search intent; `execute` (no `Argv`) |
 | `IndexJob` | `cli/index` | Resolved index lifecycle; `run` |
 | `Daemon` | `cli/index/daemon` | Background work; modules `ipc`, `watcher`, `refresh` |
 
-Values (not aggregates): `StoreMeta`, `SearchMode`, `StatsMode`, `Scan` /
-`ScanScope`, `FileFilter`, `FileOrder`, `Coverage`. Printing stays under
-`cli/format`.
+Values (not aggregates): `StoreMeta`, `SearchMode`, `Scan` / `ScanScope`,
+`FileFilter`, `FileOrder`, `Coverage`. Printing stays under `cli/format`.
 
 ## Key Conventions
 
@@ -111,7 +115,7 @@ Use short, descriptive kebab-case with a type prefix:
 
 `Indexes::open(dir, meta)` (lifecycle) / `Indexes::load(dir) ->
 Result<Option<Indexes>>` (search) → `build()` → `Plan::resolve` →
-`Searcher::execute`. CLI: `IndexJob::run` / `ReconcileOutcome::rebuild` for
+`Searcher::execute` / `Searcher::stream`. CLI: `IndexJob::run` / `ReconcileOutcome::rebuild` for
 lifecycle; `Run::execute` for search; `Daemon` / `DaemonOrchestrator` for
 background refresh. See `crates/core/README.md`.
 
@@ -158,7 +162,8 @@ branches for one caller, one test, one benchmark, or one feature flag.
 
 Write idiomatic, best-practice Rust:
 
-- Strong domain types over primitives and boolean flags.
+- Enums for real alternatives; `bool` for on/off. Do not wrap a bool in an
+  entity (`Off`/`On`, `StatsMode`).
 - Explicit ownership and lifetimes; avoid unnecessary `clone`, `RefCell`, or
   interior mutability when a clearer ownership boundary exists.
 - Clear `Result` / error boundaries; prefer typed errors at API edges.
@@ -178,6 +183,26 @@ not grow boolean forks or parallel code paths for each use case.
   operations (`extract` → `lookup` → `intersect`, walk → filter → materialize).
 - Avoid helpers, method names, or signatures that overfit one caller or one
   implementation detail.
+
+### Actors and data
+
+Types are either actors or data.
+
+- **Actors** own responsibilities and capabilities. Name them after the thing
+  that acts (`Searcher`, `FileScan`, `Indexes`). Verbs are methods on that
+  actor. Do not add a second actor for a job the first already owns.
+- **Data** are domain values (`Origin`, `Line`, `Hit`, `Listing`, `FileReport`).
+  Methods on data belong to the value (`display`, `bytes`). Data does not
+  orchestrate I/O or other entities.
+
+Not entities:
+
+- On/off switches. `bool` on the owner (`invert_match`).
+- Walk state. Enums are fine (`Break`, `Nul`, `Item`). They are not actors or data.
+- Attributes of an existing value (`ListedFile` over `Origin`). Use the value.
+- Probe/cursor bags (`At`, `Context`, `State`) whose fields the actor already
+  holds. Pass the current `Line`.
+- Enums whose only second arm is none. `Option`.
 
 ### Naming
 
@@ -203,8 +228,7 @@ implementation detail.
 
 When behavior has distinct cases, model those cases directly with domain types.
 Use enums for real alternatives, structs for coherent grouped data, and options
-structs for configurable behavior. Avoid boolean flags when a named domain type
-would make intent clearer.
+structs for configurable behavior. On/off switches stay `bool`.
 
 Separate domain decisions from side effects. Prefer pure, testable logic that
 returns decisions or actions, with I/O, filesystem access, spawning, logging,
@@ -247,6 +271,8 @@ Sibling functions that only change args, bound, mode, or flag
 (`search` + `search_first`, `execute` + `list_paths`, `push` + `push_bytes`,
 `open` + `open_with_lease`, `*_with_*`, `*_for_*`). Match on `SearchBound`,
 `SearchMode`, `Input`, or `SearchOptions` in the existing function.
+`execute` vs `stream` are distinct I/O shapes (materialize vs iterate), not a
+sink `Option`.
 
 Adapter types between near-duplicates (`SearchInputs` over `Inputs` +
 `Candidates`). Unify to the domain type callers already have.
@@ -255,8 +281,16 @@ Argument bags whose only job is dodging `too_many_arguments`
 (`IndexedFiles`). A struct is valid when it is a domain concept (`Scan`,
 `Input`), not a clippy workaround.
 
+Cursor bags for `too_many_arguments` when the actor already holds the fields
+(`At` on `FileScan`). Pass the current `Line`.
+
+Wrapper whose only field is another data type (`FileEvent { origin }`).
+Use the inner value (`Begin(Origin)`).
+
 Result types named as actors (`FileSearch` while `Searcher` searches).
-Types are things; verbs are methods on them.
+Results are data; the actor writes them (`FileReport` is written by `FileScan`).
+
+`Off`/`On` enums (`StatsMode`, `Quiet::{Off,On}`). Use `bool`.
 
 Iterator items that are not the domain value (`Span` / `Held` + `as_line`
 instead of `Line`). `next()` materializes the type the rest of the API
@@ -359,16 +393,18 @@ Clap parses `*Decl` flag groups; **`Argv` resolves effective runtime values**
 - Treat narrowly crate-restricted `pub(in crate::...)` wrapper enums as a smell; prefer domain types with clear ownership.
 - Prefer search identity as `Origin::{File, Stream}` (not `Candidate`); stream identity is a string `label`, not a filesystem `Path`.
 - Prefer printer/JSON rendering via match on `Origin` variants; do not Path-force stream labels for API uniformity.
-- Prefer enums over bools when modeling domain entities with distinct cases (`MatchEmissionMode`, `ZeroCounts`, `SearchMode`). Plain on/off switches stay `bool` — do not invent `Off`/`On` entity enums for them (and do not extend the existing `Quiet` / `InvertMatch` Off/On pattern to new flags). Do not reify `Option` / emptiness checks into parallel state enums.
+- Prefer enums over bools when modeling domain data with distinct cases (`Hit`, `ZeroCounts`, `SearchMode`) and walk state (`Break`, `Nul`). Enums are not entities. On/off switches stay `bool`. Do not reify `Option` / emptiness checks into parallel state enums.
 - Name types and methods after the domain concept with short, clear words; avoid mechanism names, `_for_*` restatements, and probe/context bags.
 - Minimize helper methods as well as free functions—only when absolutely justified.
-- Prefer first-principles entity design: types are things with clear capabilities, and verbs are methods on those types, not extra actor types. Do not split one entity across multiple files. Treat extra code and abstractions as liability unless explicitly justified. Do not promote configuration switches or transient probe state into domain entities.
+- Types are actors or data. Actors own capabilities (`Searcher::execute`, `Searcher::stream`, `FileScan::next_item`). Data holds values (`Origin`, `Line`, `FileReport`). Do not split one entity across multiple files. Prefer named structs over unnamed tuples when the value models an entity. Treat extra code and abstractions as liability unless explicitly justified.
+- The search walk does not take an output method. `execute` materializes a report; `stream` returns `Events`. Do not add a sink/`FnMut` callback. Do not add test-only helpers to production modules; tests use the public API.
 - Keep index orchestration and on-disk storage/versioning index-kind-agnostic; kind-specific logic stays under the kind module (e.g. `ngram/`) so new indexes are easy to add.
-- When planning architecture work, prefer deep critique and a cleaned plan with code snippets for easy review before implementation. If implementation starts making many design decisions, go back to planning.
+- When planning architecture work, prefer deep critique and a cleaned plan with code snippets for easy review before implementation. If implementation starts making many design decisions, go back to planning. Run the same critique loop on PRs and keep fixing until the design is right.
 
 ## Learned Workspace Facts
 
-- Core search lives under `crates/core/src/search/` (`Query`, `Searcher`, `Haystack`, `Lines`, `Origin`, `SearchError`); `Plan` lives under `candidates/`. `Searcher` searches; `FileReport` is a per-input result, not an actor. `Lines` iterates `Line`. `Io` chooses how `Haystack` fills `fastio::OwnedBytes` (sync / mmap / uring `read_all`); there is no windowed haystack. There is no `sift_core::grep` module or `Grep` facade. The CLI keeps a local `grep` module for `Run`.
+- Core search lives under `crates/core/src/search/` (`Query`, `Searcher`, `Bytes`, `Lines`, `Origin`, `SearchError`); `Plan` lives under `candidates/`. `Searcher::execute(inputs, mode)` materializes a report (Rayon on exhaustive). `Searcher::stream(inputs, mode)` returns `Events` (`Iterator<SearchEvent>` + `into_report`). `FileScan` walks one input's bytes and does not know listing or events. `SearchReport.stats` is always `Stats`. `Lines` iterates `Line`. `SearchBound` selects exhaustive vs first-match. `Inputs` is the unified input collection. `Io` chooses how `Bytes` fills `fastio::OwnedBytes` (sync / mmap / uring `read_all`); there is no windowed haystack. There is no `sift_core::grep` module or `Grep` facade. The CLI keeps a local `grep` module for `Run`.
 - Search file I/O uses `fastio`. Default `Io` is mmap; `uring` is opt-in on Linux (`read_all` after `std::fs` open). Batched reads per file, Rayon across files.
+- CLI no longer depends on `grep-cli`, `grep-printer`, or `termcolor`; colors/hyperlinks live in `format/`, and `--search-zip` spawns gzip/xz/zstd by extension. Core still uses `grep-matcher`, `grep-regex`, and `grep-pcre2`.
 - Daemon IPC is enum-shaped (`DaemonRequest` / `DaemonResponse`); accept loop forwards `Event::Client` — no `FnMut` handler API.
 - Snapshot composition is meant to share one corpus `FileId` → path table per snapshot; kinds return `FileId`s and write only kind artifacts under their namespace.

@@ -4,17 +4,12 @@ use crate::search::input::Origin;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchEvent {
-    Begin(FileEvent),
+    Begin(Origin),
     Match(MatchEvent),
     Context(ContextEvent),
     ContextBreak,
     Binary(BinaryEvent),
-    End(FileEvent),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileEvent {
-    pub origin: Origin,
+    End(Origin),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,22 +43,4 @@ pub enum ContextKind {
 pub struct BinaryEvent {
     pub origin: Origin,
     pub absolute_byte_offset: u64,
-    pub explicit: bool,
-}
-
-pub trait SearchSink {
-    /// Receive one semantic search event.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the sink cannot accept the event.
-    fn event(&mut self, event: SearchEvent) -> crate::Result<()>;
-}
-
-/// Whether search records semantic events.
-pub enum Events<'a> {
-    /// Drop events during search.
-    Discard,
-    /// Buffer events during search, then deliver to the sink.
-    Emit(&'a mut dyn SearchSink),
 }
