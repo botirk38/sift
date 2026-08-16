@@ -99,6 +99,13 @@ impl Input<'_> {
     }
 
     #[must_use]
+    pub const fn explicit(&self) -> bool {
+        match self {
+            Self::Path { explicit, .. } | Self::Bytes { explicit, .. } => *explicit,
+        }
+    }
+
+    #[must_use]
     pub fn byte_len(&self) -> u64 {
         match self {
             Self::Path { origin, .. } => origin.cached_size().unwrap_or_else(|| {
@@ -124,12 +131,6 @@ impl Input<'_> {
     }
 }
 
-pub struct ByteInput<'a> {
-    pub label: Cow<'a, str>,
-    pub bytes: Cow<'a, [u8]>,
-    pub explicit: bool,
-}
-
 pub struct Inputs<'a> {
     items: Vec<Input<'a>>,
 }
@@ -147,26 +148,8 @@ impl<'a> Inputs<'a> {
         Self::with_capacity(0)
     }
 
-    #[must_use]
-    pub fn with_stream(mut self, stream: ByteInput<'a>) -> Self {
-        self.items.push(Input::Bytes {
-            origin: Origin::stream(stream.label.as_ref()),
-            bytes: stream.bytes,
-            explicit: stream.explicit,
-        });
-        self
-    }
-
-    pub fn push_path(&mut self, origin: Origin, explicit: bool) {
-        self.items.push(Input::Path { origin, explicit });
-    }
-
-    pub fn push_file_bytes(&mut self, file: File, bytes: Vec<u8>, explicit: bool) {
-        self.items.push(Input::Bytes {
-            origin: Origin::file(file),
-            bytes: Cow::Owned(bytes),
-            explicit,
-        });
+    pub fn push(&mut self, input: Input<'a>) {
+        self.items.push(input);
     }
 
     #[must_use]
@@ -180,26 +163,35 @@ impl<'a> Inputs<'a> {
     }
 
     #[must_use]
-    pub fn byte_count(&self) -> u64 {
-        self.items.iter().map(Input::byte_len).sum()
-    }
-
-    #[must_use]
     pub fn as_slice(&self) -> &[Input<'_>] {
         &self.items
     }
-}
 
-/// Inputs ready for [`crate::search::Searcher`] execution.
-pub struct SearchInputs<'a> {
-    pub candidates: crate::candidates::Candidates<'a>,
-    pub streams: Inputs<'a>,
-    pub explicit: &'a [PathBuf],
-}
-
-impl SearchInputs<'_> {
     #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.candidates.is_empty() && self.streams.is_empty()
+    pub fn into_vec(self) -> Vec<Input<'a>> {
+        self.items
+    }
+}
+
+impl<'a> IntoIterator for Inputs<'a> {
+    type Item = Input<'a>;
+    type IntoIter = std::vec::IntoIter<Input<'a>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.into_iter()
+    }
+}
+
+impl<'a> FromIterator<Input<'a>> for Inputs<'a> {
+    fn from_iter<I: IntoIterator<Item = Input<'a>>>(iter: I) -> Self {
+        Self {
+            items: iter.into_iter().collect(),
+        }
+    }
+}
+
+impl<'a> Extend<Input<'a>> for Inputs<'a> {
+    fn extend<T: IntoIterator<Item = Input<'a>>>(&mut self, iter: T) {
+        self.items.extend(iter);
     }
 }

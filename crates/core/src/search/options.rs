@@ -12,6 +12,7 @@ bitflags::bitflags! {
         const MULTILINE_DOTALL = 1 << 6;
         const CRLF             = 1 << 7;
         const NULL_DATA        = 1 << 8;
+        const PASSTHRU         = 1 << 9;
     }
 }
 
@@ -79,6 +80,25 @@ pub enum BinaryMode {
     AsText,
 }
 
+impl BinaryMode {
+    #[must_use]
+    pub const fn converts(self, explicit: bool, null_data: bool) -> bool {
+        if null_data {
+            return false;
+        }
+        match self {
+            Self::AsText => false,
+            Self::Binary => true,
+            Self::Quit => explicit,
+        }
+    }
+
+    #[must_use]
+    pub const fn quits(self, explicit: bool, null_data: bool) -> bool {
+        !explicit && !null_data && matches!(self, Self::Quit)
+    }
+}
+
 /// When search may stop before exhausting every input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SearchBound {
@@ -89,12 +109,37 @@ pub enum SearchBound {
     FirstMatch,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// How file bytes are read for search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Io {
+    Sync,
+    #[default]
+    Mmap,
+    Uring,
+}
+
+impl FromStr for Io {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "sync" => Ok(Self::Sync),
+            "mmap" => Ok(Self::Mmap),
+            "uring" if cfg!(target_os = "linux") => Ok(Self::Uring),
+            "uring" => Err("io uring is only available on Linux".into()),
+            other => Err(format!(
+                "unknown io '{other}': expected sync, mmap, or uring"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InputEncoding {
     #[default]
     Auto,
     Raw,
-    Explicit(String),
+    Explicit(&'static encoding_rs::Encoding),
 }
 
 impl InputEncoding {
@@ -123,8 +168,9 @@ impl FromStr for InputEncoding {
         if value.eq_ignore_ascii_case("none") {
             return Ok(Self::Raw);
         }
-        grep_searcher::Encoding::new(value).map_err(|e| e.to_string())?;
-        Ok(Self::Explicit(value.to_string()))
+        encoding_rs::Encoding::for_label_no_replacement(value.as_bytes())
+            .map(Self::Explicit)
+            .ok_or_else(|| format!("unknown encoding '{value}'"))
     }
 }
 
@@ -144,6 +190,7 @@ pub struct SearchOptions {
     pub dfa_size_limit: usize,
     pub regex_engine: RegexEngine,
     pub narrowing: Narrowing,
+    pub io: Io,
 }
 
 impl Default for SearchOptions {
@@ -163,6 +210,7 @@ impl Default for SearchOptions {
             dfa_size_limit: 0,
             regex_engine: RegexEngine::default(),
             narrowing: Narrowing::default(),
+            io: Io::default(),
         }
     }
 }
@@ -214,6 +262,11 @@ impl SearchOptions {
     }
 
     #[must_use]
+    pub const fn passthru(&self) -> bool {
+        self.flags.contains(SearchFlags::PASSTHRU)
+    }
+
+    #[must_use]
     pub const fn line_terminator(&self) -> u8 {
         if self.null_data() { b'\0' } else { b'\n' }
     }
@@ -236,12 +289,36 @@ mod tests {
     fn encoding_explicit_keeps_label() {
         assert_eq!(
             "utf-16le".parse::<InputEncoding>().unwrap(),
-            InputEncoding::Explicit("utf-16le".into())
+            InputEncoding::Explicit(encoding_rs::UTF_16LE)
         );
     }
 
     #[test]
     fn encoding_unknown_is_rejected() {
         assert!("not-an-encoding".parse::<InputEncoding>().is_err());
+    }
+
+    #[test]
+    fn io_parse_sync_mmap() {
+        assert_eq!("sync".parse::<Io>().unwrap(), Io::Sync);
+        assert_eq!("mmap".parse::<Io>().unwrap(), Io::Mmap);
+    }
+
+    #[test]
+    fn io_parse_unknown_is_rejected() {
+        assert!("dma".parse::<Io>().is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn io_parse_uring_on_linux() {
+        assert_eq!("uring".parse::<Io>().unwrap(), Io::Uring);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn io_parse_uring_off_linux_is_error() {
+        let err = "uring".parse::<Io>().unwrap_err();
+        assert!(err.contains("Linux"), "{err}");
     }
 }

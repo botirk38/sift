@@ -176,7 +176,7 @@ impl Cli {
         } else {
             ZeroCounts::Omit
         };
-        let mut pattern_argv = PatternArgv::resolve(argv, zeros);
+        let mut pattern_argv = PatternArgv::resolve(argv, zeros).map_err(anyhow::Error::msg)?;
         let search_mode = if self.filter_decl.files {
             SearchMode::Paths
         } else {

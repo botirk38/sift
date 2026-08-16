@@ -7,8 +7,8 @@ use std::hint::black_box;
 use std::path::Path;
 
 use sift_core::{
-    CaseMode, Events, FileFilter, FileFilterConfig, FileOrder, Indexes, Inputs, Plan, Query, Scan,
-    ScanScope, SearchFlags, SearchInputs, SearchMode, SearchOptions, Searcher, SnapshotFreshness,
+    CaseMode, Events, FileFilter, FileFilterConfig, FileOrder, Indexes, Input, Inputs, Plan, Query,
+    Scan, ScanScope, SearchFlags, SearchMode, SearchOptions, Searcher, SnapshotFreshness,
     StatsMode,
 };
 
@@ -49,17 +49,12 @@ fn run_grep(indexes: &Indexes, filter: &FileFilter, query: &(Vec<String>, Search
     let candidates = Plan::new(&source, searcher.query(), mode.coverage())
         .resolve(&source)
         .unwrap();
+    let mut inputs = Inputs::with_capacity(candidates.bound());
+    for file in candidates.into_vec() {
+        inputs.push(Input::from_file(file, &[]));
+    }
     searcher
-        .execute(
-            SearchInputs {
-                candidates,
-                streams: Inputs::empty(),
-                explicit: &[],
-            },
-            StatsMode::Off,
-            mode,
-            Events::Discard,
-        )
+        .execute(inputs, StatsMode::Off, mode, Events::Discard)
         .unwrap()
         .found()
 }

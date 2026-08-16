@@ -6,7 +6,7 @@ use std::time::Instant;
 use sift_core::SearchMode;
 use sift_core::search::{
     BinaryEvent, BinaryMode, ContextEvent, ContextKind, FileEvent, Listing, MatchEvent, Origin,
-    Report, SearchEvent, SearchSink,
+    SearchEvent, SearchReport, SearchSink,
 };
 
 use crate::format::output::format::ColumnOverflow;
@@ -59,7 +59,7 @@ impl<'a> EventRenderer<'a> {
         }
     }
 
-    pub(super) fn finish(&mut self, report: &mut Report) -> sift_core::Result<()> {
+    pub(super) fn finish(&mut self, report: &mut SearchReport) -> sift_core::Result<()> {
         if matches!(self.output.emission, OutputEmission::Quiet) {
             return Ok(());
         }
@@ -76,7 +76,7 @@ impl<'a> EventRenderer<'a> {
         Ok(())
     }
 
-    fn render_summary_modes(&mut self, report: &Report) {
+    fn render_summary_modes(&mut self, report: &SearchReport) {
         match (&self.output.mode, &report.listed) {
             (SearchMode::CountLines { .. }, Listing::LineCounts(counts)) => {
                 for count in counts {
@@ -409,7 +409,7 @@ impl<'a> EventRenderer<'a> {
         }
     }
 
-    fn write_json_summary(&mut self, report: &Report) -> sift_core::Result<()> {
+    fn write_json_summary(&mut self, report: &SearchReport) -> sift_core::Result<()> {
         let stats = report.stats.as_ref();
         let elapsed = self.started.elapsed();
         let value = serde_json::json!({

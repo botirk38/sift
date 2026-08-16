@@ -88,31 +88,31 @@ fn one_file_system_accepted_walk() {
     );
 }
 
-// ─── --mmap / --no-mmap (advisory) ────────────────────────────────────────────
+// ─── --io ────────────────────────────────────────────────────────────────────
 
 #[test]
-fn mmap_flag_accepted_walk() {
-    let p = TestProject::new("mmap-walk");
+fn io_mmap_flag_accepted_walk() {
+    let p = TestProject::new("io-mmap-walk");
     p.write("a.txt", "hello\n");
-    let out = p.walk_output(["--mmap", "hello"]);
+    let out = p.walk_output(["--io", "mmap", "hello"]);
     assert_success(&out);
     let stdout = normalize_stdout(&out);
     assert!(
         stdout.contains("hello"),
-        "expected output with --mmap, got: {stdout}"
+        "expected output with --io mmap, got: {stdout}"
     );
 }
 
 #[test]
-fn no_mmap_flag_accepted_walk() {
-    let p = TestProject::new("no-mmap-walk");
+fn io_sync_flag_accepted_walk() {
+    let p = TestProject::new("io-sync-walk");
     p.write("a.txt", "hello\n");
-    let out = p.walk_output(["--no-mmap", "hello"]);
+    let out = p.walk_output(["--io", "sync", "hello"]);
     assert_success(&out);
     let stdout = normalize_stdout(&out);
     assert!(
         stdout.contains("hello"),
-        "expected output with --no-mmap, got: {stdout}"
+        "expected output with --io sync, got: {stdout}"
     );
 }
 

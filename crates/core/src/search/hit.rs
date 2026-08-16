@@ -50,7 +50,7 @@ pub struct MatchedFile {
     pub matches: Vec<Match>,
 }
 
-/// Private row produced by `MatchSink` consume for one file.
+/// Private row produced for one file.
 #[derive(Debug)]
 pub enum ListedRow {
     MatchingPath(ListedFile),

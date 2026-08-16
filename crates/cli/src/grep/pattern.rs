@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Arg, ArgAction, ArgMatches, Args, Command, FromArgMatches, value_parser};
 use sift_core::search::{
-    BinaryMode, CaseMode, Query, RegexEngine, SearchBound, SearchFlags, SearchOptions,
+    BinaryMode, CaseMode, Io, Query, RegexEngine, SearchBound, SearchFlags, SearchOptions,
 };
 
 use sift_core::{SearchMode, ZeroCounts};
@@ -174,13 +174,13 @@ impl PatternDecl {
             opts.dfa_size_limit = usize::try_from(bytes).unwrap_or(usize::MAX);
         }
         opts.regex_engine = pattern_argv.regex_engine;
-        opts.input_encoding = self.engine.encoding.clone().unwrap_or_default();
+        opts.io = pattern_argv.io;
+        opts.input_encoding = self.engine.encoding.unwrap_or_default();
         opts.replace.clone_from(&self.replace.replace);
         opts.before_context = pattern_argv.before_context;
         opts.after_context = pattern_argv.after_context;
         if self.replace.passthru {
-            opts.before_context = usize::MAX;
-            opts.after_context = usize::MAX;
+            opts.flags |= SearchFlags::PASSTHRU;
         }
         if matches!(pattern_argv.match_emission, MatchEmissionMode::OnlyMatching) {
             opts.before_context = 0;
@@ -301,15 +301,20 @@ pub struct PatternArgv {
     pub before_context: usize,
     pub after_context: usize,
     pub regex_engine: RegexEngine,
+    pub io: Io,
 }
 
 impl PatternArgv {
-    #[must_use]
-    pub fn resolve(argv: &Argv<'_>, zeros: ZeroCounts) -> Self {
+    /// Resolve last-wins pattern flags from raw argv.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `--io` is unknown or `uring` off Linux.
+    pub fn resolve(argv: &Argv<'_>, zeros: ZeroCounts) -> Result<Self, String> {
         let invert_match = Self::invert_match(argv);
         let (mode, match_emission, quiet) = Self::output_mode(argv, invert_match, zeros);
         let (before_context, after_context) = Self::context(argv);
-        Self {
+        Ok(Self {
             case_mode: Self::case_mode(argv),
             invert_match,
             mode,
@@ -318,7 +323,38 @@ impl PatternArgv {
             before_context,
             after_context,
             regex_engine: Self::regex_engine(argv),
+            io: Self::io(argv)?,
+        })
+    }
+
+    fn io(argv: &Argv<'_>) -> Result<Io, String> {
+        let mut last_idx = 0usize;
+        let mut io = Io::default();
+        let raw_args = argv.as_slice();
+        let mut i = 0;
+        while i < raw_args.len() {
+            let arg = &raw_args[i];
+            if arg == "--" {
+                break;
+            }
+            let next = i + 1;
+            let parsed = if let Some(value) = arg.strip_prefix("--io=") {
+                Some((i, value.parse::<Io>()?, 0usize))
+            } else if arg == "--io" && next < raw_args.len() {
+                Some((i, raw_args[next].parse::<Io>()?, 1usize))
+            } else {
+                None
+            };
+            if let Some((idx, selected, consumed)) = parsed {
+                if idx >= last_idx {
+                    last_idx = idx;
+                    io = selected;
+                }
+                i += consumed;
+            }
+            i += 1;
         }
+        Ok(io)
     }
 
     fn regex_engine(argv: &Argv<'_>) -> RegexEngine {
@@ -660,7 +696,7 @@ mod tests {
     }
 
     fn pat(items: &[&str]) -> PatternArgv {
-        PatternArgv::resolve(&Argv::new(&args(items)), ZeroCounts::Omit)
+        PatternArgv::resolve(&Argv::new(&args(items)), ZeroCounts::Omit).expect("resolve")
     }
 
     fn pattern_config(args: &[&str]) -> PatternDecl {
@@ -678,7 +714,9 @@ mod tests {
     #[test]
     fn case_mode_default_sensitive() {
         assert_eq!(
-            PatternArgv::resolve(&Argv::new(&args(&["sift", "pat"])), ZeroCounts::Omit).case_mode,
+            PatternArgv::resolve(&Argv::new(&args(&["sift", "pat"])), ZeroCounts::Omit)
+                .expect("resolve")
+                .case_mode,
             CaseMode::Sensitive
         );
     }
@@ -687,6 +725,7 @@ mod tests {
     fn case_mode_ignore_case_short() {
         assert_eq!(
             PatternArgv::resolve(&Argv::new(&args(&["sift", "-i", "pat"])), ZeroCounts::Omit)
+                .expect("resolve")
                 .case_mode,
             CaseMode::Insensitive
         );
@@ -697,6 +736,7 @@ mod tests {
         // -s is --case-sensitive, but resolves via short check
         assert_eq!(
             PatternArgv::resolve(&Argv::new(&args(&["sift", "-s", "pat"])), ZeroCounts::Omit)
+                .expect("resolve")
                 .case_mode,
             CaseMode::Sensitive
         );
@@ -706,6 +746,7 @@ mod tests {
     fn case_mode_smart_case_short() {
         assert_eq!(
             PatternArgv::resolve(&Argv::new(&args(&["sift", "-S", "pat"])), ZeroCounts::Omit)
+                .expect("resolve")
                 .case_mode,
             CaseMode::Smart
         );
@@ -718,6 +759,7 @@ mod tests {
                 &Argv::new(&args(&["sift", "--ignore-case", "pat"])),
                 ZeroCounts::Omit
             )
+            .expect("resolve")
             .case_mode,
             CaseMode::Insensitive
         );
@@ -730,6 +772,7 @@ mod tests {
                 &Argv::new(&args(&["sift", "--case-sensitive", "pat"])),
                 ZeroCounts::Omit
             )
+            .expect("resolve")
             .case_mode,
             CaseMode::Sensitive
         );
@@ -742,6 +785,7 @@ mod tests {
                 &Argv::new(&args(&["sift", "--smart-case", "pat"])),
                 ZeroCounts::Omit
             )
+            .expect("resolve")
             .case_mode,
             CaseMode::Smart
         );
@@ -754,6 +798,7 @@ mod tests {
                 &Argv::new(&args(&["sift", "-i", "-s", "pat"])),
                 ZeroCounts::Omit
             )
+            .expect("resolve")
             .case_mode,
             CaseMode::Sensitive
         );
@@ -766,6 +811,7 @@ mod tests {
                 &Argv::new(&args(&["sift", "-S", "-i", "pat"])),
                 ZeroCounts::Omit
             )
+            .expect("resolve")
             .case_mode,
             CaseMode::Insensitive
         );
@@ -777,6 +823,7 @@ mod tests {
     fn regex_engine_default_rust() {
         assert_eq!(
             PatternArgv::resolve(&Argv::new(&args(&["sift", "pat"])), ZeroCounts::Omit)
+                .expect("resolve")
                 .regex_engine,
             RegexEngine::Rust
         );
@@ -789,6 +836,7 @@ mod tests {
                 &Argv::new(&args(&["sift", "--pcre2", "pat"])),
                 ZeroCounts::Omit
             )
+            .expect("resolve")
             .regex_engine,
             RegexEngine::Pcre2
         );
@@ -798,6 +846,7 @@ mod tests {
     fn regex_engine_pcre2_short() {
         assert_eq!(
             PatternArgv::resolve(&Argv::new(&args(&["sift", "-P", "pat"])), ZeroCounts::Omit)
+                .expect("resolve")
                 .regex_engine,
             RegexEngine::Pcre2
         );
@@ -810,6 +859,7 @@ mod tests {
                 &Argv::new(&args(&["sift", "--no-pcre2", "-P", "pat"])),
                 ZeroCounts::Omit
             )
+            .expect("resolve")
             .regex_engine,
             RegexEngine::Pcre2
         );
@@ -822,9 +872,40 @@ mod tests {
                 &Argv::new(&args(&["sift", "-P", "--no-pcre2", "pat"])),
                 ZeroCounts::Omit
             )
+            .expect("resolve")
             .regex_engine,
             RegexEngine::Rust
         );
+    }
+
+    #[test]
+    fn io_default_is_platform() {
+        assert_eq!(pat(&["sift", "pat"]).io, Io::default());
+    }
+
+    #[test]
+    fn io_last_wins_mmap_then_sync() {
+        assert_eq!(
+            pat(&["sift", "--io", "mmap", "--io", "sync", "pat"]).io,
+            Io::Sync
+        );
+    }
+
+    #[test]
+    fn io_equals_form() {
+        assert_eq!(pat(&["sift", "--io=mmap", "pat"]).io, Io::Mmap);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn io_uring_off_linux_is_error() {
+        let Err(err) = PatternArgv::resolve(
+            &Argv::new(&args(&["sift", "--io", "uring", "pat"])),
+            ZeroCounts::Omit,
+        ) else {
+            panic!("expected uring error off Linux");
+        };
+        assert!(err.contains("Linux"), "{err}");
     }
 
     // ── resolve_invert_match_from_args ──
@@ -1054,6 +1135,13 @@ mod tests {
         let config = pattern_config(&["sift", "-F", "pat"]);
         let opts = config.options(&pat(&["sift", "pat"]));
         assert!(opts.flags.contains(SearchFlags::FIXED_STRINGS));
+    }
+
+    #[test]
+    fn query_options_passthru() {
+        let config = pattern_config(&["sift", "--passthru", "pat"]);
+        let opts = config.options(&pat(&["sift", "pat"]));
+        assert!(opts.flags.contains(SearchFlags::PASSTHRU));
     }
 
     // ── binary_mode ──

@@ -19,6 +19,9 @@ pub enum Error {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("match: {0}")]
+    Match(String),
+
     #[error("ignore walk error: {0}")]
     Ignore(#[from] ignore::Error),
 }

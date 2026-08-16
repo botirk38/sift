@@ -8,7 +8,7 @@ pub mod style;
 
 use mode::OutputEmission;
 use passthru::PassthruMode;
-use sift_core::search::{Events, Report, SearchInputs, SearchMode, Searcher, StatsMode};
+use sift_core::search::{Events, Inputs, SearchMode, SearchReport, Searcher, StatsMode};
 use style::{PrintLineStyle, PrintRecordStyle};
 
 use crate::format::event::EventRenderer;
@@ -56,11 +56,11 @@ impl PrintSpec {
     pub fn print(
         self,
         searcher: &Searcher,
-        inputs: SearchInputs<'_>,
+        inputs: Inputs<'_>,
         mode: SearchMode,
         stats: StatsMode,
         separators: &PrintSeparators,
-    ) -> sift_core::Result<Report> {
+    ) -> sift_core::Result<SearchReport> {
         match self.emission {
             OutputEmission::Quiet => searcher.execute(inputs, stats, mode, Events::Discard),
             OutputEmission::Summary | OutputEmission::Normal => {

@@ -42,7 +42,7 @@ pub fn bench(c: &mut Criterion) {
     });
 
     g.bench_function("walker_flags", |b| {
-        b.iter(|| black_box(parse_cli(&["--one-file-system", "--mmap", "pattern"])));
+        b.iter(|| black_box(parse_cli(&["--one-file-system", "--io", "mmap", "pattern"])));
     });
 
     g.bench_function("multiline_flags", |b| {

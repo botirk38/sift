@@ -25,6 +25,8 @@ categories = ["command-line-utilities", "development-tools"]
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
 cargo = { level = "deny", priority = -1 }
+# fastio pulls io-uring (bitflags 1) and region (windows-sys 0.52).
+multiple_crate_versions = "allow"
 no_effect_underscore_binding = "deny"
 
 # Line tables for Criterion / `cargo bench` without full debug info bloat.

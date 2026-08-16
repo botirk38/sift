@@ -9,16 +9,24 @@ use sift_grep::pattern::{PatternArgv, ResolvedPatterns};
 use crate::support::{args, parse_cli};
 
 pub fn bench(c: &mut Criterion) {
-    let mut g = c.benchmark_group("pattern");
+    argv_flags(c);
+    patterns(c);
+}
 
+fn argv_flags(c: &mut Criterion) {
+    let mut g = c.benchmark_group("pattern");
     let argv_none = args(&["sift", "pattern"]);
     let argv_single_i = args(&["sift", "-i", "pattern"]);
     let argv_last_wins = args(&["sift", "-i", "-s", "-S", "-i", "pattern"]);
+    let argv_v = args(&["sift", "-v", "pattern"]);
+    let argv_output_lw = args(&["sift", "-c", "-l", "-o", "-q", "pattern"]);
 
     g.bench_function("case_mode/default", |b| {
         b.iter(|| {
             black_box(
-                PatternArgv::resolve(&Argv::new(black_box(&argv_none)), ZeroCounts::Omit).case_mode,
+                PatternArgv::resolve(&Argv::new(black_box(&argv_none)), ZeroCounts::Omit)
+                    .expect("resolve")
+                    .case_mode,
             )
         });
     });
@@ -26,6 +34,7 @@ pub fn bench(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 PatternArgv::resolve(&Argv::new(black_box(&argv_single_i)), ZeroCounts::Omit)
+                    .expect("resolve")
                     .case_mode,
             )
         });
@@ -34,21 +43,20 @@ pub fn bench(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 PatternArgv::resolve(&Argv::new(black_box(&argv_last_wins)), ZeroCounts::Omit)
+                    .expect("resolve")
                     .case_mode,
             )
         });
     });
-
-    let argv_v = args(&["sift", "-v", "pattern"]);
     g.bench_function("invert_match/short_v", |b| {
         b.iter(|| {
             black_box(
-                PatternArgv::resolve(&Argv::new(black_box(&argv_v)), ZeroCounts::Omit).invert_match,
+                PatternArgv::resolve(&Argv::new(black_box(&argv_v)), ZeroCounts::Omit)
+                    .expect("resolve")
+                    .invert_match,
             )
         });
     });
-
-    let argv_output_lw = args(&["sift", "-c", "-l", "-o", "-q", "pattern"]);
     g.bench_function("search_mode/last_wins", |b| {
         b.iter(|| {
             black_box(PatternArgv::output_mode(
@@ -58,7 +66,11 @@ pub fn bench(c: &mut Criterion) {
             ))
         });
     });
+    g.finish();
+}
 
+fn patterns(c: &mut Criterion) {
+    let mut g = c.benchmark_group("pattern");
     g.bench_function("patterns/positional", |b| {
         let cli = parse_cli(&["beta"]);
         b.iter(|| {
@@ -70,7 +82,6 @@ pub fn bench(c: &mut Criterion) {
             )
         });
     });
-
     g.bench_function("patterns/repeated_e", |b| {
         let cli = parse_cli(&["-e", "foo", "-e", "bar", "-e", "baz"]);
         b.iter(|| {
@@ -82,7 +93,6 @@ pub fn bench(c: &mut Criterion) {
             )
         });
     });
-
     g.bench_function("patterns/from_file", |b| {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), "foo\nbar\nbaz\n# comment\n\nqux\n").unwrap();
@@ -100,9 +110,10 @@ pub fn bench(c: &mut Criterion) {
             BatchSize::SmallInput,
         );
     });
-
+    let argv_none = args(&["sift", "pattern"]);
     let cli_default = parse_cli(&["pattern"]);
-    let pattern_argv = PatternArgv::resolve(&Argv::new(&argv_none), ZeroCounts::Omit);
+    let pattern_argv =
+        PatternArgv::resolve(&Argv::new(&argv_none), ZeroCounts::Omit).expect("resolve");
     g.bench_function("Searcher/default", |b| {
         b.iter(|| {
             black_box(
@@ -115,6 +126,5 @@ pub fn bench(c: &mut Criterion) {
             )
         });
     });
-
     g.finish();
 }

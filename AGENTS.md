@@ -67,8 +67,12 @@ evidence for performance PRs.
 | `Plan` | `candidates` | Pure discovery decision |
 | `Candidates` | `candidates` | Output of `Plan::resolve` |
 | `Query` | `search` | Patterns + options |
-| `Searcher` | `search` | `Searcher::new(Query)` + `execute` |
-| `Report` | `search` | Listing + optional stats |
+| `Searcher` | `search` | `Searcher::new(Query)` + `execute`; private `search` walks one input |
+| `Haystack` | `search` | Resident searchable bytes (`Slice` or `Memory`) |
+| `Lines` | `search` | Iterator that materializes `Line` |
+| `FileReport` | `search` | Per-input result (not an actor) |
+| `Io` | `search` | How file bytes are read (`Sync` / `Mmap` / `Uring`; default `Mmap`) |
+| `SearchReport` | `search` | Listing + optional stats |
 | `File` | `corpus` | Indexed path identity |
 | `Origin` | `search` | `File` or `Stream { label }` search identity |
 | `Run` | `cli/grep` | Resolved search intent; `execute` (no `Argv`) |
@@ -84,7 +88,7 @@ Values (not aggregates): `StoreMeta`, `SearchMode`, `StatsMode`, `Scan` /
 - **No `unsafe`** except in `index/mmap.rs` (documented safety invariant). Workspace does not deny `unsafe_code` so mmap needs no `#[allow]`.
 - **Strict clippy:** workspace uses `pedantic + nursery + cargo` warnings; CI uses `-D warnings`.
 - Fix lints at the root cause. `#[allow]` is **never** permitted.
-- **Never** add free helper functions or callback/`FnOnce` APIs (see Function
+- **Never** add free helper functions or callback/`FnOnce` APIs (see API
   Evolution).
 - Prefer small, focused commits when the design is already right. When the design
   is wrong, make the sweeping change — do not paper over it with a local patch.
@@ -224,40 +228,54 @@ post-construction mutators (`disable_*`, `set_*`) when the input is known upfron
 and `is_empty`; no eager/lazy API pairs or load flags; no `len()` when iteration
 filters rows and an exact count would lie.
 
-## Function Evolution
+## API Evolution
 
-**Evolve existing functions and APIs. Do not create new ones alongside them.**
+Evolve the existing API. Do not add a parallel one.
 
-Do not create `*_with_*`, `*_locked`, `*_async`, `*_new`, `*_casei_*`, or
-similarly named parallel variants when the new function is the old function plus
-one extra feature, mode, lock, flag, or parameter. That duplicates execution
-paths and weakens the domain model.
+A new need is a new argument, a new enum arm, or a match in the function
+that already owns the behavior. It is not a second function, type, or
+module named after how it differs from the first.
 
 If a different signature is needed:
-- Change the original function to take a domain type for the new concept.
-- Put the behavior in that one function body (match on the domain type).
-- Delete the old shape rather than leaving a wrapper.
+- Put the new concept in a domain type (enum/struct) on the existing API.
+- Match on that type in one function body.
+- Delete the old shape. Do not leave a wrapper.
 
-### No free helper functions
+### Smells
 
-**Never** add module-level free functions to share logic — not `fn helper_*`,
-not `fn intersect_sorted_ids(...)`, not `fn resolve_*_from_args(...)`, not
-`const fn plan_*(...)` extracted “just for reuse”. Put behavior on the type that
-owns the data (methods), or inline it at the single call site.
+Sibling functions that only change args, bound, mode, or flag
+(`search` + `search_first`, `execute` + `list_paths`, `push` + `push_bytes`,
+`open` + `open_with_lease`, `*_with_*`, `*_for_*`). Match on `SearchBound`,
+`SearchMode`, `Input`, or `SearchOptions` in the existing function.
 
-Nested closures or tiny blocks inside one function are fine when they remove
-local duplication. A separate free function or a second method named after how
-it differs from the first is not.
+Adapter types between near-duplicates (`SearchInputs` over `Inputs` +
+`Candidates`). Unify to the domain type callers already have.
 
-### No callback / `FnOnce` APIs
+Argument bags whose only job is dodging `too_many_arguments`
+(`IndexedFiles`). A struct is valid when it is a domain concept (`Scan`,
+`Input`), not a clippy workaround.
 
-**Never** design APIs around callbacks, `impl FnOnce`, `impl Fn`, or
-`impl FnMut` parameters to defer work or avoid constructing values. That hides
-control flow and fights the domain model.
+Result types named as actors (`FileSearch` while `Searcher` searches).
+Types are things; verbs are methods on them.
 
-Prefer an explicit `match` on a domain enum at the call site (construct only in
-the arms that need the value), or a method that returns a decision the caller
-acts on. Do not pass “build the event/value later” closures into callees.
+Iterator items that are not the domain value (`Span` / `Held` + `as_line`
+instead of `Line`). `next()` materializes the type the rest of the API
+uses.
+
+Invalid states (`omitted: bool`, empty-second-arm enums). Absence is
+`Option`. Real alternatives are enums. Complete values at construction.
+
+Typed insert variants on collections (`push_path`, `push_bytes`,
+`with_stream`). One `push(Input)`.
+
+Test-only helpers in production modules (`search_bytes`, `memory()`).
+Tests use the public API.
+
+`as_*` / `to_*` converters that exist because two types are the same
+value (`Held::as_line`). Delete one type.
+
+Callbacks (`FnOnce` / `FnMut`) to defer construction. Match on a domain
+enum at the call site.
 
 ```rust
 // Do this:
@@ -270,21 +288,14 @@ match collection {
 collection.push(events, || SearchEvent::Match(...));
 ```
 
-Examples of **bad** names that flag the pattern:
-- `build_locked` (the variant adds a lock)
-- `current_with_lease` (the variant adds a lease)
-- `run_search_with_index` (the variant adds an index)
-- `open_with_lease`
-- `open_or_create` / `get_or_create` / `create_if_missing` (same op + missing branch)
-- `posting_ids_for_ascii_casei_literal` (parallel path for one mode)
-- `intersect_sorted_ids` (free helper instead of a type method / inline)
-- `push(events, || SearchEvent::...)` (callback/`FnOnce` instead of match)
+Free helpers (`helper_*`, `intersect_sorted_ids`, `resolve_*_from_args`).
+Methods on the owning type, or inline at the one call site.
 
-Examples of **good** names that describe the domain action:
-- `publish_snapshot` (it writes files and commits)
-- `resolve_candidates` (it looks up matching files)
-- `build_index_metadata`
-- `posting_ids` with a `GramMatch` (or similar) argument
+### Names that flag the pattern
+
+`search_first`, `list_paths` (as a Searcher sibling), `push_bytes`,
+`build_locked`, `current_with_lease`, `run_search_with_index`,
+`open_or_create`, `posting_ids_for_ascii_casei_literal`
 
 ## Module Organization
 
@@ -310,12 +321,12 @@ Clap parses `*Decl` flag groups; **`Argv` resolves effective runtime values**
 - Preserve old APIs or shapes out of habit — redesign when the architecture is
   better served by a breaking change (see Architecture & Design).
 - **Never** add free helper functions — put logic on the owning type or inline
-  it (see Function Evolution / No free helper functions).
+  it (see API Evolution).
 - **Never** add callback / `FnOnce` / `Fn` / `FnMut` parameters to defer
   construction — `match` on a domain enum at the call site instead (see
-  Function Evolution / No callback APIs).
+  API Evolution).
 - Do not add parallel `*_with_*` / use-case-specific APIs — evolve the existing
-  domain API instead (see Architecture & Design / Function Evolution).
+  domain API instead (see Architecture & Design / API Evolution).
 - Overfit an API to one caller or test; keep operations general and let callers
   compose.
 - Ship a local workaround when the right fix is a broader redesign of the
@@ -344,19 +355,20 @@ Clap parses `*Decl` flag groups; **`Argv` resolves effective runtime values**
 ## Learned User Preferences
 
 - When work is split across multiple PRs, stop after each PR and pull from master before starting the next.
-- Prefer unifying types across layers over adapter or translation layers between near-duplicates.
+- Prefer unifying types across layers over adapter or translation layers between near-duplicates. Do not re-expose a library's already-unified type as parallel enum arms.
 - Treat narrowly crate-restricted `pub(in crate::...)` wrapper enums as a smell; prefer domain types with clear ownership.
 - Prefer search identity as `Origin::{File, Stream}` (not `Candidate`); stream identity is a string `label`, not a filesystem `Path`.
 - Prefer printer/JSON rendering via match on `Origin` variants; do not Path-force stream labels for API uniformity.
 - Prefer enums over bools when modeling domain entities with distinct cases (`MatchEmissionMode`, `ZeroCounts`, `SearchMode`). Plain on/off switches stay `bool` — do not invent `Off`/`On` entity enums for them (and do not extend the existing `Quiet` / `InvertMatch` Off/On pattern to new flags). Do not reify `Option` / emptiness checks into parallel state enums.
 - Name types and methods after the domain concept with short, clear words; avoid mechanism names, `_for_*` restatements, and probe/context bags.
 - Minimize helper methods as well as free functions—only when absolutely justified.
-- Prefer first-principles entity design: few entities with clear responsibilities; treat extra code and abstractions as liability unless explicitly justified. Do not promote configuration switches or transient probe state into domain entities.
+- Prefer first-principles entity design: types are things with clear capabilities, and verbs are methods on those types, not extra actor types. Do not split one entity across multiple files. Treat extra code and abstractions as liability unless explicitly justified. Do not promote configuration switches or transient probe state into domain entities.
 - Keep index orchestration and on-disk storage/versioning index-kind-agnostic; kind-specific logic stays under the kind module (e.g. `ngram/`) so new indexes are easy to add.
-- When planning architecture work, prefer deep critique and a cleaned plan for easy review before implementation.
+- When planning architecture work, prefer deep critique and a cleaned plan with code snippets for easy review before implementation. If implementation starts making many design decisions, go back to planning.
 
 ## Learned Workspace Facts
 
-- Core search lives under `crates/core/src/search/` (`Query`, `Searcher`, `Origin`, `SearchInputs`, `SearchError`); `Plan` lives under `candidates/`. There is no `sift_core::grep` module or `Grep` facade. The CLI keeps a local `grep` module for `Run`.
+- Core search lives under `crates/core/src/search/` (`Query`, `Searcher`, `Haystack`, `Lines`, `Origin`, `SearchError`); `Plan` lives under `candidates/`. `Searcher` searches; `FileReport` is a per-input result, not an actor. `Lines` iterates `Line`. `Io` chooses how `Haystack` fills `fastio::OwnedBytes` (sync / mmap / uring `read_all`); there is no windowed haystack. There is no `sift_core::grep` module or `Grep` facade. The CLI keeps a local `grep` module for `Run`.
+- Search file I/O uses `fastio`. Default `Io` is mmap; `uring` is opt-in on Linux (`read_all` after `std::fs` open). Batched reads per file, Rayon across files.
 - Daemon IPC is enum-shaped (`DaemonRequest` / `DaemonResponse`); accept loop forwards `Event::Client` — no `FnMut` handler API.
 - Snapshot composition is meant to share one corpus `FileId` → path table per snapshot; kinds return `FileId`s and write only kind artifacts under their namespace.

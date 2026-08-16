@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## [Unreleased]
+
+### Features
+
+- own the per-file scan loop (`Haystack` + `Lines`); `--io sync|mmap|uring` replaces `--mmap`/`--no-mmap`
+
 ## [0.8.1](https://github.com/botirk38/sift/releases/tag/v0.8.1) — 2026-08-15
 
 ### Bug Fixes

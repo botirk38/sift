@@ -1,6 +1,7 @@
 mod pcre2;
 mod rust;
 
+use grep_matcher::{Match, Matcher as GrepMatcher};
 use grep_pcre2::RegexMatcher as Pcre2Matcher;
 use grep_regex::RegexMatcher;
 
@@ -30,6 +31,28 @@ impl Matcher {
         match self {
             Self::Rust(_) => RegexEngine::Rust,
             Self::Pcre2(_) => RegexEngine::Pcre2,
+        }
+    }
+
+    pub(super) fn is_match(&self, haystack: &[u8]) -> Result<bool, SearchError> {
+        match self {
+            Self::Rust(matcher) => matcher
+                .is_match(haystack)
+                .map_err(|err| SearchError::Match(err.to_string())),
+            Self::Pcre2(matcher) => matcher
+                .is_match(haystack)
+                .map_err(|err| SearchError::Match(err.to_string())),
+        }
+    }
+
+    pub(super) fn find(&self, haystack: &[u8]) -> Result<Option<Match>, SearchError> {
+        match self {
+            Self::Rust(matcher) => matcher
+                .find(haystack)
+                .map_err(|err| SearchError::Match(err.to_string())),
+            Self::Pcre2(matcher) => matcher
+                .find(haystack)
+                .map_err(|err| SearchError::Match(err.to_string())),
         }
     }
 }

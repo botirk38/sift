@@ -33,6 +33,9 @@ StoreMeta + IndexRecord ──Indexes::build──> snapshot on disk
 | `Files` | Snapshot-owned `FileId → File` map |
 | `Indexes` | Open/load/build + query/hydrate |
 | `Query` / `Searcher` | Patterns + execute |
+| `Haystack` / `Lines` | Resident bytes; `Lines` iterates `Line` |
+| `FileReport` / `SearchReport` | Per-input result; listing + stats |
+| `Io` | File read backend (`Sync` / `Mmap` / `Uring`; default `Mmap`) |
 | `Plan` / `Candidates` | Pure plan then resolve |
 
 ## Modules
@@ -48,7 +51,7 @@ StoreMeta + IndexRecord ──Indexes::build──> snapshot on disk
 
 ```rust
 use sift_core::{
-    Scan, Events, Inputs, Plan, Query, ScanScope, SearchInputs, SearchMode,
+    Scan, Events, Input, Inputs, Plan, Query, ScanScope, SearchMode,
     SearchOptions, Searcher, SnapshotFreshness, StatsMode,
 };
 
@@ -64,12 +67,12 @@ let source = Scan::new(
 );
 let candidates = Plan::new(&source, searcher.query(), SearchMode::Lines.coverage())
     .resolve(&source)?;
+let mut inputs = Inputs::with_capacity(candidates.bound());
+for file in candidates.into_vec() {
+    inputs.push(Input::from_file(file, &[]));
+}
 let report = searcher.execute(
-    SearchInputs {
-        candidates,
-        streams: Inputs::empty(),
-        explicit: &[],
-    },
+    inputs,
     StatsMode::Off,
     SearchMode::Lines,
     Events::Discard,

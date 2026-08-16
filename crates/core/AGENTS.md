@@ -25,7 +25,7 @@ kinds through its `Kind` enum.
 
 Search (re-exported from `lib.rs`):
 
-- `Query`, `Searcher`, `Report`, `Origin`, `SearchMode`
+- `Query`, `Searcher`, `SearchReport`, `Origin`, `SearchMode`
 - `StoreMeta`, `IndexRecord`, `Indexes`, `SnapshotId`, `Files`
 - `ngram::Index`, `GramWidth`, `GramNorm`
 - `Candidates`, `Plan`, `Scan`, `ScanScope`, `SnapshotFreshness`, `Coverage`
@@ -40,7 +40,7 @@ Search (re-exported from `lib.rs`):
 | `index/disk.rs` | Snapshot persistence |
 | `index/ngram/` | N-gram implementation (artifact names live here) |
 | `index/mmap.rs` | Sole `unsafe` in the crate (`mmap_open`) |
-| `search/` | `Query`, `Searcher`, `Report`, events |
+| `search/` | `Query`, `Searcher`, `SearchReport`, events |
 | `candidates/plan.rs` | `Plan` (plan + resolve) |
 | `candidates/candidates.rs` | `Candidates` collection |
 | `corpus/` | `File`, `FileFilter`, `FileOrder`, walk |

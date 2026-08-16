@@ -2,14 +2,22 @@ use std::borrow::Cow;
 use std::fs;
 
 use sift_core::{
-    ByteInput, Events, FileFilter, FileFilterConfig, FileOrder, FileOrderDirection, FileOrderKey,
-    Inputs, Listing, Narrowing, Origin, PathDisplay, Plan, Query, Scan, ScanScope, SearchEvent,
-    SearchInputs, SearchMode, SearchOptions, SearchSink, Searcher, SnapshotFreshness, StatsMode,
+    Candidates, Events, FileFilter, FileFilterConfig, FileOrder, FileOrderDirection, FileOrderKey,
+    Input, Inputs, Listing, Narrowing, Origin, PathDisplay, Plan, Query, Scan, ScanScope,
+    SearchEvent, SearchMode, SearchOptions, SearchSink, Searcher, SnapshotFreshness, StatsMode,
     ZeroCounts,
 };
 use tempfile::TempDir;
 
 use super::common::{make_parity_corpus, open_indexes};
+
+fn search_inputs(candidates: Candidates<'_>) -> Inputs<'_> {
+    candidates
+        .into_vec()
+        .into_iter()
+        .map(|file| Input::from_file(file, &[]))
+        .collect()
+}
 
 const fn index_scope(order: FileOrder) -> ScanScope {
     ScanScope::Index {
@@ -43,11 +51,7 @@ fn grep_finds_match_in_indexed_corpus() {
 
     let report = searcher
         .execute(
-            SearchInputs {
-                candidates,
-                streams: Inputs::empty(),
-                explicit: &[],
-            },
+            search_inputs(candidates),
             StatsMode::Off,
             SearchMode::Lines,
             Events::Discard,
@@ -114,11 +118,7 @@ fn high_level_grep_search_resolves_candidates_and_reports_matches() {
 
     let report = searcher
         .execute(
-            SearchInputs {
-                candidates,
-                streams: Inputs::empty(),
-                explicit: &[],
-            },
+            search_inputs(candidates),
             StatsMode::On,
             mode,
             Events::Discard,
@@ -163,11 +163,7 @@ fn high_level_grep_stream_emits_events_without_collecting_matches() {
 
     let report = searcher
         .execute(
-            SearchInputs {
-                candidates,
-                streams: Inputs::empty(),
-                explicit: &[],
-            },
+            search_inputs(candidates),
             StatsMode::Off,
             mode,
             Events::Emit(&mut sink),
@@ -211,11 +207,7 @@ fn high_level_grep_files_without_match_selects_nonmatching_files() {
 
     let report = searcher
         .execute(
-            SearchInputs {
-                candidates,
-                streams: Inputs::empty(),
-                explicit: &[],
-            },
+            search_inputs(candidates),
             StatsMode::Off,
             mode,
             Events::Discard,
@@ -258,11 +250,7 @@ fn high_level_grep_files_without_match_uses_full_corpus_with_index() {
 
     let report = searcher
         .execute(
-            SearchInputs {
-                candidates,
-                streams: Inputs::empty(),
-                explicit: &[],
-            },
+            search_inputs(candidates),
             StatsMode::Off,
             mode,
             Events::Discard,
@@ -308,11 +296,7 @@ fn high_level_grep_files_without_match_is_not_selected_when_all_files_match() {
 
     let report = searcher
         .execute(
-            SearchInputs {
-                candidates,
-                streams: Inputs::empty(),
-                explicit: &[],
-            },
+            search_inputs(candidates),
             StatsMode::Off,
             mode,
             Events::Discard,
@@ -358,23 +342,15 @@ fn grep_finds_match_in_stdin_stream() {
         .resolve(&source)
         .expect("candidates");
 
-    let streams = Inputs::empty().with_stream(ByteInput {
-        label: Cow::Borrowed("<stdin>"),
+    let mut inputs = search_inputs(candidates);
+    inputs.push(Input::Bytes {
+        origin: Origin::stream("<stdin>"),
         bytes: Cow::Borrowed(b"hello needle world\n"),
         explicit: false,
     });
 
     let report = searcher
-        .execute(
-            SearchInputs {
-                candidates,
-                streams,
-                explicit: &[],
-            },
-            StatsMode::Off,
-            SearchMode::Lines,
-            Events::Discard,
-        )
+        .execute(inputs, StatsMode::Off, SearchMode::Lines, Events::Discard)
         .expect("grep run");
     assert!(report.found());
     let Listing::Lines(files) = &report.listed else {
@@ -418,11 +394,7 @@ fn count_include_zero_lists_zeros_but_found_requires_hits() {
 
     let report = searcher
         .execute(
-            SearchInputs {
-                candidates,
-                streams: Inputs::empty(),
-                explicit: &[],
-            },
+            search_inputs(candidates),
             StatsMode::Off,
             mode,
             Events::Discard,
@@ -465,11 +437,7 @@ fn stream_begin_path_shares_arc_with_listed_file() {
 
     let report = searcher
         .execute(
-            SearchInputs {
-                candidates,
-                streams: Inputs::empty(),
-                explicit: &[],
-            },
+            search_inputs(candidates),
             StatsMode::Off,
             mode,
             Events::Emit(&mut sink),
@@ -543,11 +511,7 @@ fn first_match_settles_on_pattern_hit_not_include_zero() {
 
     let report = searcher
         .execute(
-            SearchInputs {
-                candidates,
-                streams: Inputs::empty(),
-                explicit: &[],
-            },
+            search_inputs(candidates),
             StatsMode::On,
             mode,
             Events::Discard,

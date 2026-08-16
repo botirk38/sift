@@ -1,23 +1,21 @@
-use std::path::PathBuf;
+use std::collections::VecDeque;
+use std::ops::Range;
 use std::time::Instant;
 
 use rayon::prelude::*;
 
 use crate::Error;
-use crate::candidates::{Candidates, CandidatesOrigin};
-use crate::corpus::File;
-use crate::corpus::filter::{FileFilter, FilterAdmission};
-use crate::index::{FileId, Indexes};
 use crate::search::error::Error as SearchError;
-use crate::search::event::Events;
-use crate::search::input::{Input, Inputs, SearchInputs};
+use crate::search::event::{ContextKind, Events};
+use crate::search::haystack::Haystack;
+use crate::search::input::{Input, Inputs};
+use crate::search::line::{Line, Lines};
 use crate::search::matcher::Matcher;
 use crate::search::mode::SearchMode;
 use crate::search::options::{SearchBound, SearchOptions};
 use crate::search::query::Query;
-use crate::search::report::{Report, SearchSummary};
+use crate::search::report::{Buffer, FileReport, SearchReport};
 use crate::search::stats::StatsMode;
-use crate::search::task::{Buffer, FileSearch, SearchTask};
 
 #[derive(Debug, Clone)]
 pub struct Searcher {
@@ -59,302 +57,213 @@ impl Searcher {
     /// Returns an error if search execution or sink handling fails.
     pub fn execute(
         &self,
-        inputs: SearchInputs<'_>,
+        inputs: Inputs<'_>,
         stats: StatsMode,
         mode: SearchMode,
         events: Events<'_>,
-    ) -> crate::Result<Report> {
+    ) -> crate::Result<SearchReport> {
         if self.options().max_results == Some(0) {
             return Err(Error::Search(SearchError::InvalidMaxCount));
         }
         if inputs.is_empty() {
-            return Ok(Report::empty(stats, mode));
+            return Ok(SearchReport::empty(stats, mode));
         }
 
-        let search_start = Instant::now();
+        let started = Instant::now();
         let buffer = Buffer::from(&events);
-        let options = self.options();
-        let (mut searches, inputs_searched, bytes_searched) = if matches!(mode, SearchMode::Paths) {
-            Self::list_paths(inputs)
-        } else {
-            match options.search_bound {
-                SearchBound::Exhaustive => self.search_exhaustive(inputs, mode, buffer)?,
-                SearchBound::FirstMatch => self.search_first_match(inputs, mode, buffer),
-            }
+        let items = inputs.into_vec();
+        let (mut reports, files_searched) = match mode {
+            SearchMode::Paths => (
+                items
+                    .iter()
+                    .map(|input| FileReport::listed(input.origin().clone()))
+                    .collect(),
+                items.len(),
+            ),
+            _ => match self.options().search_bound {
+                SearchBound::Exhaustive => (
+                    items
+                        .par_iter()
+                        .filter_map(|input| self.search(input, mode, buffer).transpose())
+                        .collect::<crate::Result<Vec<_>>>()?,
+                    items.len(),
+                ),
+                SearchBound::FirstMatch => {
+                    let mut reports = Vec::new();
+                    let mut searched = 0usize;
+                    for input in &items {
+                        searched += 1;
+                        let Some(report) = self.search(input, mode, buffer)? else {
+                            continue;
+                        };
+                        if mode.settles(report.matched) {
+                            reports.push(report);
+                            break;
+                        }
+                    }
+                    (reports, searched)
+                }
+            },
         };
-        let summary = SearchSummary {
+        Self::emit(events, &mut reports)?;
+        Ok(SearchReport::from(
+            reports,
             mode,
             stats,
-            inputs_len: inputs_searched,
-            bytes_searched,
-            elapsed: search_start.elapsed(),
-        };
-        Self::emit(events, &mut searches)?;
-        Ok(Report::from_searches(searches, summary))
+            files_searched,
+            started.elapsed(),
+        ))
     }
 
-    fn emit(events: Events<'_>, searches: &mut [FileSearch]) -> crate::Result<()> {
+    fn emit(events: Events<'_>, reports: &mut [FileReport]) -> crate::Result<()> {
         let Events::Emit(sink) = events else {
             return Ok(());
         };
-        for event in searches.iter_mut().flat_map(FileSearch::drain_events) {
+        for event in reports.iter_mut().flat_map(FileReport::drain_events) {
             sink.event(event)?;
         }
         Ok(())
     }
 
-    fn search_exhaustive(
+    fn search(
         &self,
-        inputs: SearchInputs<'_>,
+        input: &Input<'_>,
         mode: SearchMode,
         buffer: Buffer,
-    ) -> crate::Result<(Vec<FileSearch>, usize, u64)> {
-        let SearchInputs {
-            candidates,
-            streams,
-            explicit,
-        } = inputs;
-
-        let (mut results, mut files_searched, mut bytes) =
-            self.search_candidates(candidates, explicit, mode, buffer)?;
-
-        let stream_results = self.search_inputs(streams.as_slice(), mode, buffer);
-        files_searched += streams.len();
-        bytes = bytes.saturating_add(streams.byte_count());
-        results.extend(stream_results);
-
-        Ok((results, files_searched, bytes))
-    }
-
-    fn search_candidates(
-        &self,
-        candidates: Candidates<'_>,
-        explicit: &[PathBuf],
-        mode: SearchMode,
-        buffer: Buffer,
-    ) -> crate::Result<(Vec<FileSearch>, usize, u64)> {
-        match candidates.0 {
-            CandidatesOrigin::Walk(items) => {
-                Ok(self.search_resolved(&items, explicit, mode, buffer))
-            }
-            CandidatesOrigin::Index {
-                indexes,
-                file_ids,
-                filter,
-                admission,
-            } => self.search_indexed(
-                IndexedFiles {
-                    indexes,
-                    file_ids: &file_ids,
-                    filter,
-                    admission,
-                },
-                explicit,
-                mode,
-                buffer,
-            ),
-            CandidatesOrigin::Merge {
-                indexes,
-                file_ids,
-                filter,
-                admission,
-                unindexed,
-            } => {
-                let (mut indexed_results, indexed_count, indexed_bytes) = self.search_indexed(
-                    IndexedFiles {
-                        indexes,
-                        file_ids: &file_ids,
-                        filter,
-                        admission,
-                    },
-                    explicit,
-                    mode,
-                    buffer,
-                )?;
-                let (resolved_results, resolved_count, resolved_bytes) =
-                    self.search_resolved(&unindexed, explicit, mode, buffer);
-                indexed_results.extend(resolved_results);
-                Ok((
-                    indexed_results,
-                    indexed_count.saturating_add(resolved_count),
-                    indexed_bytes.saturating_add(resolved_bytes),
-                ))
-            }
-        }
-    }
-
-    fn list_paths(inputs: SearchInputs<'_>) -> (Vec<FileSearch>, usize, u64) {
-        use crate::search::hit::{ListedFile, ListedRow};
-        use crate::search::input::Origin;
-
-        let SearchInputs {
-            candidates,
-            streams,
-            ..
-        } = inputs;
-        let mut searches = Vec::new();
-        for file in candidates {
-            searches.push(FileSearch {
-                matched: true,
-                row: Some(ListedRow::MatchingPath(ListedFile {
-                    origin: Origin::file(file),
-                    binary_byte_offset: None,
-                })),
-                events: Vec::new(),
-                line_matches: 0,
-                match_spans: 0,
-                bytes_searched: 0,
-            });
-        }
-        for input in streams.as_slice() {
-            searches.push(FileSearch {
-                matched: true,
-                row: Some(ListedRow::MatchingPath(ListedFile {
-                    origin: input.origin().clone(),
-                    binary_byte_offset: None,
-                })),
-                events: Vec::new(),
-                line_matches: 0,
-                match_spans: 0,
-                bytes_searched: 0,
-            });
-        }
-        let len = searches.len();
-        (searches, len, 0)
-    }
-
-    fn search_resolved(
-        &self,
-        candidates: &[File],
-        explicit: &[PathBuf],
-        mode: SearchMode,
-        buffer: Buffer,
-    ) -> (Vec<FileSearch>, usize, u64) {
-        let mut corpus_inputs = Inputs::with_capacity(candidates.len());
-        for file in candidates {
-            let input = Input::from_file(file.clone(), explicit);
-            let Input::Path { origin, explicit } = input else {
-                unreachable!("from_file always returns Path");
-            };
-            corpus_inputs.push_path(origin, explicit);
-        }
-        let results = self.search_inputs(corpus_inputs.as_slice(), mode, buffer);
-        let len = corpus_inputs.len();
-        let bytes = corpus_inputs.byte_count();
-        (results, len, bytes)
-    }
-
-    fn search_indexed(
-        &self,
-        files: IndexedFiles<'_>,
-        explicit: &[PathBuf],
-        mode: SearchMode,
-        buffer: Buffer,
-    ) -> crate::Result<(Vec<FileSearch>, usize, u64)> {
+    ) -> crate::Result<Option<FileReport>> {
+        let Ok(mut haystack) = Haystack::open(input, self.options().io) else {
+            return Ok(None);
+        };
+        let origin = input.origin();
+        let explicit = input.explicit();
         let options = self.options();
-        let outcomes: crate::Result<Vec<Option<FileSearch>>> = files
-            .file_ids
-            .par_iter()
-            .map_init(
-                || SearchTask::discovered_searcher(options, mode),
-                |grep, &id| {
-                    let Some(candidate) = files.indexes.file(id, files.filter, files.admission)
-                    else {
-                        return Ok(None);
-                    };
-                    let input = Input::from_file(candidate, explicit);
-                    Ok(Some(
-                        SearchTask::new(&self.matcher, options, mode, buffer, &input).execute(grep),
-                    ))
-                },
-            )
-            .collect();
-        let results: Vec<FileSearch> = outcomes?.into_iter().flatten().collect();
-        let files_searched = results.len();
-        let bytes = results.iter().fold(0u64, |acc, search| {
-            acc.saturating_add(search.bytes_searched)
-        });
-        Ok((results, files_searched, bytes))
-    }
-
-    fn search_inputs(
-        &self,
-        inputs: &[Input<'_>],
-        mode: SearchMode,
-        buffer: Buffer,
-    ) -> Vec<FileSearch> {
-        let options = self.options();
-        inputs
-            .par_iter()
-            .map_init(
-                || SearchTask::discovered_searcher(options, mode),
-                |grep, input| {
-                    SearchTask::new(&self.matcher, options, mode, buffer, input).execute(grep)
-                },
-            )
-            .collect()
-    }
-
-    fn search_first_match(
-        &self,
-        inputs: SearchInputs<'_>,
-        mode: SearchMode,
-        buffer: Buffer,
-    ) -> (Vec<FileSearch>, usize, u64) {
-        let options = self.options();
-        let SearchInputs {
-            candidates,
-            streams,
-            explicit,
-        } = inputs;
-        let mut settled = Vec::new();
-        let mut files_searched = 0usize;
-        let mut bytes = 0u64;
-        let mut grep = SearchTask::discovered_searcher(options, mode);
-
-        for candidate in candidates {
-            files_searched += 1;
-            let input = Input::from_file(candidate, explicit);
-            let search =
-                SearchTask::new(&self.matcher, options, mode, buffer, &input).execute(&mut grep);
-            bytes = bytes.saturating_add(search.bytes_searched);
-            if mode.settles(search.matched) {
-                settled.push(search);
-                return (settled, files_searched, bytes);
-            }
+        let mut report = FileReport::new();
+        report.begin(origin, buffer);
+        haystack.decode(&options.input_encoding);
+        if options.binary_mode.converts(explicit, options.null_data())
+            && let Some(offset) = haystack.convert_nul(options.line_terminator())
+        {
+            report.binary(origin, offset, explicit, buffer);
         }
-        for input in streams.as_slice() {
-            files_searched += 1;
-            let search =
-                SearchTask::new(&self.matcher, options, mode, buffer, input).execute(&mut grep);
-            bytes = bytes.saturating_add(search.bytes_searched);
-            if mode.settles(search.matched) {
-                settled.push(search);
+        let chunk = haystack.bytes();
+        let searched = u64::try_from(chunk.len()).unwrap_or(u64::MAX);
+        let ranges = options
+            .multiline()
+            .then(|| self.match_ranges(chunk))
+            .transpose()?;
+        let passthru = options.passthru();
+        let before_n = if passthru { 0 } else { options.before_context };
+        let after_n = if passthru { 0 } else { options.after_context };
+        let context_on = before_n > 0 || after_n > 0;
+        let limit = match mode {
+            SearchMode::FilesWithMatches | SearchMode::FilesWithoutMatch | SearchMode::Paths => {
+                Some(1usize)
+            }
+            _ => options.max_results,
+        };
+        let mut before: VecDeque<Line<'static>> = VecDeque::new();
+        let mut after_left = 0usize;
+        let mut has_sunk = false;
+        let mut last_end = 0u64;
+        let mut hits = 0usize;
+        for line in Lines::new(chunk, options.line_terminator(), !mode.is_path_mode()) {
+            if options.binary_mode.quits(explicit, options.null_data())
+                && let Some(idx) = memchr::memchr(0, line.bytes())
+            {
+                let offset = line.offset + u64::try_from(idx).unwrap_or(u64::MAX);
+                report.binary(origin, offset, explicit, buffer);
                 break;
             }
+            let matched = match ranges.as_deref() {
+                None => self
+                    .matcher
+                    .is_match(line.without_terminator(options.line_terminator(), options.crlf()))?,
+                Some(ranges) => {
+                    let start = usize::try_from(line.offset).unwrap_or(usize::MAX);
+                    let line_end = start.saturating_add(line.bytes().len());
+                    ranges
+                        .iter()
+                        .any(|range| start < range.end && line_end > range.start)
+                }
+            };
+            let hit = matched != options.invert_match();
+            let accepting = limit.is_none_or(|n| hits < n);
+            if hit && accepting {
+                if context_on && has_sunk && last_end < line.offset {
+                    report.gap(buffer);
+                }
+                while let Some(held) = before.pop_front() {
+                    report.context(origin, ContextKind::Before, &held, buffer);
+                }
+                report.hit(origin, &line, &self.matcher, mode, buffer, options);
+                hits += 1;
+                after_left = after_n;
+                has_sunk = true;
+                last_end = line.offset + u64::try_from(line.bytes().len()).unwrap_or(u64::MAX);
+                if limit.is_some_and(|n| hits >= n) && after_left == 0 {
+                    break;
+                }
+                continue;
+            }
+            if passthru {
+                report.context(origin, ContextKind::Other, &line, buffer);
+                has_sunk = true;
+                last_end = line.offset + u64::try_from(line.bytes().len()).unwrap_or(u64::MAX);
+                continue;
+            }
+            if after_left > 0 {
+                report.context(origin, ContextKind::After, &line, buffer);
+                after_left -= 1;
+                has_sunk = true;
+                last_end = line.offset + u64::try_from(line.bytes().len()).unwrap_or(u64::MAX);
+                if limit.is_some_and(|n| hits >= n) && after_left == 0 {
+                    break;
+                }
+                continue;
+            }
+            if before_n > 0 {
+                if before.len() == before_n {
+                    before.pop_front();
+                }
+                before.push_back(line.into_owned());
+            }
         }
-
-        (settled, files_searched, bytes)
+        report.finish(origin.clone(), mode, buffer, searched);
+        Ok(Some(report))
     }
-}
 
-#[derive(Clone, Copy)]
-struct IndexedFiles<'a> {
-    indexes: &'a Indexes,
-    file_ids: &'a [FileId],
-    filter: &'a FileFilter,
-    admission: FilterAdmission,
+    fn match_ranges(&self, bytes: &[u8]) -> Result<Vec<Range<usize>>, SearchError> {
+        let term = self.options().line_terminator();
+        let mut ranges = Vec::new();
+        let mut pos = 0usize;
+        while pos < bytes.len() {
+            let Some(found) = self.matcher.find(&bytes[pos..])? else {
+                break;
+            };
+            let start = pos + found.start();
+            let end = pos + found.end();
+            ranges.push(Lines::covering(bytes, term, start..end));
+            pos = if found.end() == 0 { pos + 1 } else { end };
+        }
+        Lines::merge(&mut ranges);
+        Ok(ranges)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::search::options::{RegexEngine, SearchOptions};
+    use crate::File;
+    use crate::search::event::{SearchEvent, SearchSink};
+    use crate::search::hit::Listing;
+    use crate::search::input::Origin;
+    use crate::search::options::{BinaryMode, Io, RegexEngine, SearchFlags};
     use crate::search::query::Query;
+    use std::borrow::Cow;
+    use std::path::PathBuf;
 
     #[test]
     fn auto_engine_fallback_to_pcre2_disables_narrowing() {
-        // Lookaround is unsupported by the Rust regex engine.
         let query = Query::new(
             vec![r"(?<=foo)bar".into()],
             SearchOptions {
@@ -370,5 +279,202 @@ mod tests {
             searcher.query().narrowing(),
             crate::search::Narrowing::Disabled
         );
+    }
+
+    struct Collect(Vec<SearchEvent>);
+
+    impl SearchSink for Collect {
+        fn event(&mut self, event: SearchEvent) -> crate::Result<()> {
+            self.0.push(event);
+            Ok(())
+        }
+    }
+
+    fn stream(bytes: &[u8], explicit: bool) -> Inputs<'_> {
+        let mut inputs = Inputs::empty();
+        inputs.push(Input::Bytes {
+            origin: Origin::stream("t"),
+            bytes: Cow::Borrowed(bytes),
+            explicit,
+        });
+        inputs
+    }
+
+    fn searcher(pattern: &str, options: SearchOptions) -> Searcher {
+        let query = Query::new(vec![pattern.into()], options).expect("query");
+        Searcher::new(query).expect("searcher")
+    }
+
+    #[test]
+    fn quit_stops_before_nul_on_discovered_input() {
+        let report = searcher(
+            "later",
+            SearchOptions {
+                binary_mode: BinaryMode::Quit,
+                ..SearchOptions::default()
+            },
+        )
+        .execute(
+            stream(b"findme\0later\n", false),
+            StatsMode::Off,
+            SearchMode::Lines,
+            Events::Discard,
+        )
+        .expect("execute");
+        assert!(!report.found());
+    }
+
+    #[test]
+    fn convert_rewrites_nul_so_later_line_matches() {
+        let report = searcher(
+            "later",
+            SearchOptions {
+                binary_mode: BinaryMode::Binary,
+                ..SearchOptions::default()
+            },
+        )
+        .execute(
+            stream(b"findme\0later\n", false),
+            StatsMode::Off,
+            SearchMode::Lines,
+            Events::Discard,
+        )
+        .expect("execute");
+        assert!(report.found());
+        let Listing::Lines(files) = &report.listed else {
+            panic!("expected Lines");
+        };
+        assert!(files[0].matches.iter().any(|m| m.text.contains("later")));
+    }
+
+    #[test]
+    fn as_text_matches_across_nul_on_one_line() {
+        let report = searcher(
+            "later",
+            SearchOptions {
+                binary_mode: BinaryMode::AsText,
+                ..SearchOptions::default()
+            },
+        )
+        .execute(
+            stream(b"findme\0later\n", false),
+            StatsMode::Off,
+            SearchMode::Lines,
+            Events::Discard,
+        )
+        .expect("execute");
+        assert!(report.found());
+    }
+
+    #[test]
+    fn max_results_stops_after_n_hits() {
+        let report = searcher(
+            "needle",
+            SearchOptions {
+                max_results: Some(2),
+                ..SearchOptions::default()
+            },
+        )
+        .execute(
+            stream(b"needle\nneedle\nneedle\n", true),
+            StatsMode::Off,
+            SearchMode::Lines,
+            Events::Discard,
+        )
+        .expect("execute");
+        let Listing::Lines(files) = &report.listed else {
+            panic!("expected Lines");
+        };
+        assert_eq!(files[0].matches.len(), 2);
+    }
+
+    #[test]
+    fn passthru_emits_non_matching_lines() {
+        let mut sink = Collect(Vec::new());
+        searcher(
+            "needle",
+            SearchOptions {
+                flags: SearchFlags::PASSTHRU,
+                ..SearchOptions::default()
+            },
+        )
+        .execute(
+            stream(b"keep\nneedle\n", true),
+            StatsMode::Off,
+            SearchMode::Lines,
+            Events::Emit(&mut sink),
+        )
+        .expect("execute");
+        assert!(
+            sink.0.iter().any(|event| matches!(
+                event,
+                SearchEvent::Context(ctx) if ctx.bytes == b"keep\n"
+            )),
+            "passthru should emit the non-matching line"
+        );
+        assert!(
+            sink.0
+                .iter()
+                .any(|event| matches!(event, SearchEvent::Match(_))),
+            "passthru should still emit the matching line"
+        );
+    }
+
+    #[test]
+    fn multiline_matches_across_line_terminator() {
+        let report = searcher(
+            r"foo\nbar",
+            SearchOptions {
+                flags: SearchFlags::MULTILINE,
+                ..SearchOptions::default()
+            },
+        )
+        .execute(
+            stream(b"foo\nbar\n", true),
+            StatsMode::Off,
+            SearchMode::Lines,
+            Events::Discard,
+        )
+        .expect("execute");
+        assert!(report.found());
+    }
+
+    #[test]
+    fn omitted_unreadable_path_is_absent() {
+        let file = File::new(
+            PathBuf::from("missing.txt"),
+            PathBuf::from("/tmp/sift-missing-file-that-does-not-exist"),
+        );
+        let mut inputs = Inputs::empty();
+        inputs.push(Input::from_file(file, &[]));
+        let report = searcher("needle", SearchOptions::default())
+            .execute(inputs, StatsMode::On, SearchMode::Lines, Events::Discard)
+            .expect("execute");
+        assert!(!report.found());
+        let stats = report.stats.as_ref().expect("stats");
+        assert_eq!(stats.files_searched, 1);
+        assert_eq!(stats.bytes_searched, 0);
+        assert!(matches!(report.listed, Listing::Lines(ref files) if files.is_empty()));
+    }
+
+    #[test]
+    fn sync_and_mmap_find_the_same_hit() {
+        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        std::fs::write(tmp.path(), b"needle\n").expect("write");
+        let file = File::new(PathBuf::from("t.txt"), tmp.path().to_path_buf());
+        for io in [Io::Sync, Io::Mmap] {
+            let mut inputs = Inputs::empty();
+            inputs.push(Input::from_file(file.clone(), &[]));
+            let report = searcher(
+                "needle",
+                SearchOptions {
+                    io,
+                    ..SearchOptions::default()
+                },
+            )
+            .execute(inputs, StatsMode::Off, SearchMode::Lines, Events::Discard)
+            .expect("execute");
+            assert!(report.found(), "{io:?}");
+        }
     }
 }
