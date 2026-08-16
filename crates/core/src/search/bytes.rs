@@ -36,7 +36,7 @@ impl<'a> Bytes<'a> {
 
     fn read_path(path: &Path, io: Io) -> std::io::Result<OwnedBytes> {
         match io {
-            Io::Sync => Ok(fastio::sync::File::open(path)?.read_all()?),
+            Io::Sync => fastio::sync::File::open(path)?.read_all(),
             Io::Mmap => {
                 let file = fastio::mmap::File::open(path)?;
                 if file.metadata()?.len() == 0 {
@@ -52,7 +52,7 @@ impl<'a> Bytes<'a> {
     fn read_all_uring(path: &Path) -> std::io::Result<OwnedBytes> {
         #[cfg(target_os = "linux")]
         {
-            Ok(fastio::uring::File::open(path)?.read_all()?)
+            fastio::uring::File::open(path)?.read_all()
         }
         #[cfg(not(target_os = "linux"))]
         {
