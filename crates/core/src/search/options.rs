@@ -103,24 +103,6 @@ impl InputEncoding {
         matches!(self, Self::Auto | Self::Explicit(_))
     }
 
-    #[must_use]
-    pub fn label(&self) -> Option<&str> {
-        match self {
-            Self::Explicit(label) => Some(label),
-            Self::Auto | Self::Raw => None,
-        }
-    }
-
-    pub(super) fn searcher_encoding(&self) -> Option<grep_searcher::Encoding> {
-        self.label()
-            .and_then(|label| grep_searcher::Encoding::new(label).ok())
-    }
-
-    #[must_use]
-    pub const fn uses_decoded_input(&self) -> bool {
-        matches!(self, Self::Auto | Self::Explicit(_))
-    }
-
     /// Whether search may transcode file bytes before matching (explicit `-E`).
     ///
     /// `Auto` only BOM-sniffs and usually still matches raw UTF-8/ASCII bytes, so
@@ -141,9 +123,8 @@ impl FromStr for InputEncoding {
         if value.eq_ignore_ascii_case("none") {
             return Ok(Self::Raw);
         }
-        grep_searcher::Encoding::new(value)
-            .map(|_| Self::Explicit(value.to_string()))
-            .map_err(|e| e.to_string())
+        grep_searcher::Encoding::new(value).map_err(|e| e.to_string())?;
+        Ok(Self::Explicit(value.to_string()))
     }
 }
 
@@ -235,5 +216,32 @@ impl SearchOptions {
     #[must_use]
     pub const fn line_terminator(&self) -> u8 {
         if self.null_data() { b'\0' } else { b'\n' }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encoding_auto_and_none() {
+        assert_eq!(
+            "auto".parse::<InputEncoding>().unwrap(),
+            InputEncoding::Auto
+        );
+        assert_eq!("NONE".parse::<InputEncoding>().unwrap(), InputEncoding::Raw);
+    }
+
+    #[test]
+    fn encoding_explicit_keeps_label() {
+        assert_eq!(
+            "utf-16le".parse::<InputEncoding>().unwrap(),
+            InputEncoding::Explicit("utf-16le".into())
+        );
+    }
+
+    #[test]
+    fn encoding_unknown_is_rejected() {
+        assert!("not-an-encoding".parse::<InputEncoding>().is_err());
     }
 }
