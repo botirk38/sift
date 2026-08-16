@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use grep_cli::DecompressionReaderBuilder;
 use sift_core::File;
 
 #[derive(Debug, Clone, Default)]
@@ -32,7 +31,6 @@ impl ContentTransformConfig {
             } else {
                 None
             },
-            decompressor: DecompressionReaderBuilder::new(),
         }))
     }
 
@@ -44,7 +42,6 @@ impl ContentTransformConfig {
 pub struct ContentTransform {
     search_zip: bool,
     pre: Option<Preprocessor>,
-    decompressor: DecompressionReaderBuilder,
 }
 
 impl ContentTransform {
@@ -60,20 +57,40 @@ impl ContentTransform {
             return pre.read(candidate.abs_path());
         }
         if self.search_zip {
-            return self.read_decompressed(candidate.abs_path());
+            return Self::read_decompressed(candidate.abs_path());
         }
         Ok(std::fs::read(candidate.abs_path())?)
     }
 
-    fn read_decompressed(&self, path: &Path) -> sift_core::Result<Vec<u8>> {
+    fn read_decompressed(path: &Path) -> sift_core::Result<Vec<u8>> {
         let path = external_tool_path(path);
-        let mut reader = self
-            .decompressor
-            .build(path.as_ref())
-            .map_err(|err| std::io::Error::other(err.to_string()))?;
-        let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes)?;
-        Ok(bytes)
+        let Some((bin, args)) = Self::tool(path.as_ref()) else {
+            return Ok(std::fs::read(path.as_ref())?);
+        };
+        match Command::new(bin).args(args).arg(path.as_ref()).output() {
+            Ok(output) if output.status.success() => Ok(output.stdout),
+            _ => Ok(std::fs::read(path.as_ref())?),
+        }
+    }
+
+    fn tool(path: &Path) -> Option<(&'static str, &'static [&'static str])> {
+        let name = path.file_name()?.to_str()?;
+        [
+            (".zstd", "zstd", &["-q", "-d", "-c"] as &[&str]),
+            (".tbz2", "bzip2", &["-d", "-c"]),
+            (".lzma", "xz", &["--format=lzma", "-d", "-c"]),
+            (".txz", "xz", &["-d", "-c"]),
+            (".tgz", "gzip", &["-d", "-c"]),
+            (".bz2", "bzip2", &["-d", "-c"]),
+            (".lz4", "lz4", &["-d", "-c"]),
+            (".zst", "zstd", &["-q", "-d", "-c"]),
+            (".xz", "xz", &["-d", "-c"]),
+            (".br", "brotli", &["-d", "-c"]),
+            (".gz", "gzip", &["-d", "-c"]),
+            (".Z", "uncompress", &["-c"]),
+        ]
+        .into_iter()
+        .find_map(|(suffix, bin, args)| name.ends_with(suffix).then_some((bin, args)))
     }
 }
 
@@ -390,5 +407,22 @@ mod tests {
             panic!("invalid glob unexpectedly succeeded");
         };
         assert!(err.to_string().contains("invalid --pre-glob"));
+    }
+
+    #[test]
+    fn zip_tool_matches_gzip_and_zstd_suffixes() {
+        assert_eq!(
+            ContentTransform::tool(Path::new("a.gz")),
+            Some(("gzip", &["-d", "-c"] as &[&str]))
+        );
+        assert_eq!(
+            ContentTransform::tool(Path::new("a.tgz")),
+            Some(("gzip", &["-d", "-c"] as &[&str]))
+        );
+        assert_eq!(
+            ContentTransform::tool(Path::new("a.zstd")),
+            Some(("zstd", &["-q", "-d", "-c"] as &[&str]))
+        );
+        assert_eq!(ContentTransform::tool(Path::new("a.rs")), None);
     }
 }
