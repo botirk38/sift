@@ -547,8 +547,7 @@ impl OutputDecl {
     ///
     /// # Errors
     ///
-    /// Returns an error when color specs are invalid, hyperlink formats are invalid,
-    /// or the hostname command fails.
+    /// Returns an error when color specs are invalid or the hostname command fails.
     pub fn print_spec(
         &self,
         output_argv: &OutputArgv,
@@ -568,7 +567,7 @@ impl OutputDecl {
             output_argv.color
         };
         let colors = ColorSpecs::from_specs(&self.colors)?;
-        let hyperlink = HyperlinkFormat::parse(self.hyperlink_format.as_deref())?;
+        let hyperlink = HyperlinkFormat::parse(self.hyperlink_format.as_deref());
         let hyperlink_host = resolve_hostname(self.hostname_bin.as_deref())?;
 
         Ok(PrintSpec {

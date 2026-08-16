@@ -11,7 +11,7 @@ use sift_core::search::{
 use crate::format::output::format::ColumnOverflow;
 use crate::format::output::mode::OutputEmission;
 use crate::format::output::style::{
-    ColorOutput, FilenameMode, LineStyleFlags, PrintSeparators, RecordTerminator,
+    AnsiStyle, ColorOutput, FilenameMode, LineStyleFlags, PrintSeparators, RecordTerminator,
 };
 use crate::format::output::{PrintFormat, PrintSpec};
 use sift_core::SearchMode;
@@ -221,7 +221,7 @@ impl<'a> EventRenderer<'a> {
         let display =
             Self::with_path_separator(path.to_owned(), self.output.records.path_separator);
         self.write_hyperlink_start(display.as_str());
-        if let Some(color) = self.ansi_for(self.output.records.colors.as_grep().path()) {
+        if let Some(color) = self.ansi_for(self.output.records.colors.path()) {
             self.bytes.extend(color);
             self.bytes.extend(display.as_bytes());
             self.bytes.extend(b"\x1b[0m");
@@ -257,7 +257,7 @@ impl<'a> EventRenderer<'a> {
     }
 
     fn write_colored_match_line(&mut self, event: &MatchEvent, line: &[u8]) {
-        let Some(color) = self.ansi_for(self.output.records.colors.as_grep().matched()) else {
+        let Some(color) = self.ansi_for(self.output.records.colors.matched()) else {
             self.bytes.extend(line);
             return;
         };
@@ -274,21 +274,11 @@ impl<'a> EventRenderer<'a> {
         self.bytes.extend(&line[cursor..]);
     }
 
-    fn ansi_for(&self, spec: &termcolor::ColorSpec) -> Option<Vec<u8>> {
+    fn ansi_for(&self, style: AnsiStyle) -> Option<Vec<u8>> {
         if !matches!(self.output.records.color_output(), ColorOutput::Ansi) {
             return None;
         }
-        let mut codes = Vec::new();
-        if spec.bold() {
-            codes.push("1".to_string());
-        }
-        if let Some(color) = spec.fg().copied().and_then(Self::ansi_fg) {
-            codes.push(color.to_string());
-        }
-        if codes.is_empty() {
-            return None;
-        }
-        Some(format!("\x1b[0m\x1b[{}m", codes.join(";")).into_bytes())
+        style.sequence()
     }
 
     fn write_line(&mut self, line: &[u8]) {
@@ -557,19 +547,5 @@ impl EventRenderer<'_> {
         let mut buf = [0u8; 4];
         let separator = (separator as char).encode_utf8(&mut buf);
         path.replace(std::path::MAIN_SEPARATOR, separator)
-    }
-
-    const fn ansi_fg(color: termcolor::Color) -> Option<u8> {
-        match color {
-            termcolor::Color::Black => Some(30),
-            termcolor::Color::Blue => Some(34),
-            termcolor::Color::Green => Some(32),
-            termcolor::Color::Red => Some(31),
-            termcolor::Color::Cyan => Some(36),
-            termcolor::Color::Magenta => Some(35),
-            termcolor::Color::Yellow => Some(33),
-            termcolor::Color::White => Some(37),
-            _ => None,
-        }
     }
 }
