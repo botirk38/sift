@@ -10,16 +10,21 @@ pub struct Hyperlink {
 }
 
 impl Hyperlink {
-    /// Parse `--hyperlink-format` and run `--hostname-bin` when it is set.
+    /// Parse `--hyperlink-format` and run `--hostname-bin` when `{host}` is used.
     ///
     /// # Errors
     ///
     /// Returns an error when the format is invalid or the hostname command fails.
     pub fn parse(format: Option<&str>, hostname_bin: Option<&str>) -> Result<Self, String> {
         let format = HyperlinkFormat::parse(format)?;
+        let host = if format.needs_host() {
+            Self::hostname(hostname_bin)?
+        } else {
+            None
+        };
         Ok(Self {
             format,
-            host: Self::hostname(hostname_bin)?,
+            host,
             wsl_prefix: std::env::var("WSL_DISTRO_NAME")
                 .ok()
                 .filter(|distro| !distro.is_empty())
@@ -80,6 +85,10 @@ impl HyperlinkFormat {
 
     const fn is_empty(&self) -> bool {
         self.parts.is_empty()
+    }
+
+    fn needs_host(&self) -> bool {
+        self.parts.contains(&Part::Host)
     }
 
     fn interpolate(
@@ -413,6 +422,12 @@ mod tests {
     fn hostname_bin_failure_is_an_error() {
         let err = Hyperlink::parse(Some("file://{host}{path}"), Some("false")).unwrap_err();
         assert!(err.contains("hostname-bin"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hostname_bin_is_skipped_without_host_variable() {
+        assert!(Hyperlink::parse(Some("vscode"), Some("false")).is_ok());
     }
 
     #[test]

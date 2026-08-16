@@ -394,7 +394,7 @@ impl<'a> EventRenderer<'a> {
         }
         self.bytes.extend(
             format!(
-                "binary file matches (found \"\\0\" byte around offset {})",
+                "binary file matches (found NUL byte around offset {})",
                 event.absolute_byte_offset
             )
             .as_bytes(),
