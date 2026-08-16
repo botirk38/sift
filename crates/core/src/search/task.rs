@@ -1,7 +1,7 @@
 use grep_matcher::{Captures, LineTerminator, Matcher as GrepMatcherTrait};
 use grep_searcher::{
-    BinaryDetection, Searcher as RegexSearcher, SearcherBuilder as RegexSearcherBuilder, Sink,
-    SinkContext, SinkContextKind, SinkFinish, SinkMatch,
+    BinaryDetection, Encoding, Searcher as RegexSearcher, SearcherBuilder as RegexSearcherBuilder,
+    Sink, SinkContext, SinkContextKind, SinkFinish, SinkMatch,
 };
 use std::io;
 
@@ -12,7 +12,7 @@ use crate::search::hit::{LineCount, ListedFile, ListedRow, Match, MatchedFile, S
 use crate::search::input::{Input, Origin};
 use crate::search::matcher::Matcher;
 use crate::search::mode::SearchMode;
-use crate::search::options::{BinaryMode, SearchOptions};
+use crate::search::options::{BinaryMode, InputEncoding, SearchOptions};
 
 /// Whether a search task buffers semantic events for later delivery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,7 +109,12 @@ impl<'searcher, 'input> SearchTask<'searcher, 'input> {
     fn searcher(options: &SearchOptions, mode: SearchMode, origin: InputOrigin) -> RegexSearcher {
         let mut builder = RegexSearcherBuilder::new();
         builder
-            .encoding(options.input_encoding.searcher_encoding())
+            .encoding(match &options.input_encoding {
+                InputEncoding::Explicit(name) => {
+                    Some(Encoding::new(name).expect("explicit encoding validated at parse"))
+                }
+                InputEncoding::Auto | InputEncoding::Raw => None,
+            })
             .bom_sniffing(options.input_encoding.bom_sniffing())
             .binary_detection(Self::binary_detection_for(options, origin))
             .line_terminator(LineTerminator::byte(options.line_terminator()))
