@@ -3,7 +3,7 @@
 use libfuzzer_sys::fuzz_target;
 use sift_core::candidates::{Scan, ScanScope, SnapshotFreshness};
 use sift_core::search::{
-    Events, Query, SearchFlags, SearchInputs, SearchMode, SearchOptions, Searcher, StatsMode,
+    Hit, Input, Query, SearchFlags, SearchMode, SearchOptions, Searcher,
 };
 use sift_core::{
     CorpusMeta, FileFilter, FileFilterConfig, FilterMeta, GramWidth, IndexCoverage, IndexRecord,
@@ -98,16 +98,15 @@ fn run_search(holder: &IndexHolder, patterns: &[String], opts: &SearchOptions) {
         },
     );
     let Ok(candidates) =
-        Plan::new(&source, searcher.query(), SearchMode::Lines.coverage()).resolve(&source)
+        Plan::new(&source, searcher.query(), SearchMode::Print(Hit::Line).coverage()).resolve(&source)
     else {
         return;
     };
-    let inputs = SearchInputs {
-        candidates,
-        streams: Inputs::empty(),
-        explicit: &[],
-    };
-    let _ = searcher.execute(inputs, StatsMode::Off, SearchMode::Lines, Events::Discard);
+    let mut inputs = Inputs::with_capacity(candidates.bound());
+    for file in candidates.into_vec() {
+        inputs.push(Input::from_file(file, &[]));
+    }
+    let _ = searcher.execute(inputs, SearchMode::Print(Hit::Line));
 }
 
 fuzz_target!(|data: &[u8]| {

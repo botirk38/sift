@@ -19,12 +19,14 @@ workspace = true
 bitflags = { version = "2", features = ["serde"] }
 bitpacking = { version = "0.9", default-features = false, features = ["bitpacker4x"] }
 fslock = "0.2"
+encoding_rs = "0.8"
+fastio = { version = "0.3", default-features = false, features = ["sync", "mmap", "io-uring"] }
 grep-matcher = "0.1"
 grep-pcre2 = "0.1"
 grep-regex = "0.1"
-grep-searcher = "0.1"
 ignore = "0.4"
 integer-encoding = "4"
+memchr = "2"
 memmap2 = "0.9"
 rayon = "1"
 regex-syntax = "0.8"

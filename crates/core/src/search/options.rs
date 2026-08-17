@@ -1,5 +1,7 @@
 use std::str::FromStr;
 
+use super::input::Mention;
+
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
     pub struct SearchFlags: u16 {
@@ -7,11 +9,11 @@ bitflags::bitflags! {
         const FIXED_STRINGS    = 1 << 1;
         const WORD_REGEXP      = 1 << 2;
         const LINE_REGEXP      = 1 << 3;
-        const ONLY_MATCHING    = 1 << 4;
-        const MULTILINE        = 1 << 5;
-        const MULTILINE_DOTALL = 1 << 6;
-        const CRLF             = 1 << 7;
-        const NULL_DATA        = 1 << 8;
+        const MULTILINE        = 1 << 4;
+        const MULTILINE_DOTALL = 1 << 5;
+        const CRLF             = 1 << 6;
+        const NULL_DATA        = 1 << 7;
+        const PASSTHRU         = 1 << 8;
     }
 }
 
@@ -79,6 +81,30 @@ pub enum BinaryMode {
     AsText,
 }
 
+/// How NULs in a haystack are treated for one input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Nul {
+    /// Leave NULs in place and search through them.
+    Keep,
+    /// Replace NULs with the line terminator, then search.
+    Convert,
+    /// Stop the scan at the first NUL.
+    Quit,
+}
+
+impl BinaryMode {
+    pub(crate) const fn nul(self, mention: Mention, null_data: bool) -> Nul {
+        if null_data {
+            return Nul::Keep;
+        }
+        match (self, mention) {
+            (Self::AsText, _) => Nul::Keep,
+            (Self::Binary, _) | (Self::Quit, Mention::Explicit) => Nul::Convert,
+            (Self::Quit, Mention::Discovered) => Nul::Quit,
+        }
+    }
+}
+
 /// When search may stop before exhausting every input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SearchBound {
@@ -89,12 +115,37 @@ pub enum SearchBound {
     FirstMatch,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// How file bytes are read for search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Io {
+    Sync,
+    #[default]
+    Mmap,
+    Uring,
+}
+
+impl FromStr for Io {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "sync" => Ok(Self::Sync),
+            "mmap" => Ok(Self::Mmap),
+            "uring" if cfg!(target_os = "linux") => Ok(Self::Uring),
+            "uring" => Err("io uring is only available on Linux".into()),
+            other => Err(format!(
+                "unknown io '{other}': expected sync, mmap, or uring"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InputEncoding {
     #[default]
     Auto,
     Raw,
-    Explicit(String),
+    Explicit(&'static encoding_rs::Encoding),
 }
 
 impl InputEncoding {
@@ -123,8 +174,9 @@ impl FromStr for InputEncoding {
         if value.eq_ignore_ascii_case("none") {
             return Ok(Self::Raw);
         }
-        grep_searcher::Encoding::new(value).map_err(|e| e.to_string())?;
-        Ok(Self::Explicit(value.to_string()))
+        encoding_rs::Encoding::for_label_no_replacement(value.as_bytes())
+            .map(Self::Explicit)
+            .ok_or_else(|| format!("unknown encoding '{value}'"))
     }
 }
 
@@ -144,6 +196,7 @@ pub struct SearchOptions {
     pub dfa_size_limit: usize,
     pub regex_engine: RegexEngine,
     pub narrowing: Narrowing,
+    pub io: Io,
 }
 
 impl Default for SearchOptions {
@@ -163,6 +216,7 @@ impl Default for SearchOptions {
             dfa_size_limit: 0,
             regex_engine: RegexEngine::default(),
             narrowing: Narrowing::default(),
+            io: Io::default(),
         }
     }
 }
@@ -189,11 +243,6 @@ impl SearchOptions {
     }
 
     #[must_use]
-    pub const fn only_matching(&self) -> bool {
-        self.flags.contains(SearchFlags::ONLY_MATCHING)
-    }
-
-    #[must_use]
     pub const fn multiline(&self) -> bool {
         self.flags.contains(SearchFlags::MULTILINE)
     }
@@ -211,6 +260,11 @@ impl SearchOptions {
     #[must_use]
     pub const fn null_data(&self) -> bool {
         self.flags.contains(SearchFlags::NULL_DATA)
+    }
+
+    #[must_use]
+    pub const fn passthru(&self) -> bool {
+        self.flags.contains(SearchFlags::PASSTHRU)
     }
 
     #[must_use]
@@ -236,12 +290,36 @@ mod tests {
     fn encoding_explicit_keeps_label() {
         assert_eq!(
             "utf-16le".parse::<InputEncoding>().unwrap(),
-            InputEncoding::Explicit("utf-16le".into())
+            InputEncoding::Explicit(encoding_rs::UTF_16LE)
         );
     }
 
     #[test]
     fn encoding_unknown_is_rejected() {
         assert!("not-an-encoding".parse::<InputEncoding>().is_err());
+    }
+
+    #[test]
+    fn io_parse_sync_mmap() {
+        assert_eq!("sync".parse::<Io>().unwrap(), Io::Sync);
+        assert_eq!("mmap".parse::<Io>().unwrap(), Io::Mmap);
+    }
+
+    #[test]
+    fn io_parse_unknown_is_rejected() {
+        assert!("dma".parse::<Io>().is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn io_parse_uring_on_linux() {
+        assert_eq!("uring".parse::<Io>().unwrap(), Io::Uring);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn io_parse_uring_off_linux_is_error() {
+        let err = "uring".parse::<Io>().unwrap_err();
+        assert!(err.contains("Linux"), "{err}");
     }
 }

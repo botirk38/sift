@@ -3,12 +3,10 @@ use std::path::{Path, PathBuf};
 
 use clap::{Arg, ArgAction, ArgMatches, Args, Command, FromArgMatches, value_parser};
 use sift_core::search::{
-    BinaryMode, CaseMode, Query, RegexEngine, SearchBound, SearchFlags, SearchOptions,
+    BinaryMode, CaseMode, Io, Query, RegexEngine, SearchBound, SearchFlags, SearchOptions,
 };
 
-use sift_core::{SearchMode, ZeroCounts};
-
-use crate::format::{InvertMatch, MatchEmissionMode, Quiet};
+use sift_core::{Hit, SearchMode, ZeroCounts};
 
 use super::argv::Argv;
 use super::engine::{EngineDecl, MultilineDecl};
@@ -122,9 +120,7 @@ impl PatternDecl {
         let mut opts = SearchOptions {
             case_mode: pattern_argv.case_mode,
             max_results: self.max_count,
-            search_bound: if matches!(pattern_argv.quiet, Quiet::On)
-                && matches!(pattern_argv.invert_match, InvertMatch::Off)
-            {
+            search_bound: if pattern_argv.quiet && !pattern_argv.invert_match {
                 SearchBound::FirstMatch
             } else {
                 SearchBound::Exhaustive
@@ -134,7 +130,7 @@ impl PatternDecl {
         if self.search_flags.fixed_strings {
             opts.flags |= SearchFlags::FIXED_STRINGS;
         }
-        if matches!(pattern_argv.invert_match, InvertMatch::On) {
+        if pattern_argv.invert_match {
             opts.flags |= SearchFlags::INVERT_MATCH;
         }
         if self.regex1.word_regexp {
@@ -142,9 +138,6 @@ impl PatternDecl {
         }
         if self.regex2.line_regexp {
             opts.flags |= SearchFlags::LINE_REGEXP;
-        }
-        if matches!(pattern_argv.match_emission, MatchEmissionMode::OnlyMatching) {
-            opts.flags |= SearchFlags::ONLY_MATCHING;
         }
         if self.multiline.multiline {
             opts.flags |= SearchFlags::MULTILINE;
@@ -174,15 +167,15 @@ impl PatternDecl {
             opts.dfa_size_limit = usize::try_from(bytes).unwrap_or(usize::MAX);
         }
         opts.regex_engine = pattern_argv.regex_engine;
-        opts.input_encoding = self.engine.encoding.clone().unwrap_or_default();
+        opts.io = pattern_argv.io;
+        opts.input_encoding = self.engine.encoding.unwrap_or_default();
         opts.replace.clone_from(&self.replace.replace);
         opts.before_context = pattern_argv.before_context;
         opts.after_context = pattern_argv.after_context;
         if self.replace.passthru {
-            opts.before_context = usize::MAX;
-            opts.after_context = usize::MAX;
+            opts.flags |= SearchFlags::PASSTHRU;
         }
-        if matches!(pattern_argv.match_emission, MatchEmissionMode::OnlyMatching) {
+        if matches!(pattern_argv.mode, SearchMode::Print(Hit::Span)) {
             opts.before_context = 0;
             opts.after_context = 0;
         }
@@ -294,31 +287,65 @@ impl FromArgMatches for GrepFlags {
 #[derive(Clone)]
 pub struct PatternArgv {
     pub case_mode: CaseMode,
-    pub invert_match: InvertMatch,
+    pub invert_match: bool,
     pub mode: SearchMode,
-    pub match_emission: MatchEmissionMode,
-    pub quiet: Quiet,
+    pub quiet: bool,
     pub before_context: usize,
     pub after_context: usize,
     pub regex_engine: RegexEngine,
+    pub io: Io,
 }
 
 impl PatternArgv {
-    #[must_use]
-    pub fn resolve(argv: &Argv<'_>, zeros: ZeroCounts) -> Self {
+    /// Resolve last-wins pattern flags from raw argv.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `--io` is unknown or `uring` off Linux.
+    pub fn resolve(argv: &Argv<'_>, zeros: ZeroCounts) -> Result<Self, String> {
         let invert_match = Self::invert_match(argv);
-        let (mode, match_emission, quiet) = Self::output_mode(argv, invert_match, zeros);
+        let (mode, quiet) = Self::output_mode(argv, invert_match, zeros);
         let (before_context, after_context) = Self::context(argv);
-        Self {
+        Ok(Self {
             case_mode: Self::case_mode(argv),
             invert_match,
             mode,
-            match_emission,
             quiet,
             before_context,
             after_context,
             regex_engine: Self::regex_engine(argv),
+            io: Self::io(argv)?,
+        })
+    }
+
+    fn io(argv: &Argv<'_>) -> Result<Io, String> {
+        let mut last_idx = 0usize;
+        let mut io = Io::default();
+        let raw_args = argv.as_slice();
+        let mut i = 0;
+        while i < raw_args.len() {
+            let arg = &raw_args[i];
+            if arg == "--" {
+                break;
+            }
+            let next = i + 1;
+            let parsed = if let Some(value) = arg.strip_prefix("--io=") {
+                Some((i, value.parse::<Io>()?, 0usize))
+            } else if arg == "--io" && next < raw_args.len() {
+                Some((i, raw_args[next].parse::<Io>()?, 1usize))
+            } else {
+                None
+            };
+            if let Some((idx, selected, consumed)) = parsed {
+                if idx >= last_idx {
+                    last_idx = idx;
+                    io = selected;
+                }
+                i += consumed;
+            }
+            i += 1;
         }
+        Ok(io)
     }
 
     fn regex_engine(argv: &Argv<'_>) -> RegexEngine {
@@ -411,34 +438,34 @@ impl PatternArgv {
         result
     }
 
-    fn invert_match(argv: &Argv<'_>) -> InvertMatch {
+    fn invert_match(argv: &Argv<'_>) -> bool {
         for arg in argv.as_slice() {
             if arg == "--" {
-                return InvertMatch::Off;
+                return false;
             }
             let bytes = arg.as_bytes();
             let is_long = bytes.len() > 2 && bytes[0] == b'-' && bytes[1] == b'-';
             if is_long && &bytes[2..] == b"invert-match" {
-                return InvertMatch::On;
+                return true;
             }
             let is_short = bytes.len() == 2 && bytes[0] == b'-';
             if is_short && bytes[1] == b'v' {
-                return InvertMatch::On;
+                return true;
             }
         }
-        InvertMatch::Off
+        false
     }
 
     /// Effective search mode tuple for a given invert-match override.
     #[must_use]
     pub fn output_mode(
         argv: &Argv<'_>,
-        invert_match: InvertMatch,
+        invert_match: bool,
         zeros: ZeroCounts,
-    ) -> (SearchMode, MatchEmissionMode, Quiet) {
+    ) -> (SearchMode, bool) {
         let mut last_idx = 0usize;
-        let mut mode = SearchMode::Lines;
-        let mut quiet = Quiet::Off;
+        let mut mode = SearchMode::Print(Hit::Line);
+        let mut quiet = false;
         let mut saw_only_matching = false;
 
         for (i, arg) in argv.as_slice().iter().enumerate() {
@@ -474,37 +501,44 @@ impl PatternArgv {
             {
                 last_idx = idx;
                 match name {
-                    "count" => mode = SearchMode::CountLines { zeros },
-                    "count_matches" => mode = SearchMode::CountMatches { zeros },
+                    "count" => {
+                        mode = SearchMode::Count {
+                            hit: Hit::Line,
+                            zeros,
+                        };
+                    }
+                    "count_matches" => {
+                        mode = SearchMode::Count {
+                            hit: Hit::Span,
+                            zeros,
+                        };
+                    }
                     "files_with_matches" => mode = SearchMode::FilesWithMatches,
                     "files_without_match" => mode = SearchMode::FilesWithoutMatch,
                     "only_matching" => saw_only_matching = true,
-                    "quiet" => quiet = Quiet::On,
+                    "quiet" => quiet = true,
                     _ => {}
                 }
             }
         }
 
-        let only_matching_on_lines = matches!(mode, SearchMode::Lines) && saw_only_matching;
-        if only_matching_on_lines {
-            mode = SearchMode::Matches;
+        if matches!(mode, SearchMode::Print(Hit::Line)) && saw_only_matching {
+            mode = SearchMode::Print(Hit::Span);
+        }
+        if matches!(mode, SearchMode::Print(Hit::Span)) && invert_match {
+            mode = SearchMode::Count {
+                hit: Hit::Line,
+                zeros,
+            };
+        }
+        if matches!(mode, SearchMode::Count { hit: Hit::Line, .. }) && saw_only_matching {
+            mode = SearchMode::Count {
+                hit: Hit::Span,
+                zeros,
+            };
         }
 
-        if matches!(mode, SearchMode::Matches) && matches!(invert_match, InvertMatch::On) {
-            mode = SearchMode::CountLines { zeros };
-        }
-
-        if matches!(mode, SearchMode::CountLines { .. }) && saw_only_matching {
-            mode = SearchMode::CountMatches { zeros };
-        }
-
-        let match_emission = if only_matching_on_lines && matches!(mode, SearchMode::Matches) {
-            MatchEmissionMode::OnlyMatching
-        } else {
-            MatchEmissionMode::Lines
-        };
-
-        (mode, match_emission, quiet)
+        (mode, quiet)
     }
 
     /// Context line counts from `-A`/`-B`/`-C` flags.
@@ -660,7 +694,7 @@ mod tests {
     }
 
     fn pat(items: &[&str]) -> PatternArgv {
-        PatternArgv::resolve(&Argv::new(&args(items)), ZeroCounts::Omit)
+        PatternArgv::resolve(&Argv::new(&args(items)), ZeroCounts::Omit).expect("resolve")
     }
 
     fn pattern_config(args: &[&str]) -> PatternDecl {
@@ -668,7 +702,7 @@ mod tests {
         let mode = if cli.filter_decl.files {
             SearchMode::Paths
         } else {
-            SearchMode::Lines
+            SearchMode::Print(Hit::Line)
         };
         cli.pattern_config(mode).0
     }
@@ -678,7 +712,9 @@ mod tests {
     #[test]
     fn case_mode_default_sensitive() {
         assert_eq!(
-            PatternArgv::resolve(&Argv::new(&args(&["sift", "pat"])), ZeroCounts::Omit).case_mode,
+            PatternArgv::resolve(&Argv::new(&args(&["sift", "pat"])), ZeroCounts::Omit)
+                .expect("resolve")
+                .case_mode,
             CaseMode::Sensitive
         );
     }
@@ -687,6 +723,7 @@ mod tests {
     fn case_mode_ignore_case_short() {
         assert_eq!(
             PatternArgv::resolve(&Argv::new(&args(&["sift", "-i", "pat"])), ZeroCounts::Omit)
+                .expect("resolve")
                 .case_mode,
             CaseMode::Insensitive
         );
@@ -697,6 +734,7 @@ mod tests {
         // -s is --case-sensitive, but resolves via short check
         assert_eq!(
             PatternArgv::resolve(&Argv::new(&args(&["sift", "-s", "pat"])), ZeroCounts::Omit)
+                .expect("resolve")
                 .case_mode,
             CaseMode::Sensitive
         );
@@ -706,6 +744,7 @@ mod tests {
     fn case_mode_smart_case_short() {
         assert_eq!(
             PatternArgv::resolve(&Argv::new(&args(&["sift", "-S", "pat"])), ZeroCounts::Omit)
+                .expect("resolve")
                 .case_mode,
             CaseMode::Smart
         );
@@ -718,6 +757,7 @@ mod tests {
                 &Argv::new(&args(&["sift", "--ignore-case", "pat"])),
                 ZeroCounts::Omit
             )
+            .expect("resolve")
             .case_mode,
             CaseMode::Insensitive
         );
@@ -730,6 +770,7 @@ mod tests {
                 &Argv::new(&args(&["sift", "--case-sensitive", "pat"])),
                 ZeroCounts::Omit
             )
+            .expect("resolve")
             .case_mode,
             CaseMode::Sensitive
         );
@@ -742,6 +783,7 @@ mod tests {
                 &Argv::new(&args(&["sift", "--smart-case", "pat"])),
                 ZeroCounts::Omit
             )
+            .expect("resolve")
             .case_mode,
             CaseMode::Smart
         );
@@ -754,6 +796,7 @@ mod tests {
                 &Argv::new(&args(&["sift", "-i", "-s", "pat"])),
                 ZeroCounts::Omit
             )
+            .expect("resolve")
             .case_mode,
             CaseMode::Sensitive
         );
@@ -766,6 +809,7 @@ mod tests {
                 &Argv::new(&args(&["sift", "-S", "-i", "pat"])),
                 ZeroCounts::Omit
             )
+            .expect("resolve")
             .case_mode,
             CaseMode::Insensitive
         );
@@ -777,6 +821,7 @@ mod tests {
     fn regex_engine_default_rust() {
         assert_eq!(
             PatternArgv::resolve(&Argv::new(&args(&["sift", "pat"])), ZeroCounts::Omit)
+                .expect("resolve")
                 .regex_engine,
             RegexEngine::Rust
         );
@@ -789,6 +834,7 @@ mod tests {
                 &Argv::new(&args(&["sift", "--pcre2", "pat"])),
                 ZeroCounts::Omit
             )
+            .expect("resolve")
             .regex_engine,
             RegexEngine::Pcre2
         );
@@ -798,6 +844,7 @@ mod tests {
     fn regex_engine_pcre2_short() {
         assert_eq!(
             PatternArgv::resolve(&Argv::new(&args(&["sift", "-P", "pat"])), ZeroCounts::Omit)
+                .expect("resolve")
                 .regex_engine,
             RegexEngine::Pcre2
         );
@@ -810,6 +857,7 @@ mod tests {
                 &Argv::new(&args(&["sift", "--no-pcre2", "-P", "pat"])),
                 ZeroCounts::Omit
             )
+            .expect("resolve")
             .regex_engine,
             RegexEngine::Pcre2
         );
@@ -822,176 +870,186 @@ mod tests {
                 &Argv::new(&args(&["sift", "-P", "--no-pcre2", "pat"])),
                 ZeroCounts::Omit
             )
+            .expect("resolve")
             .regex_engine,
             RegexEngine::Rust
         );
+    }
+
+    #[test]
+    fn io_default_is_platform() {
+        assert_eq!(pat(&["sift", "pat"]).io, Io::default());
+    }
+
+    #[test]
+    fn io_last_wins_mmap_then_sync() {
+        assert_eq!(
+            pat(&["sift", "--io", "mmap", "--io", "sync", "pat"]).io,
+            Io::Sync
+        );
+    }
+
+    #[test]
+    fn io_equals_form() {
+        assert_eq!(pat(&["sift", "--io=mmap", "pat"]).io, Io::Mmap);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn io_uring_off_linux_is_error() {
+        let Err(err) = PatternArgv::resolve(
+            &Argv::new(&args(&["sift", "--io", "uring", "pat"])),
+            ZeroCounts::Omit,
+        ) else {
+            panic!("expected uring error off Linux");
+        };
+        assert!(err.contains("Linux"), "{err}");
     }
 
     // ── resolve_invert_match_from_args ──
 
     #[test]
     fn invert_match_no_flag() {
-        assert!(matches!(
-            pat(&["sift", "pat"]).invert_match,
-            InvertMatch::Off
-        ));
+        assert!(!pat(&["sift", "pat"]).invert_match);
     }
 
     #[test]
     fn invert_match_short() {
-        assert!(matches!(
-            pat(&["sift", "-v", "pat"]).invert_match,
-            InvertMatch::On
-        ));
+        assert!(pat(&["sift", "-v", "pat"]).invert_match);
     }
 
     #[test]
     fn invert_match_long() {
-        assert!(matches!(
-            pat(&["sift", "--invert-match", "pat"]).invert_match,
-            InvertMatch::On
-        ));
+        assert!(pat(&["sift", "--invert-match", "pat"]).invert_match);
     }
 
     #[test]
     fn invert_match_dash_dash_terminates() {
-        assert!(matches!(
-            pat(&["sift", "--", "-v", "pat"]).invert_match,
-            InvertMatch::Off
-        ));
+        assert!(!pat(&["sift", "--", "-v", "pat"]).invert_match);
     }
 
     #[test]
     fn invert_match_flag_before_dash_dash() {
-        assert!(matches!(
-            pat(&["sift", "-v", "--", "pat"]).invert_match,
-            InvertMatch::On
-        ));
+        assert!(pat(&["sift", "-v", "--", "pat"]).invert_match);
     }
 
-    fn mode(argv: &[&str], invert: InvertMatch) -> (SearchMode, MatchEmissionMode, Quiet) {
+    fn mode(argv: &[&str], invert: bool) -> (SearchMode, bool) {
         PatternArgv::output_mode(&Argv::new(&args(argv)), invert, ZeroCounts::Omit)
     }
 
     #[test]
     fn output_mode_default() {
-        let (mode, emission, quiet) = mode(&["sift", "pat"], InvertMatch::Off);
-        assert_eq!(mode, SearchMode::Lines);
-        assert!(matches!(emission, MatchEmissionMode::Lines));
-        assert!(matches!(quiet, Quiet::Off));
+        let (mode, quiet) = mode(&["sift", "pat"], false);
+        assert_eq!(mode, SearchMode::Print(Hit::Line));
+        assert!(!quiet);
     }
 
     #[test]
     fn output_mode_count() {
-        let (mode, emission, quiet) = mode(&["sift", "-c", "pat"], InvertMatch::Off);
+        let (mode, quiet) = mode(&["sift", "-c", "pat"], false);
         assert_eq!(
             mode,
-            SearchMode::CountLines {
+            SearchMode::Count {
+                hit: Hit::Line,
                 zeros: ZeroCounts::Omit
             }
         );
-        assert!(matches!(emission, MatchEmissionMode::Lines));
-        assert!(matches!(quiet, Quiet::Off));
+        assert!(!quiet);
     }
 
     #[test]
     fn output_mode_count_matches() {
-        let (mode, emission, quiet) = mode(&["sift", "--count-matches", "pat"], InvertMatch::Off);
+        let (mode, quiet) = mode(&["sift", "--count-matches", "pat"], false);
         assert_eq!(
             mode,
-            SearchMode::CountMatches {
+            SearchMode::Count {
+                hit: Hit::Span,
                 zeros: ZeroCounts::Omit
             }
         );
-        assert!(matches!(emission, MatchEmissionMode::Lines));
-        assert!(matches!(quiet, Quiet::Off));
+        assert!(!quiet);
     }
 
     #[test]
     fn output_mode_files_with_matches() {
-        let (mode, emission, quiet) = mode(&["sift", "-l", "pat"], InvertMatch::Off);
+        let (mode, quiet) = mode(&["sift", "-l", "pat"], false);
         assert_eq!(mode, SearchMode::FilesWithMatches);
-        assert!(matches!(emission, MatchEmissionMode::Lines));
-        assert!(matches!(quiet, Quiet::Off));
+        assert!(!quiet);
     }
 
     #[test]
     fn output_mode_files_without_match() {
-        let (mode, emission, quiet) =
-            mode(&["sift", "--files-without-match", "pat"], InvertMatch::Off);
+        let (mode, quiet) = mode(&["sift", "--files-without-match", "pat"], false);
         assert_eq!(mode, SearchMode::FilesWithoutMatch);
-        assert!(matches!(emission, MatchEmissionMode::Lines));
-        assert!(matches!(quiet, Quiet::Off));
+        assert!(!quiet);
     }
 
     #[test]
     fn output_mode_only_matching() {
-        let (mode, emission, quiet) = mode(&["sift", "-o", "pat"], InvertMatch::Off);
-        assert_eq!(mode, SearchMode::Matches);
-        assert!(matches!(emission, MatchEmissionMode::OnlyMatching));
-        assert!(matches!(quiet, Quiet::Off));
+        let (mode, quiet) = mode(&["sift", "-o", "pat"], false);
+        assert_eq!(mode, SearchMode::Print(Hit::Span));
+        assert!(!quiet);
     }
 
     #[test]
     fn output_mode_quiet() {
-        let (mode, emission, quiet) = mode(&["sift", "-q", "pat"], InvertMatch::Off);
-        assert_eq!(mode, SearchMode::Lines);
-        assert!(matches!(emission, MatchEmissionMode::Lines));
-        assert!(matches!(quiet, Quiet::On));
+        let (mode, quiet) = mode(&["sift", "-q", "pat"], false);
+        assert_eq!(mode, SearchMode::Print(Hit::Line));
+        assert!(quiet);
     }
 
     #[test]
     fn output_mode_count_and_only_matching_becomes_count_matches() {
-        let (mode, emission, _) = mode(&["sift", "-c", "-o", "pat"], InvertMatch::Off);
+        let (mode, _) = mode(&["sift", "-c", "-o", "pat"], false);
         assert_eq!(
             mode,
-            SearchMode::CountMatches {
+            SearchMode::Count {
+                hit: Hit::Span,
                 zeros: ZeroCounts::Omit
             }
         );
-        assert!(matches!(emission, MatchEmissionMode::Lines));
     }
 
     #[test]
     fn output_mode_last_wins() {
-        let (mode, _, _) = mode(&["sift", "-c", "-l", "pat"], InvertMatch::Off);
+        let (mode, _) = mode(&["sift", "-c", "-l", "pat"], false);
         assert_eq!(mode, SearchMode::FilesWithMatches);
     }
 
     #[test]
     fn output_mode_invert_match_downgrades_only_matching_to_count_matches() {
-        let (mode, emission, _) = mode(&["sift", "-o", "pat"], InvertMatch::On);
+        let (mode, _) = mode(&["sift", "-o", "pat"], true);
         assert_eq!(
             mode,
-            SearchMode::CountMatches {
+            SearchMode::Count {
+                hit: Hit::Span,
                 zeros: ZeroCounts::Omit
             }
         );
-        assert!(matches!(emission, MatchEmissionMode::Lines));
     }
 
     #[test]
     fn output_mode_invert_match_with_only_matching_and_count() {
-        let (mode, emission, _) = mode(&["sift", "-c", "-o", "pat"], InvertMatch::On);
+        let (mode, _) = mode(&["sift", "-c", "-o", "pat"], true);
         assert_eq!(
             mode,
-            SearchMode::CountMatches {
+            SearchMode::Count {
+                hit: Hit::Span,
                 zeros: ZeroCounts::Omit
             }
         );
-        assert!(matches!(emission, MatchEmissionMode::Lines));
     }
 
     #[test]
     fn output_mode_only_matching_flag_after_count() {
-        let (mode, emission, _) = mode(&["sift", "-c", "-o", "pat"], InvertMatch::Off);
+        let (mode, _) = mode(&["sift", "-c", "-o", "pat"], false);
         assert_eq!(
             mode,
-            SearchMode::CountMatches {
+            SearchMode::Count {
+                hit: Hit::Span,
                 zeros: ZeroCounts::Omit
             }
         );
-        assert!(matches!(emission, MatchEmissionMode::Lines));
     }
 
     // ── resolve_patterns ──
@@ -1054,6 +1112,13 @@ mod tests {
         let config = pattern_config(&["sift", "-F", "pat"]);
         let opts = config.options(&pat(&["sift", "pat"]));
         assert!(opts.flags.contains(SearchFlags::FIXED_STRINGS));
+    }
+
+    #[test]
+    fn query_options_passthru() {
+        let config = pattern_config(&["sift", "--passthru", "pat"]);
+        let opts = config.options(&pat(&["sift", "pat"]));
+        assert!(opts.flags.contains(SearchFlags::PASSTHRU));
     }
 
     // ── binary_mode ──

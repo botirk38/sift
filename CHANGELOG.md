@@ -1,6 +1,17 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## [Unreleased]
+
+### Features
+
+- own the per-file scan loop (`Bytes` + `Lines`); `--io sync|mmap|uring` replaces `--mmap`/`--no-mmap`
+
+### Refactor
+
+- `Searcher::execute` materializes a report; `Searcher::stream` returns `Events`. Quiet/invert-match are `bool`.
+
 ## [0.8.1](https://github.com/botirk38/sift/releases/tag/v0.8.1) — 2026-08-15
 
 ### Bug Fixes

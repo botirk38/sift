@@ -1,7 +1,7 @@
 use criterion::Criterion;
 use std::hint::black_box;
 
-use sift_core::Searcher;
+use sift_core::{Hit, Searcher};
 
 use crate::support::{args, build_index, make_small_corpus, parse_cli, run_sift};
 
@@ -13,12 +13,16 @@ fn bench_binary_mode(g: &mut criterion::BenchmarkGroup<'_, criterion::measuremen
     let argv_default = sift_grep::Argv::new(&argv_storage_default);
     let argv_text = sift_grep::Argv::new(&argv_storage_text);
     let pat_default =
-        sift_grep::pattern::PatternArgv::resolve(&argv_default, sift_core::ZeroCounts::Omit);
+        sift_grep::pattern::PatternArgv::resolve(&argv_default, sift_core::ZeroCounts::Omit)
+            .expect("resolve");
     let pat_text =
-        sift_grep::pattern::PatternArgv::resolve(&argv_text, sift_core::ZeroCounts::Omit);
+        sift_grep::pattern::PatternArgv::resolve(&argv_text, sift_core::ZeroCounts::Omit)
+            .expect("resolve");
 
     g.bench_function("binary_mode/default", |b| {
-        let config = cli_default.pattern_config(sift_core::SearchMode::Lines).0;
+        let config = cli_default
+            .pattern_config(sift_core::SearchMode::Print(Hit::Line))
+            .0;
         b.iter(|| {
             black_box(
                 config
@@ -31,7 +35,9 @@ fn bench_binary_mode(g: &mut criterion::BenchmarkGroup<'_, criterion::measuremen
         });
     });
     g.bench_function("binary_mode/text", |b| {
-        let config = cli_text.pattern_config(sift_core::SearchMode::Lines).0;
+        let config = cli_text
+            .pattern_config(sift_core::SearchMode::Print(Hit::Line))
+            .0;
         b.iter(|| {
             black_box(
                 config

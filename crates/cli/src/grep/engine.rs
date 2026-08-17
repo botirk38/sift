@@ -1,5 +1,5 @@
 use clap::Args;
-use sift_core::search::{InputEncoding, RegexEngine};
+use sift_core::search::{InputEncoding, Io, RegexEngine};
 
 /// Regex engine and configuration flags.
 #[derive(Args, Clone)]
@@ -24,6 +24,8 @@ pub struct EngineDecl {
     pub content: ContentDecl,
     #[arg(short = 'E', long = "encoding", value_name = "ENCODING")]
     pub encoding: Option<InputEncoding>,
+    #[arg(long = "io", value_name = "sync|mmap|uring")]
+    pub io: Option<Io>,
     #[command(flatten)]
     pub regex: RegexEngineDecl,
 }
@@ -84,10 +86,6 @@ pub struct ThreadingDecl {
 pub struct WalkerDecl {
     #[arg(long = "one-file-system")]
     pub one_file_system: bool,
-    #[arg(long = "mmap")]
-    pub mmap: bool,
-    #[arg(long = "no-mmap")]
-    pub no_mmap: bool,
 }
 
 /// Multiline and CRLF flags.
@@ -113,7 +111,7 @@ pub struct LineTerminatorDecl {
 mod tests {
     use crate::cli::Cli;
     use clap::Parser;
-    use sift_core::search::{InputEncoding, RegexEngine};
+    use sift_core::search::{InputEncoding, Io, RegexEngine};
 
     #[test]
     fn engine_no_config_flag() {
@@ -260,15 +258,15 @@ mod tests {
     }
 
     #[test]
-    fn walker_mmap() {
-        let cli = Cli::try_parse_from(["sift", "--mmap", "pat"]).unwrap();
-        assert!(cli.walker_decl.mmap);
+    fn walker_io_flag() {
+        let cli = Cli::try_parse_from(["sift", "--io", "sync", "pat"]).unwrap();
+        assert_eq!(cli.engine_decl.io, Some(Io::Sync));
     }
 
     #[test]
-    fn walker_no_mmap() {
-        let cli = Cli::try_parse_from(["sift", "--no-mmap", "pat"]).unwrap();
-        assert!(cli.walker_decl.no_mmap);
+    fn walker_io_mmap() {
+        let cli = Cli::try_parse_from(["sift", "--io", "mmap", "pat"]).unwrap();
+        assert_eq!(cli.engine_decl.io, Some(Io::Mmap));
     }
 
     #[test]

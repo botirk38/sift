@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use sift_core::{
     CorpusMeta, File, FileFilter, FileFilterConfig, FileOrder, FilterAdmission, FilterMeta,
-    GramWidth, IgnoreConfig, IndexCoverage, IndexRecord, Indexes, Plan, Query, Scan, ScanScope,
-    SearchOptions, SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta,
+    GramWidth, Hit, IgnoreConfig, IndexCoverage, IndexRecord, Indexes, Plan, Query, Scan,
+    ScanScope, SearchOptions, SnapshotFreshness, StoreMeta, VisibilityConfig, WalkMeta,
 };
 
 pub fn sample_store_meta(root: PathBuf, indexes: Vec<IndexRecord>) -> StoreMeta {
@@ -122,7 +122,7 @@ pub fn index_candidates(
     Plan::new(
         &source,
         searcher.query(),
-        sift_core::SearchMode::Lines.coverage(),
+        sift_core::SearchMode::Print(Hit::Line).coverage(),
     )
     .resolve(&source)
     .expect("candidates")

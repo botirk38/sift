@@ -25,7 +25,7 @@ Two-layer flag model:
 | `grep/paths.rs` | `PathArgs` | `CorpusScope` | `CorpusScope::resolve` |
 | `grep/input.rs` | — | `InputSources`, `ContentTransform` | `InputSources::resolve`, `stdin_streams` |
 | `grep/run.rs` | — | `RunConfig`, `Run`, `RunResult` | `Run::execute(daemon)` |
-| `format/output/mod.rs` | — | `PrintSpec` (`SearchMode`) | `PrintSpec::print` → `Report` |
+| `format/output/mod.rs` | — | `PrintSpec` (`SearchMode`) | `PrintSpec::print` → `SearchReport` |
 | `index/mod.rs` | — | `IndexRequest`, `IndexJob`, `ReconcileOutcome` | `IndexJob::resolve`, `IndexJob::run(daemon)`, `ReconcileOutcome::rebuild` |
 | `index/selection.rs` | `IndexDecl` | `IndexSelection` | `IndexSelection::resolve` (argv order for `--index`/`--width`/`--norm`) |
 | `index/daemon/` | — | `Daemon`, `DaemonOrchestrator`, `ServeConfig` | `Daemon::{index,validate_snapshot}`, `DaemonOrchestrator::{start,serve}` (`ipc` / `watcher` / `refresh`) |
@@ -36,7 +36,7 @@ Two-layer flag model:
 RunConfig → Run::execute
 InputSources → stdin_streams → Inputs
 Scan + Plan::resolve → Candidates
-Searcher::execute → PrintSpec::print → Report
+Searcher::execute / stream → PrintSpec::print → SearchReport
 ```
 
 Index lifecycle: `IndexJob::run` → `ReconcileOutcome::rebuild` (full rebuild from

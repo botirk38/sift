@@ -54,12 +54,13 @@ impl ScanScope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::search::{SearchMode, ZeroCounts};
+    use crate::search::{Hit, SearchMode, ZeroCounts};
 
     #[test]
     fn count_lines_omit_uses_potential_matches() {
         assert_eq!(
-            SearchMode::CountLines {
+            SearchMode::Count {
+                hit: Hit::Line,
                 zeros: ZeroCounts::Omit
             }
             .coverage(),
@@ -70,7 +71,8 @@ mod tests {
     #[test]
     fn count_lines_include_uses_complete() {
         assert_eq!(
-            SearchMode::CountLines {
+            SearchMode::Count {
+                hit: Hit::Line,
                 zeros: ZeroCounts::Include
             }
             .coverage(),
@@ -81,7 +83,8 @@ mod tests {
     #[test]
     fn count_matches_omit_uses_potential_matches() {
         assert_eq!(
-            SearchMode::CountMatches {
+            SearchMode::Count {
+                hit: Hit::Span,
                 zeros: ZeroCounts::Omit
             }
             .coverage(),

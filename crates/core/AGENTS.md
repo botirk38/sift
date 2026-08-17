@@ -8,13 +8,13 @@ Composable indexed code search: index lifecycle, candidate planning, and grep-st
 
 ```
 Indexes::open (lifecycle) / Indexes::load → Option (search)
-Plan::new (pure) → Plan::resolve (query I/O) → Searcher::execute
+Plan::new (pure) → Plan::resolve (query I/O) → Searcher::execute / stream
 ```
 
 - `Indexes` — builds, publishes, queries, and hydrates one store (`load` is `None` when absent)
 - `Files` — shared `FileId → File` table for the current committed snapshot
 - `Plan` — pure discovery decision; `resolve` owns index query I/O
-- `Searcher` — match execution over resolved candidates and streams
+- `Searcher` — `execute(inputs, mode)` materializes; `stream(inputs, mode)` returns `Events`; `FileScan` walks one input's bytes
 - `Query` — patterns + options; owns narrowing policy
 - `File` / `Origin` — path identity (`Origin::{File, Stream { label }}`)
 
@@ -25,7 +25,7 @@ kinds through its `Kind` enum.
 
 Search (re-exported from `lib.rs`):
 
-- `Query`, `Searcher`, `Report`, `Origin`, `SearchMode`
+- `Query`, `Searcher`, `SearchReport`, `Events`, `Origin`, `Mention`, `SearchMode`, `Hit`
 - `StoreMeta`, `IndexRecord`, `Indexes`, `SnapshotId`, `Files`
 - `ngram::Index`, `GramWidth`, `GramNorm`
 - `Candidates`, `Plan`, `Scan`, `ScanScope`, `SnapshotFreshness`, `Coverage`
@@ -40,7 +40,7 @@ Search (re-exported from `lib.rs`):
 | `index/disk.rs` | Snapshot persistence |
 | `index/ngram/` | N-gram implementation (artifact names live here) |
 | `index/mmap.rs` | Sole `unsafe` in the crate (`mmap_open`) |
-| `search/` | `Query`, `Searcher`, `Report`, events |
+| `search/` | `Query`, `Searcher`, `FileScan`, `Bytes`, `SearchReport`, `Events` |
 | `candidates/plan.rs` | `Plan` (plan + resolve) |
 | `candidates/candidates.rs` | `Candidates` collection |
 | `corpus/` | `File`, `FileFilter`, `FileOrder`, walk |
@@ -48,11 +48,11 @@ Search (re-exported from `lib.rs`):
 ## Search flow
 
 ```text
-Searcher::execute
+Searcher::execute(inputs, mode)  or  Searcher::stream(inputs, mode)
   1. coverage   ← caller maps SearchMode → Coverage
   2. plan       ← Plan::new(source, query, coverage)
   3. candidates ← plan.resolve(source)
-  4. search     ← Searcher::execute(...)
+  4. search     ← execute (report) or stream (Events)
 ```
 
 Planning is pure; `Plan::resolve` is the only candidate I/O boundary.
@@ -62,7 +62,8 @@ Planning is pure; `Plan::resolve` is the only candidate I/O boundary.
 - Conservative narrowing: indexes may over-return, never under-return.
 - Multi-kind intersection happens in `Indexes::query`, not per-caller.
 - No free helper functions — logic lives on the owning type.
-- No callback/`FnOnce` APIs.
+- No callback/`FnOnce` / sink APIs. Stream output is `Events` (`Iterator` + `into_report`).
+- The search walk does not take an output method.
 - No `unsafe` outside `index/mmap.rs`.
 
 ## Testing
@@ -73,7 +74,7 @@ cargo test -p sift-core
 
 ## Do NOT
 
-- Break public API without updating CLI.
+- Change core search without updating CLI in the same change.
 - Add `unsafe` outside `index/mmap.rs`.
 - Put stdout formatting in core.
 - Expose `Indexes::candidates` or test-only constructors.
