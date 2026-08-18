@@ -117,7 +117,11 @@ impl<'a> EventRenderer<'a> {
         if matches!(self.output.mode, SearchMode::Print(Hit::Span)) {
             for (index, range) in event.ranges.iter().enumerate() {
                 self.write_prefix(event, range.start);
-                if let Some(replacement) = event.replacement_matches.get(index) {
+                if let Some(replacement) = event
+                    .replacement
+                    .as_ref()
+                    .and_then(|replacement| replacement.matches.get(index))
+                {
                     self.bytes.extend(replacement);
                 } else {
                     self.bytes.extend(&event.bytes[range.clone()]);
@@ -126,7 +130,12 @@ impl<'a> EventRenderer<'a> {
             }
             return;
         }
-        let line = event.replacement.as_deref().unwrap_or(&event.bytes);
+        let line = event
+            .replacement
+            .as_ref()
+            .map_or(event.bytes.as_slice(), |replacement| {
+                replacement.text.as_slice()
+            });
         let line = if self.output.lines.trim() {
             Self::trim_ascii(line)
         } else {

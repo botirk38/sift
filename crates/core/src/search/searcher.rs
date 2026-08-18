@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use crate::Error;
 use crate::search::bytes::Bytes;
 use crate::search::error::Error as SearchError;
-use crate::search::event::{BinaryEvent, ContextEvent, MatchEvent, SearchEvent};
+use crate::search::event::{BinaryEvent, ContextEvent, MatchEvent, Replacement, SearchEvent};
 use crate::search::hit::Match;
 use crate::search::input::{Input, Inputs, Origin};
 use crate::search::line::{Line, Multiline};
@@ -102,9 +102,11 @@ impl Searcher {
         loaded.decode(&self.options().input_encoding);
         let nul = self.nul(input);
         let binary = self.convert(&mut loaded, nul);
-        let multiline = self.multiline(loaded.as_slice())?;
+        let haystack = loaded.as_slice();
+        let multiline = self.multiline(haystack)?;
+        let replaced = self.replaced(haystack, multiline.is_some())?;
         let mut scan = FileScan::new(
-            loaded.as_slice(),
+            haystack,
             &self.matcher,
             self.options(),
             mode,
@@ -115,7 +117,9 @@ impl Searcher {
         let mut report = FileReport::new(input.origin().clone());
         while let Some(item) = scan.next_item() {
             if let Item::Hit(line) = item? {
-                for listed in self.listed_matches(&line, mode, scan.slice(), scan.spans())? {
+                for listed in
+                    self.listed_matches(&line, mode, scan.slice(), scan.spans(), replaced.as_ref())?
+                {
                     report.push_match(listed);
                 }
             }
@@ -149,18 +153,21 @@ impl Searcher {
         if !self.options().multiline() {
             return Ok(None);
         }
-        let mut spans = Vec::new();
-        let mut pos = 0usize;
-        while pos < bytes.len() {
-            let Some(found) = self.matcher.find(&bytes[pos..])? else {
-                break;
-            };
-            let start = pos + found.start();
-            let end = pos + found.end();
-            spans.push(start..end);
-            pos = if found.end() == 0 { pos + 1 } else { end };
+        Ok(Some(Multiline::new(self.matcher.ranges(bytes)?)))
+    }
+
+    fn replaced(
+        &self,
+        haystack: &[u8],
+        multiline: bool,
+    ) -> Result<Option<Replacement>, SearchError> {
+        let Some(template) = self.options().replace.as_deref().map(str::as_bytes) else {
+            return Ok(None);
+        };
+        if !multiline || self.options().invert_match() {
+            return Ok(None);
         }
-        Ok(Some(Multiline::new(spans)))
+        Ok(Some(self.matcher.replace(haystack, template)?))
     }
 
     fn listed_matches(
@@ -169,73 +176,71 @@ impl Searcher {
         mode: SearchMode,
         chunk: &[u8],
         spans: Option<&Multiline>,
+        replaced: Option<&Replacement>,
     ) -> Result<Vec<Match>, SearchError> {
         if !matches!(mode, SearchMode::Print(_)) {
             return Ok(Vec::new());
         }
         let line_no = usize::try_from(line.number.unwrap_or(0)).unwrap_or(0);
-        let replacement = self.options().replace.as_deref().map(str::as_bytes);
         let invert = self.options().invert_match();
-        Ok(match (mode.hit(), spans, replacement, invert) {
-            (Some(Hit::Span), Some(spans), repl, false) => {
-                let mut out = Vec::new();
-                for span in spans.starting_on(line) {
-                    let slice = chunk.get(span.clone()).unwrap_or(b"");
-                    let text = match repl {
-                        Some(repl) => String::from_utf8_lossy(&self.matcher.expand(slice, repl)?.0)
-                            .into_owned(),
-                        None => String::from_utf8_lossy(slice).into_owned(),
-                    };
-                    out.push(Match {
-                        line: line_no,
-                        text,
-                    });
-                }
-                out
-            }
-            (Some(Hit::Span), None, repl, false) => {
-                let mut out = Vec::new();
-                for range in self.matcher.ranges(line.bytes())? {
-                    let slice = line.bytes().get(range).unwrap_or(b"");
-                    let text = match repl {
-                        Some(repl) => String::from_utf8_lossy(&self.matcher.expand(slice, repl)?.0)
-                            .into_owned(),
-                        None => String::from_utf8_lossy(slice).into_owned(),
-                    };
-                    out.push(Match {
-                        line: line_no,
-                        text,
-                    });
-                }
-                out
-            }
-            (Some(Hit::Line), Some(spans), Some(repl), false) => {
-                let mut out = Vec::new();
-                for span in spans.starting_on(line) {
-                    let slice = chunk.get(span.clone()).unwrap_or(b"");
-                    let text =
-                        String::from_utf8_lossy(&self.matcher.expand(slice, repl)?.0).into_owned();
-                    out.push(Match {
-                        line: line_no,
-                        text,
-                    });
-                }
-                out
-            }
-            (Some(Hit::Line), _, Some(repl), false) => {
-                let text = String::from_utf8_lossy(&self.matcher.expand(line.bytes(), repl)?.0)
-                    .into_owned();
-                vec![Match {
-                    line: line_no,
-                    text,
-                }]
-            }
-            (Some(Hit::Line), _, _, _) | (Some(Hit::Span), _, _, true) => vec![Match {
+        let template = self.options().replace.as_deref().map(str::as_bytes);
+        if invert {
+            return Ok(vec![Match {
                 line: line_no,
                 text: String::from_utf8_lossy(line.bytes()).into_owned(),
-            }],
-            _ => Vec::new(),
-        })
+            }]);
+        }
+        match (mode.hit(), spans, template) {
+            (Some(Hit::Span), Some(spans), _) | (Some(Hit::Line), Some(spans), Some(_)) => {
+                let mut out = Vec::new();
+                for (index, span) in spans.starting_on(line) {
+                    let slice = chunk.get(span).unwrap_or(b"");
+                    let bytes = replaced
+                        .and_then(|replaced| replaced.matches.get(index))
+                        .map_or(slice, Vec::as_slice);
+                    out.push(Match {
+                        line: line_no,
+                        text: String::from_utf8_lossy(bytes).into_owned(),
+                    });
+                }
+                Ok(out)
+            }
+            (Some(Hit::Span), None, Some(template)) => {
+                let replaced = self.matcher.replace(line.bytes(), template)?;
+                Ok(replaced
+                    .matches
+                    .into_iter()
+                    .map(|text| Match {
+                        line: line_no,
+                        text: String::from_utf8_lossy(&text).into_owned(),
+                    })
+                    .collect())
+            }
+            (Some(Hit::Span), None, None) => Ok(self
+                .matcher
+                .ranges(line.bytes())?
+                .into_iter()
+                .map(|range| Match {
+                    line: line_no,
+                    text: String::from_utf8_lossy(line.bytes().get(range).unwrap_or(b""))
+                        .into_owned(),
+                })
+                .collect()),
+            (Some(Hit::Line), _, Some(template)) => {
+                let text =
+                    String::from_utf8_lossy(&self.matcher.replace(line.bytes(), template)?.text)
+                        .into_owned();
+                Ok(vec![Match {
+                    line: line_no,
+                    text,
+                }])
+            }
+            (Some(Hit::Line), _, None) => Ok(vec![Match {
+                line: line_no,
+                text: String::from_utf8_lossy(line.bytes()).into_owned(),
+            }]),
+            _ => Ok(Vec::new()),
+        }
     }
 
     fn match_event(
@@ -244,26 +249,26 @@ impl Searcher {
         line: &Line<'_>,
         chunk: &[u8],
         spans: Option<&Multiline>,
+        replaced: Option<&Replacement>,
     ) -> Result<MatchEvent, SearchError> {
         let invert = self.options().invert_match();
-        let replacement = self.options().replace.as_deref().map(str::as_bytes);
+        let template = self.options().replace.as_deref().map(str::as_bytes);
         if self.options().multiline()
             && !invert
-            && let Some(span) = spans.and_then(|spans| spans.starting_on(line).next())
+            && let Some((index, span)) = spans.and_then(|spans| spans.starting_on(line).next())
         {
             let bytes = chunk.get(span).unwrap_or(b"").to_vec();
             let ranges = std::iter::once(0..bytes.len()).collect();
-            let expanded = replacement
-                .map(|repl| self.matcher.expand(&bytes, repl))
-                .transpose()?;
+            let replacement = replaced
+                .and_then(|replaced| replaced.matches.get(index).cloned())
+                .map(Replacement::one);
             return Ok(MatchEvent {
                 origin,
                 line_number: line.number,
                 absolute_byte_offset: Some(line.offset),
                 bytes,
                 ranges,
-                replacement: expanded.as_ref().map(|e| e.0.clone()),
-                replacement_matches: expanded.map_or_else(Vec::new, |e| e.1),
+                replacement,
             });
         }
         let bytes = line.bytes().to_vec();
@@ -272,8 +277,8 @@ impl Searcher {
         } else {
             self.matcher.ranges(line.bytes())?
         };
-        let expanded = replacement
-            .map(|repl| self.matcher.expand(line.bytes(), repl))
+        let replacement = template
+            .map(|template| self.matcher.replace(line.bytes(), template))
             .transpose()?;
         Ok(MatchEvent {
             origin,
@@ -281,8 +286,7 @@ impl Searcher {
             absolute_byte_offset: Some(line.offset),
             bytes,
             ranges,
-            replacement: expanded.as_ref().map(|e| e.0.clone()),
-            replacement_matches: expanded.map_or_else(Vec::new, |e| e.1),
+            replacement,
         })
     }
 }
@@ -361,6 +365,7 @@ impl<'a> Events<'a> {
             )
         };
         let multiline = self.searcher.multiline(&chunk)?;
+        let replaced = self.searcher.replaced(&chunk, multiline.is_some())?;
         let mut scan = FileScan::new(
             &chunk,
             &self.searcher.matcher,
@@ -380,6 +385,7 @@ impl<'a> Events<'a> {
                         &line,
                         scan.slice(),
                         scan.spans(),
+                        replaced.as_ref(),
                     )?;
                     body.push_back(SearchEvent::Match(event));
                 }
@@ -851,6 +857,47 @@ mod tests {
         };
         assert_eq!(files[0].matches.len(), 1);
         assert_eq!(files[0].matches[0].text.trim(), "X");
+    }
+
+    #[test]
+    fn multiline_replace_interpolates_from_haystack() {
+        let searcher = searcher(
+            r"\Bfoo",
+            SearchOptions {
+                flags: SearchFlags::MULTILINE,
+                replace: Some("Y".into()),
+                ..SearchOptions::default()
+            },
+        );
+        let report = searcher
+            .execute(
+                stream(b"xfoo\n", Mention::Explicit),
+                SearchMode::Print(Hit::Line),
+            )
+            .expect("execute");
+        let Listing::Matches(files) = &report.listed else {
+            panic!("expected Matches");
+        };
+        assert_eq!(files[0].matches[0].text.trim(), "Y");
+
+        let (events, _) = collect(
+            &searcher,
+            stream(b"xfoo\n", Mention::Explicit),
+            SearchMode::Print(Hit::Line),
+        );
+        let Some(SearchEvent::Match(event)) = events
+            .iter()
+            .find(|event| matches!(event, SearchEvent::Match(_)))
+        else {
+            panic!("expected Match");
+        };
+        assert_eq!(
+            event
+                .replacement
+                .as_ref()
+                .map(|replacement| replacement.text.as_slice()),
+            Some(b"Y".as_slice())
+        );
     }
 
     #[test]

@@ -13,14 +13,30 @@ pub enum SearchEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Replacement {
+    pub text: Vec<u8>,
+    pub matches: Vec<Vec<u8>>,
+}
+
+impl Replacement {
+    /// A replacement whose haystack is a single match span.
+    #[must_use]
+    pub fn one(text: Vec<u8>) -> Self {
+        Self {
+            text: text.clone(),
+            matches: vec![text],
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MatchEvent {
     pub origin: Origin,
     pub line_number: Option<u64>,
     pub absolute_byte_offset: Option<u64>,
     pub bytes: Vec<u8>,
     pub ranges: Vec<Range<usize>>,
-    pub replacement: Option<Vec<u8>>,
-    pub replacement_matches: Vec<Vec<u8>>,
+    pub replacement: Option<Replacement>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
