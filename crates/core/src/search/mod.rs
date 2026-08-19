@@ -14,7 +14,7 @@ mod searcher;
 pub mod stats;
 
 pub use error::Error;
-pub use event::{BinaryEvent, ContextEvent, ContextKind, MatchEvent, SearchEvent};
+pub use event::{BinaryEvent, ContextEvent, ContextKind, MatchEvent, Replacement, SearchEvent};
 pub use hit::{Count, Listing, Match, MatchedFile};
 pub use input::{Input, Inputs, Mention, Origin};
 pub use mode::{Hit, SearchMode, ZeroCounts};

@@ -54,13 +54,17 @@ impl Multiline {
             .any(|span| start < span.end && end > span.start)
     }
 
-    /// Spans whose start lies on this line.
-    pub(super) fn starting_on(&self, line: &Line<'_>) -> impl Iterator<Item = Range<usize>> + '_ {
+    /// Spans whose start lies on this line, with their index in the span list.
+    pub(super) fn starting_on(
+        &self,
+        line: &Line<'_>,
+    ) -> impl Iterator<Item = (usize, Range<usize>)> + '_ {
         let (start, end) = Self::bounds(line);
         self.spans
             .iter()
-            .filter(move |span| span.start >= start && span.start < end)
-            .cloned()
+            .enumerate()
+            .filter(move |(_, span)| span.start >= start && span.start < end)
+            .map(|(index, span)| (index, span.clone()))
     }
 
     /// Whether a replace already consumed this line as the middle of a span.

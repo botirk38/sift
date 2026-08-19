@@ -119,7 +119,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f7dc094d718f2e1c1559ad110e27eeaae14a5465d3d56dd6dbd793079fbd530"
 dependencies = [
  "memchr",
- "regex-automata",
  "serde_core",
 ]
 
@@ -423,19 +422,6 @@ dependencies = [
  "grep-matcher",
  "log",
  "pcre2",
-]
-
-[[package]]
-name = "grep-regex"
-version = "0.1.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ce0c256c3ad82bcc07b812c15a45ec1d398122e8e15124f96695234db7112ef"
-dependencies = [
- "bstr",
- "grep-matcher",
- "log",
- "regex-automata",
- "regex-syntax",
 ]
 
 [[package]]
@@ -970,12 +956,12 @@ dependencies = [
  "fslock",
  "grep-matcher",
  "grep-pcre2",
- "grep-regex",
  "ignore",
  "integer-encoding",
  "memchr",
  "memmap2",
  "rayon",
+ "regex",
  "regex-syntax",
  "rustc-hash",
  "serde",
