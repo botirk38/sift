@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 ### Refactor
 
 - `Searcher::execute` materializes a report; `Searcher::stream` returns `Events`. Quiet/invert-match are `bool`.
+- compile `Matcher::Pcre2` with the `pcre2` crate; drop `grep-pcre2` and `grep-matcher` (#279)
 
 ## [0.8.1](https://github.com/botirk38/sift/releases/tag/v0.8.1) — 2026-08-15
 
