@@ -20,6 +20,7 @@ pub enum IndexRecord {
         #[serde(default)]
         norm: GramNorm,
     },
+    Ast,
 }
 
 impl IndexRecord {
@@ -44,7 +45,8 @@ impl IndexRecord {
         vec![Self::ngram(GramWidth::TRIGRAM)]
     }
 
-    /// Snapshot namespace / display name (`ngram-3`, `ngram-5-ascii-lower`).
+    /// Snapshot namespace / display name (`ngram-3`, `ngram-5-ascii-lower`,
+    /// `ast`).
     #[must_use]
     pub fn name(self) -> String {
         match self {
@@ -56,11 +58,12 @@ impl IndexRecord {
                 width,
                 norm: GramNorm::AsciiLower,
             } => format!("ngram-{}-ascii-lower", width.get()),
+            Self::Ast => "ast".to_string(),
         }
     }
 
     /// Parse a short catalog name (`trigram`, `ngram-3`, `ngram:3`,
-    /// `ngram-5-ascii-lower`).
+    /// `ngram-5-ascii-lower`, `ast`).
     ///
     /// # Errors
     ///
@@ -68,6 +71,9 @@ impl IndexRecord {
     pub fn from_name(value: &str) -> Result<Self, String> {
         if value == "trigram" {
             return Ok(Self::ngram(GramWidth::TRIGRAM));
+        }
+        if value == "ast" {
+            return Ok(Self::Ast);
         }
         let rest = value
             .strip_prefix("ngram-")
@@ -91,6 +97,7 @@ impl IndexRecord {
     pub fn build(self, dir: &Path, files: &Files) -> crate::Result<()> {
         match self {
             Self::Ngram { width, norm } => super::ngram::Index::build(width, norm, dir, files),
+            Self::Ast => super::ast::Index::build(dir, files),
         }
     }
 
@@ -104,6 +111,7 @@ impl IndexRecord {
             Self::Ngram { width, norm } => Ok(Kind::Ngram(super::ngram::Index::open(
                 width, norm, dir, file_count,
             )?)),
+            Self::Ast => Ok(Kind::Ast(super::ast::Index::open(dir, file_count)?)),
         }
     }
 }
@@ -119,12 +127,14 @@ impl FromStr for IndexRecord {
 /// Runtime index kind ready to query.
 pub(crate) enum Kind {
     Ngram(super::ngram::Index),
+    Ast(super::ast::Index),
 }
 
 impl Kind {
     pub(crate) fn query(&self, query: &Query) -> Vec<FileId> {
         match self {
             Self::Ngram(index) => index.query(query),
+            Self::Ast(index) => index.query(query),
         }
     }
 }

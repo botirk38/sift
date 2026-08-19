@@ -10,12 +10,10 @@ pub use gram::{Gram, GramNorm, GramWidth, GramWindows};
 pub use index::{Index, NGramIndexError};
 
 pub(crate) const LEXICON_BIN: &str = "lexicon.bin";
-pub(crate) const POSTINGS_BIN: &str = "postings.bin";
 
 #[cfg(test)]
 mod candidate_tests {
 
-    use crate::index::ngram::storage::postings::Postings;
     use crate::search::{CaseMode, InputEncoding, Query, SearchFlags, SearchOptions};
 
     use super::*;
@@ -76,68 +74,6 @@ mod candidate_tests {
             regex_search_options(case_insensitive, word_regexp, line_regexp),
         );
         Index::extract_literal_arms(trigram(), &query).is_none()
-    }
-
-    #[test]
-    fn merge_sorted_runs_preserves_order_and_uniqueness() {
-        let merged = Index::merge_sorted_runs(vec![vec![1, 3, 7], vec![1, 2, 7, 9], vec![4, 7, 8]]);
-        assert_eq!(merged, vec![1, 2, 3, 4, 7, 8, 9]);
-    }
-
-    #[test]
-    fn intersect_sorted_posting_byte_slices_handles_smallest_first_order() {
-        let a = Postings::encode_list(&[1, 3, 5, 7, 9]);
-        let b = Postings::encode_list(&[3, 7]);
-        let c = Postings::encode_list(&[0, 3, 4, 7, 8]);
-        let slices = vec![a.as_slice(), b.as_slice(), c.as_slice()];
-        let ids = Index::intersect_sorted_slices(&slices);
-        assert_eq!(ids, vec![3, 7]);
-    }
-
-    #[test]
-    fn merge_sorted_runs_empty_input_returns_empty() {
-        let merged = Index::merge_sorted_runs(vec![]);
-        assert!(merged.is_empty());
-    }
-
-    #[test]
-    fn merge_sorted_runs_single_list_returns_as_is() {
-        let merged = Index::merge_sorted_runs(vec![vec![1, 2, 3]]);
-        assert_eq!(merged, vec![1, 2, 3]);
-    }
-
-    #[test]
-    fn merge_sorted_runs_with_empty_lists_mixed_in() {
-        let merged = Index::merge_sorted_runs(vec![vec![1, 3], vec![], vec![2, 3]]);
-        assert_eq!(merged, vec![1, 2, 3]);
-    }
-
-    #[test]
-    fn intersect_sorted_posting_byte_slices_empty_input_returns_empty() {
-        let ids = Index::intersect_sorted_slices(&[]);
-        assert!(ids.is_empty());
-    }
-
-    #[test]
-    fn intersect_sorted_slices_single_returns_decoded_ids() {
-        let a = Postings::encode_list(&[1, 3, 5]);
-        let ids = Index::intersect_sorted_slices(&[a.as_slice()]);
-        assert_eq!(ids, vec![1, 3, 5]);
-    }
-
-    #[test]
-    #[should_panic(expected = "postings validated at open")]
-    fn intersect_sorted_slices_invalid_varint_panics() {
-        let a = &[0xff];
-        Index::intersect_sorted_slices(&[a]);
-    }
-
-    #[test]
-    fn intersect_sorted_slices_no_overlap_returns_empty() {
-        let a = Postings::encode_list(&[1, 2, 3]);
-        let b = Postings::encode_list(&[4, 5, 6]);
-        let ids = Index::intersect_sorted_slices(&[a.as_slice(), b.as_slice()]);
-        assert!(ids.is_empty());
     }
 
     #[test]

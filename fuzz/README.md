@@ -30,6 +30,8 @@ cd fuzz && cargo fuzz run search_usage -- -max_total_time=30
 |--------|-------------|
 | `search_usage` | Tiny index per process (`OnceLock`); fuzzes patterns + `SearchOptions` via `Query::candidates` / `Query::search` |
 | `compile_only` | Fuzzes `Query::compile` only (no filesystem) |
+| `decode_postings` | Overwrites `postings.bin` with arbitrary payloads; reopening must error, never panic |
+| `decode_kinds` | Overwrites the AST kind's `kinds.bin` with arbitrary bytes; reopening must error, never panic |
 
 ## Layout
 

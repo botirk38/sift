@@ -32,3 +32,10 @@ path = "fuzz_targets/decode_postings.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "decode_kinds"
+path = "fuzz_targets/decode_kinds.rs"
+test = false
+doc = false
+bench = false

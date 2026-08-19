@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
+- add the `ast` index kind (`--index ast`, opt-in): per-file language map + tree-sitter node-kind postings over the shared snapshot file table, for seven languages (rust, python, javascript, typescript, tsx, go, java). Regex search is unchanged; structural search lands on top of it
 - own the per-file scan loop (`Bytes` + `Lines`); `--io sync|mmap|uring` replaces `--mmap`/`--no-mmap`
 
 ### Refactor
@@ -13,6 +14,7 @@ All notable changes to this project will be documented in this file.
 - `Searcher::execute` materializes a report; `Searcher::stream` returns `Events`. Quiet/invert-match are `bool`.
 - compile `Matcher::Pcre2` with the `pcre2` crate; drop `grep-pcre2` and `grep-matcher` (#279)
 - `Matcher::spans` is the match walk; `MatchEvent` carries `Span`; `Query::case()` is caseless for both engines
+- the posting-list container moved to `index/postings.rs` (shared by kinds); the `sift_core::index::ngram::storage::postings` path is gone
 
 ## [0.8.1](https://github.com/botirk38/sift/releases/tag/v0.8.1) — 2026-08-15
 

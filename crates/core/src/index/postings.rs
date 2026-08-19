@@ -10,10 +10,12 @@ use std::path::Path;
 use bitpacking::{BitPacker, BitPacker4x};
 use integer_encoding::VarInt;
 
-use crate::index::ngram::storage::format::POSTINGS_MAGIC;
-
-use super::read_u32_le;
 use crate::index::mmap::mmap_open;
+
+pub const POSTINGS_MAGIC: [u8; 8] = *b"SIFTPST3";
+
+/// On-disk artifact name for a kind's posting payload.
+pub const POSTINGS_BIN: &str = "postings.bin";
 
 /// Values per SIMD-bitpacked block.
 const BLOCK_LEN: usize = BitPacker4x::BLOCK_LEN;
@@ -31,6 +33,14 @@ impl Postings {
 
     fn malformed(msg: &'static str) -> std::io::Error {
         std::io::Error::new(std::io::ErrorKind::InvalidData, msg)
+    }
+
+    fn read_u32_le(bytes: &[u8], offset: usize) -> u32 {
+        u32::from_le_bytes(
+            bytes[offset..offset + 4]
+                .try_into()
+                .expect("slice is exactly 4 bytes"),
+        )
     }
 
     /// Encode a postings payload into bytes (magic + length prefix + payload).
@@ -91,7 +101,7 @@ impl Postings {
                 "unexpected postings magic",
             ));
         }
-        let plen = read_u32_le(bytes, magic_len) as usize;
+        let plen = Self::read_u32_le(bytes, magic_len) as usize;
         if bytes.len() < magic_len + 4 + plen {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -250,6 +260,81 @@ impl Postings {
         }
         out
     }
+
+    /// Intersect posting-list slices, cheapest first, decoding lazily.
+    ///
+    /// Callers guarantee every slice was validated at open.
+    pub(crate) fn intersect_sorted_slices(slices: &[&[u8]]) -> Vec<u32> {
+        if slices.is_empty() {
+            return Vec::new();
+        }
+        if slices.len() == 1 {
+            return Self::decode_sorted(slices[0]).expect("postings validated at open");
+        }
+        if slices.len() == 2 {
+            let (first, second) = if slices[0].len() <= slices[1].len() {
+                (slices[0], slices[1])
+            } else {
+                (slices[1], slices[0])
+            };
+            if first == second {
+                return Self::decode_sorted(first).expect("postings validated at open");
+            }
+            let ids = Self::decode_sorted(first).expect("postings validated at open");
+            return Self::intersect_sorted(&ids, second).expect("postings validated at open");
+        }
+        let mut ordered: Vec<&[u8]> = slices.to_vec();
+        ordered.sort_unstable_by_key(|slice| slice.len());
+        if ordered[1..].iter().all(|slice| *slice == ordered[0]) {
+            return Self::decode_sorted(ordered[0]).expect("postings validated at open");
+        }
+        let mut cur = Self::decode_sorted(ordered[0]).expect("postings validated at open");
+        for s in &ordered[1..] {
+            cur = Self::intersect_sorted(&cur, s).expect("postings validated at open");
+            if cur.is_empty() {
+                break;
+            }
+        }
+        cur
+    }
+
+    /// Merge ascending, unique id lists into one ascending, unique list.
+    pub(crate) fn merge_sorted_runs(lists: Vec<Vec<u32>>) -> Vec<u32> {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+
+        if lists.is_empty() {
+            return Vec::new();
+        }
+        if lists.len() == 1 {
+            return lists.into_iter().next().unwrap_or_default();
+        }
+
+        let total: usize = lists.iter().map(Vec::len).sum();
+        let mut heap: BinaryHeap<Reverse<(u32, usize)>> = BinaryHeap::with_capacity(lists.len());
+        let mut positions = vec![0usize; lists.len()];
+
+        for (list_idx, list) in lists.iter().enumerate() {
+            if let Some(&first) = list.first() {
+                heap.push(Reverse((first, list_idx)));
+            }
+        }
+
+        let mut out = Vec::with_capacity(total);
+        let mut last = None;
+        while let Some(Reverse((value, list_idx))) = heap.pop() {
+            if last != Some(value) {
+                out.push(value);
+                last = Some(value);
+            }
+
+            positions[list_idx] += 1;
+            if let Some(&next) = lists[list_idx].get(positions[list_idx]) {
+                heap.push(Reverse((next, list_idx)));
+            }
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -393,5 +478,68 @@ mod tests {
         buf.extend_from_slice(&(u64::from(u32::MAX) + 1).encode_var_vec());
         let result = Postings::decode_sorted(&buf);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn merge_sorted_runs_preserves_order_and_uniqueness() {
+        let merged =
+            Postings::merge_sorted_runs(vec![vec![1, 3, 7], vec![1, 2, 7, 9], vec![4, 7, 8]]);
+        assert_eq!(merged, vec![1, 2, 3, 4, 7, 8, 9]);
+    }
+
+    #[test]
+    fn merge_sorted_runs_empty_input_returns_empty() {
+        let merged = Postings::merge_sorted_runs(vec![]);
+        assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn merge_sorted_runs_single_list_returns_as_is() {
+        let merged = Postings::merge_sorted_runs(vec![vec![1, 2, 3]]);
+        assert_eq!(merged, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn merge_sorted_runs_with_empty_lists_mixed_in() {
+        let merged = Postings::merge_sorted_runs(vec![vec![1, 3], vec![], vec![2, 3]]);
+        assert_eq!(merged, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn intersect_sorted_slices_intersects_all() {
+        let a = Postings::encode_list(&[1, 3, 5, 7, 9]);
+        let b = Postings::encode_list(&[3, 7]);
+        let c = Postings::encode_list(&[0, 3, 4, 7, 8]);
+        let slices = [a.as_slice(), b.as_slice(), c.as_slice()];
+        let ids = Postings::intersect_sorted_slices(&slices);
+        assert_eq!(ids, vec![3, 7]);
+    }
+
+    #[test]
+    fn intersect_sorted_slices_empty_input_returns_empty() {
+        let ids = Postings::intersect_sorted_slices(&[]);
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn intersect_sorted_slices_single_returns_decoded_ids() {
+        let a = Postings::encode_list(&[1, 3, 5]);
+        let ids = Postings::intersect_sorted_slices(&[a.as_slice()]);
+        assert_eq!(ids, vec![1, 3, 5]);
+    }
+
+    #[test]
+    #[should_panic(expected = "postings validated at open")]
+    fn intersect_sorted_slices_invalid_varint_panics() {
+        let a: &[u8] = &[0xff];
+        Postings::intersect_sorted_slices(&[a]);
+    }
+
+    #[test]
+    fn intersect_sorted_slices_no_overlap_returns_empty() {
+        let a = Postings::encode_list(&[1, 2, 3]);
+        let b = Postings::encode_list(&[4, 5, 6]);
+        let ids = Postings::intersect_sorted_slices(&[a.as_slice(), b.as_slice()]);
+        assert!(ids.is_empty());
     }
 }

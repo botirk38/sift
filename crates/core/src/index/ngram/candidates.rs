@@ -1,9 +1,6 @@
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
-
 use super::gram::{Gram, GramMatch, GramWindows, LiteralNarrowing};
 use super::index::Index;
-use super::storage::postings::Postings;
+use crate::index::postings::Postings;
 
 /// Dense membership over indexed file ids (one bit per file).
 struct FileIdSet {
@@ -63,7 +60,7 @@ impl Index {
                 id_lists.push(ids);
             }
         }
-        Self::merge_sorted_runs(id_lists)
+        Postings::merge_sorted_runs(id_lists)
     }
 
     fn posting_ids(&self, lit: &[u8], gram_match: GramMatch) -> Option<Vec<u32>> {
@@ -115,7 +112,7 @@ impl Index {
                         }
                         slices.push(s);
                     }
-                    let ids = Self::intersect_sorted_slices(&slices);
+                    let ids = Postings::intersect_sorted_slices(&slices);
                     if ids.is_empty() { None } else { Some(ids) }
                 }
                 GramMatch::AsciiCase => {
@@ -163,73 +160,5 @@ impl Index {
         let payload_len = storage.postings.payload_len();
         let end = storage.lexicon.posting_byte_end(entry.offset, payload_len);
         storage.postings.slice(start, end.saturating_sub(start))
-    }
-
-    pub(crate) fn intersect_sorted_slices(slices: &[&[u8]]) -> Vec<u32> {
-        if slices.is_empty() {
-            return Vec::new();
-        }
-        if slices.len() == 1 {
-            return Postings::decode_sorted(slices[0]).expect("postings validated at open");
-        }
-        if slices.len() == 2 {
-            let (first, second) = if slices[0].len() <= slices[1].len() {
-                (slices[0], slices[1])
-            } else {
-                (slices[1], slices[0])
-            };
-            if first == second {
-                return Postings::decode_sorted(first).expect("postings validated at open");
-            }
-            let ids = Postings::decode_sorted(first).expect("postings validated at open");
-            return Postings::intersect_sorted(&ids, second).expect("postings validated at open");
-        }
-        let mut ordered: Vec<&[u8]> = slices.to_vec();
-        ordered.sort_unstable_by_key(|slice| slice.len());
-        if ordered[1..].iter().all(|slice| *slice == ordered[0]) {
-            return Postings::decode_sorted(ordered[0]).expect("postings validated at open");
-        }
-        let mut cur = Postings::decode_sorted(ordered[0]).expect("postings validated at open");
-        for s in &ordered[1..] {
-            cur = Postings::intersect_sorted(&cur, s).expect("postings validated at open");
-            if cur.is_empty() {
-                break;
-            }
-        }
-        cur
-    }
-
-    pub(crate) fn merge_sorted_runs(lists: Vec<Vec<u32>>) -> Vec<u32> {
-        if lists.is_empty() {
-            return Vec::new();
-        }
-        if lists.len() == 1 {
-            return lists.into_iter().next().unwrap_or_default();
-        }
-
-        let total: usize = lists.iter().map(Vec::len).sum();
-        let mut heap: BinaryHeap<Reverse<(u32, usize)>> = BinaryHeap::with_capacity(lists.len());
-        let mut positions = vec![0usize; lists.len()];
-
-        for (list_idx, list) in lists.iter().enumerate() {
-            if let Some(&first) = list.first() {
-                heap.push(Reverse((first, list_idx)));
-            }
-        }
-
-        let mut out = Vec::with_capacity(total);
-        let mut last = None;
-        while let Some(Reverse((value, list_idx))) = heap.pop() {
-            if last != Some(value) {
-                out.push(value);
-                last = Some(value);
-            }
-
-            positions[list_idx] += 1;
-            if let Some(&next) = lists[list_idx].get(positions[list_idx]) {
-                heap.push(Reverse((next, list_idx)));
-            }
-        }
-        out
     }
 }

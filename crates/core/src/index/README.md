@@ -9,7 +9,7 @@ Store metadata, snapshot persistence, and search orchestration.
 | Metadata | `StoreMeta`, `IndexRecord` | Corpus configuration and kind catalog |
 | Orchestrator | `Indexes` | `open` / `load` / `build`, query, and hydration |
 | Snapshot storage | `SnapshotId`, `Files` | Committed artifact layout and shared file IDs |
-| Kind | `ngram::Index` | First shipped kind |
+| Kind | `ngram::Index`, `ast::Index` | Shipped kinds |
 
 ```
 index/
@@ -17,7 +17,9 @@ index/
   indexes.rs   -- Indexes: open/load/build + query/hydrate
   files.rs     -- Snapshot-owned FileId → File map
   disk.rs      -- atomic persistence, leases, manifests
+  postings.rs  -- shared posting-list container (SIFTPST3)
   ngram/       -- runtime-width N-gram index (default width 3)
+  ast/         -- AST index (language map + node-kind postings)
 ```
 
 ## Modules
@@ -30,7 +32,9 @@ index/
 | [`disk.rs`](disk.rs) | Snapshot persistence |
 | [`kinds.rs`](kinds.rs) | `FileId` |
 | [`meta.rs`](meta.rs) | `StoreMeta` |
+| [`postings.rs`](postings.rs) | Shared posting-list container |
 | [`ngram/`](ngram/) | N-gram implementation |
+| [`ast/`](ast/) | AST implementation (tree-sitter + ast-grep-core) |
 
 ## API
 

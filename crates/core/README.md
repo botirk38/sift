@@ -44,6 +44,7 @@ StoreMeta + IndexRecord ──Indexes::build──> snapshot on disk
 |--------|-------------|
 | [`index/`](src/index/) | Metadata, records, files, disk snapshots, Indexes |
 | [`index/ngram/`](src/index/ngram/) | N-gram index implementation |
+| [`index/ast/`](src/index/ast/) | AST index implementation |
 | [`search/`](src/search/) | Query, Searcher, inputs, events |
 | [`candidates/`](src/candidates/) | Planning and resolution |
 

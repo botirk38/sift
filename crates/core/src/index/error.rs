@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use super::ast::AstIndexError;
 use super::ngram::NGramIndexError;
 
 /// Errors specific to the index layer.
@@ -10,6 +11,9 @@ pub enum IndexError {
 
     #[error(transparent)]
     NGram(#[from] NGramIndexError),
+
+    #[error(transparent)]
+    Ast(#[from] AstIndexError),
 
     #[error("IO error inspecting index path {path}: {source}")]
     Io {

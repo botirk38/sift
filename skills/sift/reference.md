@@ -48,7 +48,7 @@ sift --sift-dir .sift index build --index ngram --width 3 .
 - Search may queue background indexing for unindexed hit paths (when the daemon is enabled).
 - With the daemon running, filesystem watches refresh the index after corpus changes.
 - `PATH` defaults to `.` and must be a **directory**.
-- Repeatable `--index ngram` with optional `--width` / `--norm` (after `--index`) selects kinds to build (default: ngram width 3).
+- Repeatable `--index KIND` selects kinds to build (default: ngram width 3). Kinds: `ngram` (optional `--width` / `--norm` after it) and `ast` (tree-sitter node-kind index over rust/python/javascript/typescript/tsx/go/java; opt-in, powers upcoming structural search).
 - Search paths must lie under the indexed **corpus root** when an index exists.
 
 ## Binary upgrade

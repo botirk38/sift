@@ -12,7 +12,7 @@ Store metadata, snapshot persistence, and query orchestration via
 | Metadata | `StoreMeta`, `IndexRecord` | Corpus configuration and index catalog |
 | Orchestrator | `Indexes` | `open` / `load` / `build`, query, and hydration |
 | Snapshot storage | `SnapshotId`, `Files` | Committed artifact layout and shared file IDs |
-| Kind impl | `ngram::Index` | Kind artifacts and query narrowing |
+| Kind impl | `ngram::Index`, `ast::Index` | Kind artifacts and query narrowing |
 
 CLI owns daemon orchestration (`ReconcileOutcome::rebuild`, path debouncing). Core does
 not expose `reconcile`, `unindexed_hit_paths`, or walk-merge helpers on
@@ -52,7 +52,8 @@ is no public index trait or public snapshot type.
 
 ## Do NOT
 
-- Add N-gram logic outside `ngram/`.
+- Add N-gram logic outside `ngram/` or AST logic outside `ast/`. The shared
+  posting-list container lives in `postings.rs`.
 - Add daemon or CLI orchestration to core.
 - Add free functions — use methods on the owning type.
 - Add parallel `open` / `open_or_create` (or mode enums that recreate that
