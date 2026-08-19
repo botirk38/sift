@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ops::Range;
 
 use crate::search::input::Origin;
@@ -12,20 +13,19 @@ pub enum SearchEvent {
     End(Origin),
 }
 
+/// One match in a haystack, with optional replacement text for that range.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Replacement {
-    pub text: Vec<u8>,
-    pub matches: Vec<Vec<u8>>,
+pub struct Span {
+    pub range: Range<usize>,
+    pub replacement: Option<Vec<u8>>,
 }
 
-impl Replacement {
-    /// A replacement whose haystack is a single match span.
+impl Span {
     #[must_use]
-    pub fn one(text: Vec<u8>) -> Self {
-        Self {
-            text: text.clone(),
-            matches: vec![text],
-        }
+    pub fn text<'a>(&'a self, haystack: &'a [u8]) -> &'a [u8] {
+        self.replacement
+            .as_deref()
+            .unwrap_or_else(|| haystack.get(self.range.clone()).unwrap_or(&[]))
     }
 }
 
@@ -35,8 +35,28 @@ pub struct MatchEvent {
     pub line_number: Option<u64>,
     pub absolute_byte_offset: Option<u64>,
     pub bytes: Vec<u8>,
-    pub ranges: Vec<Range<usize>>,
-    pub replacement: Option<Replacement>,
+    pub spans: Vec<Span>,
+}
+
+impl MatchEvent {
+    /// Line bytes after interpolating replacements, or the original bytes.
+    #[must_use]
+    pub fn line_bytes(&self) -> Cow<'_, [u8]> {
+        if self.spans.iter().all(|span| span.replacement.is_none()) {
+            Cow::Borrowed(&self.bytes)
+        } else {
+            let mut out = Vec::new();
+            let mut last = 0;
+            for span in &self.spans {
+                let start = span.range.start.min(self.bytes.len());
+                out.extend_from_slice(&self.bytes[last.min(self.bytes.len())..start]);
+                out.extend_from_slice(span.text(&self.bytes));
+                last = span.range.end.min(self.bytes.len());
+            }
+            out.extend_from_slice(&self.bytes[last.min(self.bytes.len())..]);
+            Cow::Owned(out)
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

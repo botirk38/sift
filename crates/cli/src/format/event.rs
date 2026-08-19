@@ -106,8 +106,8 @@ impl<'a> EventRenderer<'a> {
             self.write_display_path(
                 &event.origin,
                 event.line_number,
-                event.ranges.first().and_then(|range| {
-                    u64::try_from(range.start)
+                event.spans.first().and_then(|span| {
+                    u64::try_from(span.range.start)
                         .ok()
                         .and_then(|start| start.checked_add(1))
                 }),
@@ -115,34 +115,24 @@ impl<'a> EventRenderer<'a> {
             self.terminator();
         }
         if matches!(self.output.mode, SearchMode::Print(Hit::Span)) {
-            for (index, range) in event.ranges.iter().enumerate() {
-                self.write_prefix(event, range.start);
-                if let Some(replacement) = event
-                    .replacement
-                    .as_ref()
-                    .and_then(|replacement| replacement.matches.get(index))
-                {
-                    self.bytes.extend(replacement);
-                } else {
-                    self.bytes.extend(&event.bytes[range.clone()]);
-                }
+            for span in &event.spans {
+                self.write_prefix(event, span.range.start);
+                self.bytes.extend(span.text(&event.bytes));
                 self.terminator();
             }
             return;
         }
-        let line = event
-            .replacement
-            .as_ref()
-            .map_or(event.bytes.as_slice(), |replacement| {
-                replacement.text.as_slice()
-            });
+        let line = event.line_bytes();
         let line = if self.output.lines.trim() {
-            Self::trim_ascii(line)
+            Self::trim_ascii(&line)
         } else {
-            line
+            &line
         };
         let line = line.strip_suffix(b"\n").unwrap_or(line);
-        self.write_prefix(event, event.ranges.first().map_or(0, |range| range.start));
+        self.write_prefix(
+            event,
+            event.spans.first().map_or(0, |span| span.range.start),
+        );
         if self.can_color_matches(event, line) {
             self.write_colored_match_line(event, line);
         } else {
@@ -271,7 +261,7 @@ impl<'a> EventRenderer<'a> {
     fn can_color_matches(&self, event: &MatchEvent, line: &[u8]) -> bool {
         matches!(self.output.records.color_output(), ColorOutput::Ansi)
             && self.output.lines.columns.is_none()
-            && event.replacement.is_none()
+            && event.spans.iter().all(|span| span.replacement.is_none())
             && line == event.bytes.strip_suffix(b"\n").unwrap_or(&event.bytes)
     }
 
@@ -286,7 +276,8 @@ impl<'a> EventRenderer<'a> {
             self.bytes.extend(color);
         }
         let mut cursor = 0;
-        for range in &event.ranges {
+        for span in &event.spans {
+            let range = &span.range;
             let end = range.end.min(line.len());
             let start = range.start.min(end);
             self.bytes.extend(&line[cursor..start]);
@@ -472,12 +463,13 @@ impl EventRenderer<'_> {
                 .json_stats
                 .entry(Arc::from(event.origin.key().as_ref()))
                 .or_default();
-            stats.matches += event.ranges.len() as u64;
+            stats.matches += event.spans.len() as u64;
             stats.matched_lines += 1;
             let submatches: Vec<_> = event
-                .ranges
+                .spans
                 .iter()
-                .map(|range| {
+                .map(|span| {
+                    let range = &span.range;
                     serde_json::json!({
                         "match": { "text": String::from_utf8_lossy(&event.bytes[range.clone()]).to_string() },
                         "start": range.start,
