@@ -38,10 +38,10 @@ impl Matcher {
         }
     }
 
-    pub(super) fn is_match(&self, haystack: &[u8]) -> Result<bool, SearchError> {
+    pub(super) fn matched(&self, haystack: &[u8]) -> Result<bool, SearchError> {
         match &self.engine {
-            Engine::Rust(engine) => Ok(engine.is_match(haystack)),
-            Engine::Pcre2(engine) => engine.is_match(haystack),
+            Engine::Rust(engine) => Ok(engine.matched(haystack)),
+            Engine::Pcre2(engine) => engine.matched(haystack),
         }
     }
 

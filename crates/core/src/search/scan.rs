@@ -177,7 +177,7 @@ impl<'h> FileScan<'h> {
         let matched = match self.multiline.as_ref() {
             None => self
                 .matcher
-                .is_match(line.without_break(self.brk, self.options.crlf()))?,
+                .matched(line.without_break(self.brk, self.options.crlf()))?,
             Some(spans) => spans.overlaps(&line),
         };
         let hit = matched != self.options.invert_match();

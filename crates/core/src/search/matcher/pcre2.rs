@@ -48,7 +48,7 @@ impl Pcre2 {
         Ok(Self { regex })
     }
 
-    pub(super) fn is_match(&self, haystack: &[u8]) -> Result<bool, SearchError> {
+    pub(super) fn matched(&self, haystack: &[u8]) -> Result<bool, SearchError> {
         self.regex
             .is_match(haystack)
             .map_err(|err| SearchError::Match(err.to_string()))

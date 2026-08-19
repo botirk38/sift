@@ -68,7 +68,7 @@ impl Rust {
         Ok(Self { regex })
     }
 
-    pub(super) fn is_match(&self, haystack: &[u8]) -> bool {
+    pub(super) fn matched(&self, haystack: &[u8]) -> bool {
         self.regex.is_match(haystack)
     }
 
