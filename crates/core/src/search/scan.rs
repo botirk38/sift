@@ -249,7 +249,7 @@ impl<'h> FileScan<'h> {
         {
             self.hits = self
                 .hits
-                .saturating_add(self.matcher.ranges(line.bytes())?.len());
+                .saturating_add(self.matcher.spans(line.bytes(), None)?.len());
         } else if !(matches!(self.mode.hit(), Some(Hit::Span))
             && !self.options.invert_match()
             && self.multiline.is_some())

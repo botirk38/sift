@@ -1,7 +1,10 @@
 use std::borrow::Cow;
+#[cfg(test)]
 use std::ops::Range;
 
 use memchr::{memchr, memchr2};
+
+use crate::search::event::Span;
 
 pub(super) struct Line<'a> {
     pub number: Option<u64>,
@@ -31,11 +34,11 @@ impl Break {
 
 /// Absolute regex spans in the searchable bytes for a multiline search.
 pub(super) struct Multiline {
-    spans: Vec<Range<usize>>,
+    spans: Vec<Span>,
 }
 
 impl Multiline {
-    pub(super) const fn new(spans: Vec<Range<usize>>) -> Self {
+    pub(super) const fn new(spans: Vec<Span>) -> Self {
         Self { spans }
     }
 
@@ -49,22 +52,19 @@ impl Multiline {
 
     pub(super) fn overlaps(&self, line: &Line<'_>) -> bool {
         let (start, end) = Self::bounds(line);
-        self.spans
-            .iter()
-            .any(|span| start < span.end && end > span.start)
+        self.spans.iter().any(|span| {
+            let range = &span.range;
+            start < range.end && end > range.start
+        })
     }
 
-    /// Spans whose start lies on this line, with their index in the span list.
-    pub(super) fn starting_on(
-        &self,
-        line: &Line<'_>,
-    ) -> impl Iterator<Item = (usize, Range<usize>)> + '_ {
+    /// Spans whose start lies on this line.
+    pub(super) fn starting_on(&self, line: &Line<'_>) -> impl Iterator<Item = &Span> + '_ {
         let (start, end) = Self::bounds(line);
-        self.spans
-            .iter()
-            .enumerate()
-            .filter(move |(_, span)| span.start >= start && span.start < end)
-            .map(|(index, span)| (index, span.clone()))
+        self.spans.iter().filter(move |span| {
+            let range = &span.range;
+            range.start >= start && range.start < end
+        })
     }
 
     /// Whether a replace already consumed this line as the middle of a span.
@@ -73,7 +73,7 @@ impl Multiline {
         let content_end = start.saturating_add(line.without_terminator(term, crlf).len());
         self.spans
             .iter()
-            .any(|span| span.start < start && span.end >= content_end)
+            .any(|span| span.range.start < start && span.range.end >= content_end)
     }
 
     fn bounds(line: &Line<'_>) -> (usize, usize) {

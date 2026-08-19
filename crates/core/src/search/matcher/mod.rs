@@ -1,10 +1,9 @@
 mod pcre2;
 mod rust;
-
-use std::ops::Range;
+mod template;
 
 use crate::SearchError;
-use crate::search::event::Replacement;
+use crate::search::event::Span;
 use crate::search::options::RegexEngine;
 use crate::search::query::Query;
 
@@ -45,21 +44,14 @@ impl Matcher {
         }
     }
 
-    pub(super) fn ranges(&self, haystack: &[u8]) -> Result<Vec<Range<usize>>, SearchError> {
-        match &self.engine {
-            Engine::Rust(engine) => Ok(engine.ranges(haystack)),
-            Engine::Pcre2(engine) => engine.ranges(haystack),
-        }
-    }
-
-    pub(super) fn replace(
+    pub(super) fn spans(
         &self,
         haystack: &[u8],
-        template: &[u8],
-    ) -> Result<Replacement, SearchError> {
+        template: Option<&[u8]>,
+    ) -> Result<Vec<Span>, SearchError> {
         match &self.engine {
-            Engine::Rust(engine) => Ok(engine.replace(haystack, template)),
-            Engine::Pcre2(engine) => engine.replace(haystack, template),
+            Engine::Rust(engine) => Ok(engine.spans(haystack, template)),
+            Engine::Pcre2(engine) => engine.spans(haystack, template),
         }
     }
 }

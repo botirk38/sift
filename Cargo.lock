@@ -405,26 +405,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "grep-matcher"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9417543f4870fc8f1c8e1af870afae2431007626d9e703fce6471c468d33847"
-dependencies = [
- "memchr",
-]
-
-[[package]]
-name = "grep-pcre2"
-version = "0.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b752bb6f57dd3716e55b63a33ca05b5825c3d66cd427468874a5564af6ca365c"
-dependencies = [
- "grep-matcher",
- "log",
- "pcre2",
-]
-
-[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -954,12 +934,11 @@ dependencies = [
  "encoding_rs",
  "fastio",
  "fslock",
- "grep-matcher",
- "grep-pcre2",
  "ignore",
  "integer-encoding",
  "memchr",
  "memmap2",
+ "pcre2",
  "rayon",
  "regex",
  "regex-syntax",

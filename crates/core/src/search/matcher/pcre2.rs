@@ -1,41 +1,45 @@
-use std::ops::Range;
-
-use grep_matcher::{Captures, Matcher as GrepMatcher};
-use grep_pcre2::{RegexMatcher as Pcre2Matcher, RegexMatcherBuilder as Pcre2MatcherBuilder};
+use pcre2::bytes::{Captures, Regex, RegexBuilder};
 
 use crate::SearchError;
-use crate::search::event::Replacement;
-use crate::search::options::CaseMode;
-use crate::search::query::Query;
+use crate::search::event::Span;
+use crate::search::options::Case;
+use crate::search::query::{PatternBound, Query};
+
+use super::template::{Groups, Template};
 
 #[derive(Debug, Clone)]
 pub(super) struct Pcre2 {
-    regex: Pcre2Matcher,
+    regex: Regex,
 }
 
 impl Pcre2 {
     pub(super) fn compile(query: &Query) -> Result<Self, SearchError> {
         let opts = &query.options;
-        let mut builder = Pcre2MatcherBuilder::new();
-        builder.multi_line(true);
-        match opts.case_mode {
-            CaseMode::Sensitive => {}
-            CaseMode::Insensitive => {
-                builder.caseless(true);
+        let mut joined = String::new();
+        for (i, pattern) in query.patterns.iter().enumerate() {
+            if i > 0 {
+                joined.push('|');
             }
-            CaseMode::Smart => {
-                builder.case_smart(true);
+            joined.push_str("(?:");
+            if opts.fixed_strings() {
+                joined.push_str(&pcre2::escape(pattern));
+            } else {
+                joined.push_str(pattern);
             }
+            joined.push(')');
         }
+        let pattern = match query.bound() {
+            Some(PatternBound::Line) => format!("^(?:{joined})$"),
+            Some(PatternBound::Word) => format!(r"(?<!\w)(?:{joined})(?!\w)"),
+            None => joined,
+        };
+
+        let mut builder = RegexBuilder::new();
+        builder.multi_line(true);
+        builder.caseless(query.case() == Case::Insensitive);
         builder.utf(opts.unicode);
         builder.ucp(opts.unicode);
-        builder.fixed_strings(opts.fixed_strings());
-        if opts.word_regexp() {
-            builder.word(true);
-        }
-        if opts.line_regexp() {
-            builder.whole_line(true);
-        }
+        builder.jit_if_available(true);
         if opts.crlf() {
             builder.crlf(true);
         }
@@ -43,7 +47,7 @@ impl Pcre2 {
             builder.dotall(true);
         }
         let regex = builder
-            .build_many(&query.patterns)
+            .build(&pattern)
             .map_err(|err| SearchError::RegexBuild(err.to_string()))?;
         Ok(Self { regex })
     }
@@ -54,41 +58,35 @@ impl Pcre2 {
             .map_err(|err| SearchError::Match(err.to_string()))
     }
 
-    pub(super) fn ranges(&self, haystack: &[u8]) -> Result<Vec<Range<usize>>, SearchError> {
-        let mut ranges = Vec::new();
-        self.regex
-            .find_iter(haystack, |m| {
-                ranges.push(m.start()..m.end());
-                true
-            })
-            .map_err(|err| SearchError::Match(err.to_string()))?;
-        Ok(ranges)
-    }
-
-    pub(super) fn replace(
+    pub(super) fn spans(
         &self,
         haystack: &[u8],
-        template: &[u8],
-    ) -> Result<Replacement, SearchError> {
-        let mut caps = self
-            .regex
-            .new_captures()
-            .map_err(|err| SearchError::Match(err.to_string()))?;
-        let mut text = Vec::new();
-        let mut matches = Vec::new();
-        self.regex
-            .replace_with_captures(haystack, &mut caps, &mut text, |captures, dst| {
-                let start = dst.len();
-                captures.interpolate(
-                    |name| self.regex.capture_index(name),
-                    haystack,
-                    template,
-                    dst,
-                );
-                matches.push(dst[start..].to_vec());
-                true
-            })
-            .map_err(|err| SearchError::Match(err.to_string()))?;
-        Ok(Replacement { text, matches })
+        template: Option<&[u8]>,
+    ) -> Result<Vec<Span>, SearchError> {
+        let mut spans = Vec::new();
+        for caps in self.regex.captures_iter(haystack) {
+            let caps = caps.map_err(|err| SearchError::Match(err.to_string()))?;
+            spans.push(self.span(&caps, template));
+        }
+        Ok(spans)
+    }
+
+    fn span(&self, caps: &Captures<'_>, template: Option<&[u8]>) -> Span {
+        let range = caps.get(0).map_or(0..0, |m| m.start()..m.end());
+        let replacement = template.map(|template| {
+            let mut text = Vec::new();
+            Template(template).expand(&self.groups(caps), &mut text);
+            text
+        });
+        Span { range, replacement }
+    }
+
+    fn groups<'a>(&'a self, caps: &'a Captures<'a>) -> Groups<'a> {
+        Groups {
+            slots: (0..caps.len())
+                .map(|i| caps.get(i).map(|m| m.as_bytes()))
+                .collect(),
+            names: self.regex.capture_names(),
+        }
     }
 }

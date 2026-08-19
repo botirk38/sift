@@ -1,16 +1,16 @@
-use std::ops::Range;
-
-use regex::bytes::{Regex, RegexBuilder};
-use regex_syntax::ast::{self, Ast};
+use regex::bytes::{Captures, Regex, RegexBuilder};
 
 use crate::SearchError;
-use crate::search::event::Replacement;
-use crate::search::options::CaseMode;
-use crate::search::query::Query;
+use crate::search::event::Span;
+use crate::search::options::Case;
+use crate::search::query::{PatternBound, Query};
+
+use super::template::{Groups, Template};
 
 #[derive(Debug, Clone)]
 pub(super) struct Rust {
     regex: Regex,
+    names: Vec<Option<String>>,
 }
 
 impl Rust {
@@ -29,23 +29,18 @@ impl Rust {
             }
             joined.push(')');
         }
-        let caseless = match opts.case_mode {
-            CaseMode::Sensitive => false,
-            CaseMode::Insensitive => true,
-            CaseMode::Smart => Self::smart_caseless(&joined),
-        };
-        let pattern = if opts.line_regexp() {
-            format!("^(?:{joined})$")
-        } else if opts.word_regexp() {
-            format!(r"\b{{start-half}}(?:{joined})\b{{end-half}}")
-        } else {
-            joined
+        let pattern = match query.bound() {
+            Some(PatternBound::Line) => format!("^(?:{joined})$"),
+            Some(PatternBound::Word) => {
+                format!(r"\b{{start-half}}(?:{joined})\b{{end-half}}")
+            }
+            None => joined,
         };
 
         let mut builder = RegexBuilder::new(&pattern);
         builder.multi_line(true);
         builder.unicode(opts.unicode);
-        builder.case_insensitive(caseless);
+        builder.case_insensitive(query.case() == Case::Insensitive);
         if opts.crlf() {
             builder.crlf(true);
         }
@@ -65,112 +60,41 @@ impl Rust {
         let regex = builder
             .build()
             .map_err(|err| SearchError::RegexBuild(err.to_string()))?;
-        Ok(Self { regex })
+        let names = regex
+            .capture_names()
+            .map(|name| name.map(str::to_owned))
+            .collect();
+        Ok(Self { regex, names })
     }
 
     pub(super) fn matched(&self, haystack: &[u8]) -> bool {
         self.regex.is_match(haystack)
     }
 
-    pub(super) fn ranges(&self, haystack: &[u8]) -> Vec<Range<usize>> {
-        self.regex.find_iter(haystack).map(|m| m.range()).collect()
-    }
-
-    pub(super) fn replace(&self, haystack: &[u8], template: &[u8]) -> Replacement {
-        let mut text = Vec::new();
-        let mut matches = Vec::new();
-        let mut last = 0;
+    pub(super) fn spans(&self, haystack: &[u8], template: Option<&[u8]>) -> Vec<Span> {
+        let mut spans = Vec::new();
         for caps in self.regex.captures_iter(haystack) {
-            let Some(m) = caps.get(0) else { continue };
-            text.extend_from_slice(&haystack[last..m.start()]);
-            let start = text.len();
-            caps.expand(template, &mut text);
-            matches.push(text[start..].to_vec());
-            last = m.end();
+            spans.push(Self::span(&caps, template, &self.names));
         }
-        text.extend_from_slice(&haystack[last..]);
-        Replacement { text, matches }
+        spans
     }
 
-    fn smart_caseless(pattern: &str) -> bool {
-        let Ok(ast) = regex_syntax::ast::parse::Parser::new().parse(pattern) else {
-            return false;
-        };
-        let mut literal = false;
-        let mut uppercase = false;
-        Self::ast_case(&ast, &mut literal, &mut uppercase);
-        literal && !uppercase
+    fn span(caps: &Captures<'_>, template: Option<&[u8]>, names: &[Option<String>]) -> Span {
+        let range = caps.get(0).map_or(0..0, |m| m.range());
+        let replacement = template.map(|template| {
+            let mut text = Vec::new();
+            Template(template).expand(&Self::groups(caps, names), &mut text);
+            text
+        });
+        Span { range, replacement }
     }
 
-    fn ast_case(ast: &Ast, literal: &mut bool, uppercase: &mut bool) {
-        if *literal && *uppercase {
-            return;
-        }
-        match ast {
-            Ast::Empty(_)
-            | Ast::Flags(_)
-            | Ast::Dot(_)
-            | Ast::Assertion(_)
-            | Ast::ClassUnicode(_)
-            | Ast::ClassPerl(_) => {}
-            Ast::Literal(lit) => {
-                *literal = true;
-                *uppercase |= lit.c.is_uppercase();
-            }
-            Ast::ClassBracketed(class) => Self::class_set_case(&class.kind, literal, uppercase),
-            Ast::Repetition(rep) => Self::ast_case(&rep.ast, literal, uppercase),
-            Ast::Group(group) => Self::ast_case(&group.ast, literal, uppercase),
-            Ast::Alternation(alt) => {
-                for child in &alt.asts {
-                    Self::ast_case(child, literal, uppercase);
-                }
-            }
-            Ast::Concat(concat) => {
-                for child in &concat.asts {
-                    Self::ast_case(child, literal, uppercase);
-                }
-            }
-        }
-    }
-
-    fn class_set_case(set: &ast::ClassSet, literal: &mut bool, uppercase: &mut bool) {
-        if *literal && *uppercase {
-            return;
-        }
-        match set {
-            ast::ClassSet::Item(item) => Self::class_item_case(item, literal, uppercase),
-            ast::ClassSet::BinaryOp(op) => {
-                Self::class_set_case(&op.lhs, literal, uppercase);
-                Self::class_set_case(&op.rhs, literal, uppercase);
-            }
-        }
-    }
-
-    fn class_item_case(item: &ast::ClassSetItem, literal: &mut bool, uppercase: &mut bool) {
-        if *literal && *uppercase {
-            return;
-        }
-        match item {
-            ast::ClassSetItem::Empty(_)
-            | ast::ClassSetItem::Ascii(_)
-            | ast::ClassSetItem::Unicode(_)
-            | ast::ClassSetItem::Perl(_) => {}
-            ast::ClassSetItem::Literal(lit) => {
-                *literal = true;
-                *uppercase |= lit.c.is_uppercase();
-            }
-            ast::ClassSetItem::Range(range) => {
-                *literal = true;
-                *uppercase |= range.start.c.is_uppercase() || range.end.c.is_uppercase();
-            }
-            ast::ClassSetItem::Bracketed(class) => {
-                Self::class_set_case(&class.kind, literal, uppercase);
-            }
-            ast::ClassSetItem::Union(union) => {
-                for child in &union.items {
-                    Self::class_item_case(child, literal, uppercase);
-                }
-            }
+    fn groups<'a>(caps: &'a Captures<'a>, names: &'a [Option<String>]) -> Groups<'a> {
+        Groups {
+            slots: (0..caps.len())
+                .map(|i| caps.get(i).map(|m| m.as_bytes()))
+                .collect(),
+            names,
         }
     }
 }

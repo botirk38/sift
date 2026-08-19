@@ -29,7 +29,7 @@ impl RegexEngine {
     /// Linked PCRE2 library version (`major`, `minor`).
     #[must_use]
     pub fn pcre2_version() -> (u32, u32) {
-        grep_pcre2::version()
+        pcre2::version()
     }
 }
 

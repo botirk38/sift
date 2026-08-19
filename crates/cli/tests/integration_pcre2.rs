@@ -151,3 +151,15 @@ fn engine_equals_form_is_supported() {
     assert_eq!(normalize_stdout(&out), "hay.txt:bar\n");
     assert_stderr_empty(&out);
 }
+
+#[test]
+fn pcre2_replace_interpolates_capture_groups() {
+    let p = TestProject::new("pcre2-replace-captures");
+    p.write("a.txt", "foo123bar\n");
+
+    let out = p.walk_output(["--pcre2", "-r", "${1}_${2}", "(foo)(\\d+)"]);
+
+    assert_success(&out);
+    assert_stdout_eq(&out, "a.txt:foo_123bar\n");
+    assert_stderr_empty(&out);
+}
