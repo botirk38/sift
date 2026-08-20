@@ -41,7 +41,10 @@ impl IndexRecord {
     /// Default catalog shipped with the engine.
     #[must_use]
     pub fn default_catalog() -> Vec<Self> {
-        vec![Self::ngram(GramWidth::TRIGRAM)]
+        vec![
+            Self::ngram(GramWidth::TRIGRAM),
+            Self::ngram_norm(GramWidth::TRIGRAM, GramNorm::AsciiLower),
+        ]
     }
 
     /// Snapshot namespace / display name (`ngram-3`, `ngram-5-ascii-lower`).
@@ -122,9 +125,26 @@ pub(crate) enum Kind {
 }
 
 impl Kind {
-    pub(crate) fn query(&self, query: &Query) -> crate::Result<Vec<FileId>> {
+    pub(crate) fn query(&self, query: &Query) -> crate::Result<Option<Vec<FileId>>> {
         match self {
             Self::Ngram(index) => index.query(query),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_catalog_is_identity_and_ascii_lower_trigram() {
+        let catalog = IndexRecord::default_catalog();
+        assert_eq!(
+            catalog,
+            vec![
+                IndexRecord::ngram(GramWidth::TRIGRAM),
+                IndexRecord::ngram_norm(GramWidth::TRIGRAM, GramNorm::AsciiLower),
+            ]
+        );
     }
 }

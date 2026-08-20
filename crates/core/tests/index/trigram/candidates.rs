@@ -85,7 +85,7 @@ fn literal_candidates_narrow_to_expected_file() {
 }
 
 #[test]
-fn smart_case_lowercase_narrows_uppercase_corpus() {
+fn identity_only_smart_case_lowercase_scans_all_indexed() {
     let tmp = TempDir::new().expect("tempdir");
     let corpus = tmp.path().join("corpus");
     fs::create_dir_all(&corpus).expect("create corpus");
@@ -115,12 +115,11 @@ fn smart_case_lowercase_narrows_uppercase_corpus() {
         options,
         FilterAdmission::Full,
     );
-    assert_eq!(candidates.len(), 1);
-    assert_eq!(candidates[0].rel_path(), Path::new("hit.rs"));
+    assert_eq!(candidates.len(), 42);
 }
 
 #[test]
-fn case_insensitive_uppercase_corpus_narrows() {
+fn identity_only_insensitive_scans_all_indexed() {
     let tmp = TempDir::new().expect("tempdir");
     let corpus = tmp.path().join("corpus");
     fs::create_dir_all(&corpus).expect("create corpus");
@@ -150,12 +149,11 @@ fn case_insensitive_uppercase_corpus_narrows() {
         options,
         FilterAdmission::Full,
     );
-    assert_eq!(candidates.len(), 1);
-    assert_eq!(candidates[0].rel_path(), Path::new("hit.rs"));
+    assert_eq!(candidates.len(), 42);
 }
 
 #[test]
-fn case_insensitive_alternation_narrows_uppercase_symbols() {
+fn identity_only_insensitive_alternation_scans_all_indexed() {
     let tmp = TempDir::new().expect("tempdir");
     let corpus = tmp.path().join("corpus");
     fs::create_dir_all(&corpus).expect("create corpus");
@@ -189,7 +187,59 @@ fn case_insensitive_alternation_narrows_uppercase_symbols() {
         options,
         FilterAdmission::Full,
     );
-    assert_eq!(candidates.len(), 4);
+    assert_eq!(candidates.len(), 84);
+}
+
+#[test]
+fn default_catalog_casei_alternation_matches_sensitive_count() {
+    let tmp = TempDir::new().expect("tempdir");
+    let corpus = tmp.path().join("corpus");
+    fs::create_dir_all(&corpus).expect("create corpus");
+    fs::write(corpus.join("a.rs"), "ERR_SYS\n").expect("write a");
+    fs::write(corpus.join("b.rs"), "PME_TURN_OFF\n").expect("write b");
+    fs::write(corpus.join("c.rs"), "LINK_REQ_RST\n").expect("write c");
+    fs::write(corpus.join("d.rs"), "CFG_BME_EVT\n").expect("write d");
+    for i in 0..80 {
+        fs::write(
+            corpus.join(format!("noise{i}.rs")),
+            format!(
+                "fn noise_{i}() {{ let err_code = 1; let cfg_x = 2; let link_y = 3; let pme_z = 4; }}\n"
+            ),
+        )
+        .expect("write noise");
+    }
+
+    let sift_dir = tmp.path().join(".sift");
+    let root = corpus.canonicalize().unwrap_or_else(|_| corpus.clone());
+    let meta = sample_store_meta(root, IndexRecord::default_catalog());
+    let mut indexes = Indexes::open(&sift_dir, &meta).expect("open indexes");
+    indexes.refresh_meta(&meta).expect("refresh meta");
+    indexes.build().expect("build default catalog");
+
+    let indexes = open_indexes(&sift_dir);
+    let pattern = "ERR_SYS|PME_TURN_OFF|LINK_REQ_RST|CFG_BME_EVT".to_string();
+    let insensitive = index_candidates(
+        &indexes,
+        &corpus,
+        std::slice::from_ref(&pattern),
+        SearchOptions {
+            case_mode: CaseMode::Insensitive,
+            ..SearchOptions::default()
+        },
+        FilterAdmission::Full,
+    );
+    let sensitive = index_candidates(
+        &indexes,
+        &corpus,
+        &[pattern],
+        SearchOptions {
+            case_mode: CaseMode::Sensitive,
+            ..SearchOptions::default()
+        },
+        FilterAdmission::Full,
+    );
+    assert_eq!(insensitive.len(), sensitive.len());
+    assert_eq!(sensitive.len(), 4);
 }
 
 #[test]

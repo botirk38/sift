@@ -24,6 +24,24 @@ temp corpus per process (README scale table is stale). See [`README.md`](README.
 
 ## Sessions
 
+### 2026-08-20 — PR3 kinds opt into narrowing; default AsciiLower
+
+- **Tool:** benchsuite + `perf record -F 999 --call-graph fp -e task-clock`
+- **Change:** `Index::query` returns `Option` (`None` = no restriction). Default catalog is identity + ascii-lower trigram. `GramMatch::AsciiCase` deleted. Rebuilt `/tmp/benchsuite/linux.sift`.
+- **Wall-clock (benchsuite vs PR1 session numbers, same host/corpus, index rebuilt):**
+
+| Id | PR1 | PR3 | rg |
+|----|-----|-----|-----|
+| `linux_alternates_casei` | 0.814 s | 0.764 s | 0.892 s |
+| `linux_alternates` | — | 0.410 s | 0.999 s |
+| `linux_literal` | 0.269 s | 0.141 s | 0.573 s |
+
+Correctness 11/11. sift faster on 8/11. Case-insensitive alternation is now faster than rg; still slower than sensitive (`0.410 s`) because ascii-lower trigrams over-return (`--debug` 3948 vs 1101 candidates) and casei has more hits (241 vs 140 lines).
+
+- **CLI `linux_alternates_casei` after:** 0.50 s elapsed, **3.26 CPUs**, 1641 ms task-clock. Leaves: `Pool::put_value` 26%; `Rust::matched` 25%; teddy `find` 12%; `Pool::get_slow` 7%; `find_fwd` 6%. No `AsciiCase` product expand. Remaining hot leaf is the regex cache pool (PR4).
+- **Attributed module:** `crates/core/src/index/ngram/index.rs` / `indexes.rs` — Identity+`-i` declines; AsciiLower Exact-matches folded arms.
+- **Before / after:** `linux_alternates_casei` 0.814 s → 0.764 s (benchsuite). CLI ~0.71 s after PR1 → ~0.50 s.
+
 ### 2026-08-20 — PR2 cheap Index open (decode at write only)
 
 - **Tool:** benchsuite + `perf record -F 999 --call-graph fp -e task-clock`

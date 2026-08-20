@@ -185,6 +185,8 @@ impl Indexes {
         Ok(())
     }
 
+    /// Intersect kinds that restrict the query. A kind that returns `None`
+    /// does not participate. If none restrict, every indexed file id is used.
     pub(crate) fn query(&self, query: &Query) -> crate::Result<Vec<FileId>> {
         let Some(current) = &self.current else {
             return Ok(Vec::new());
@@ -192,14 +194,15 @@ impl Indexes {
         if current.kinds.is_empty() {
             return Ok(Vec::new());
         }
-        if current.kinds.len() == 1 {
-            return current.kinds[0].query(query);
+        let mut plans = Vec::new();
+        for kind in &current.kinds {
+            if let Some(ids) = kind.query(query)? {
+                plans.push(ids);
+            }
         }
-        let mut plans: Vec<Vec<FileId>> = current
-            .kinds
-            .iter()
-            .map(|idx| idx.query(query))
-            .collect::<crate::Result<_>>()?;
+        if plans.is_empty() {
+            return Ok(self.all_indexed_file_ids());
+        }
         plans.sort_by_key(Vec::len);
         let mut cur = plans.remove(0);
         for next in plans {

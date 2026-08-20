@@ -7,7 +7,7 @@ use crate::index::Files;
 use crate::search::{Case, Query};
 
 use super::build::IndexTables;
-use super::gram::{GramMatch, GramNorm, GramWidth};
+use super::gram::{GramNorm, GramWidth};
 use super::storage::lexicon::Lexicon;
 use super::storage::postings::Postings;
 
@@ -70,38 +70,33 @@ impl Index {
         self.storage.file_count
     }
 
-    /// Resolve candidate file ids for the query. Falls back to every indexed
-    /// file when the query cannot be narrowed.
+    /// Restrict candidate file ids when this kind can narrow the query.
+    ///
+    /// `None` means this kind does not restrict the file set.
     ///
     /// # Errors
     ///
     /// Returns an error if a posting list is corrupt.
-    pub(crate) fn query(&self, query: &Query) -> crate::Result<Vec<FileId>> {
-        let all_ids = || {
-            (0..self.storage.file_count)
-                .map(FileId::new)
-                .collect::<Vec<_>>()
-        };
+    pub(crate) fn query(&self, query: &Query) -> crate::Result<Option<Vec<FileId>>> {
         let Some(arms) = Self::extract_literal_arms(self.width, query) else {
-            return Ok(all_ids());
+            return Ok(None);
         };
-        let (arms, gram_match) = match (self.norm, query.case()) {
-            (GramNorm::Identity, Case::Insensitive) => (arms, GramMatch::AsciiCase),
-            (GramNorm::Identity, Case::Sensitive) => (arms, GramMatch::Exact),
-            (GramNorm::AsciiLower, Case::Sensitive) => return Ok(all_ids()),
-            (GramNorm::AsciiLower, Case::Insensitive) => {
-                let folded = arms
-                    .into_iter()
-                    .map(|arm| GramNorm::AsciiLower.normalize_literal(&arm))
-                    .collect();
-                (folded, GramMatch::Exact)
+        let arms = match (self.norm, query.case()) {
+            (GramNorm::Identity, Case::Sensitive) => arms,
+            (GramNorm::AsciiLower, Case::Insensitive) => arms
+                .into_iter()
+                .map(|arm| GramNorm::AsciiLower.normalize_literal(&arm))
+                .collect(),
+            (GramNorm::Identity, Case::Insensitive) | (GramNorm::AsciiLower, Case::Sensitive) => {
+                return Ok(None);
             }
         };
-        let ids = self.candidate_file_ids(&arms, gram_match)?;
-        Ok(ids
-            .into_iter()
-            .filter_map(|id| usize::try_from(id).ok().map(FileId::new))
-            .collect())
+        let ids = self.candidate_file_ids(&arms)?;
+        Ok(Some(
+            ids.into_iter()
+                .filter_map(|id| usize::try_from(id).ok().map(FileId::new))
+                .collect(),
+        ))
     }
 
     /// Decode-and-check every posting list. Used at write only; open trusts
