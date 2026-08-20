@@ -1,15 +1,19 @@
 use std::time::Duration;
 
+use crate::search::event::MatchEvent;
 use crate::search::hit::{Count, Listing, Match, MatchedFile};
 use crate::search::input::{Input, Origin};
 use crate::search::mode::SearchMode;
 use crate::search::stats::Stats;
 
-pub(super) struct FileReport {
+/// Per-input search result. Print/JSON read `events`; `matches` is the listing projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileReport {
     pub origin: Origin,
     pub matched: bool,
     pub hits: usize,
     pub matches: Vec<Match>,
+    pub events: Vec<MatchEvent>,
     pub bytes_searched: u64,
     pub binary: Option<u64>,
 }
@@ -21,6 +25,7 @@ impl FileReport {
             matched: false,
             hits: 0,
             matches: Vec::new(),
+            events: Vec::new(),
             bytes_searched: 0,
             binary: None,
         }
@@ -32,6 +37,7 @@ impl FileReport {
             matched: true,
             hits: 0,
             matches: Vec::new(),
+            events: Vec::new(),
             bytes_searched: 0,
             binary: None,
         }
@@ -96,16 +102,16 @@ impl Reports {
 }
 
 impl Listing {
-    fn push(&mut self, report: FileReport) {
+    fn push(&mut self, report: &FileReport) {
         match self {
-            Self::MatchingPaths(v) | Self::NonMatchingPaths(v) => v.push(report.origin),
+            Self::MatchingPaths(v) | Self::NonMatchingPaths(v) => v.push(report.origin.clone()),
             Self::Counts(v) => v.push(Count {
-                origin: report.origin,
+                origin: report.origin.clone(),
                 hits: report.hits,
             }),
             Self::Matches(v) => v.push(MatchedFile {
-                origin: report.origin,
-                matches: report.matches,
+                origin: report.origin.clone(),
+                matches: report.matches.clone(),
             }),
         }
     }
@@ -115,6 +121,8 @@ impl Listing {
 pub struct SearchReport {
     pub listed: Listing,
     pub stats: Stats,
+    /// Admitted per-file reports. Print/JSON read [`FileReport::events`].
+    pub files: Vec<FileReport>,
 }
 
 impl SearchReport {
@@ -122,11 +130,13 @@ impl SearchReport {
         Self {
             listed: Listing::empty(mode),
             stats: Stats::default(),
+            files: Vec::new(),
         }
     }
 
     pub(super) fn from(reports: Reports, mode: SearchMode, elapsed: Duration) -> Self {
         let mut listed = Listing::empty(mode);
+        let mut files = Vec::new();
         let mut files_with_matches = 0usize;
         let mut hits = 0usize;
 
@@ -136,7 +146,8 @@ impl SearchReport {
             }
             hits = hits.saturating_add(report.hits);
             if mode.admits(report.matched) {
-                listed.push(report);
+                listed.push(&report);
+                files.push(report);
             }
         }
 
@@ -158,7 +169,11 @@ impl SearchReport {
             elapsed,
         };
 
-        Self { listed, stats }
+        Self {
+            listed,
+            stats,
+            files,
+        }
     }
 
     /// Whether the search should exit successfully (ripgrep-compatible).

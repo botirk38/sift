@@ -122,6 +122,9 @@ impl Searcher {
                     for listed in Self::listing(&event, mode) {
                         report.push_match(listed);
                     }
+                    if matches!(mode, SearchMode::Print(_)) {
+                        report.events.push(event);
+                    }
                 }
             }
         }
@@ -523,6 +526,21 @@ mod tests {
             panic!("expected Matches");
         };
         assert_eq!(files[0].matches.len(), 2);
+    }
+
+    #[test]
+    fn execute_print_keeps_match_event_spans() {
+        let report = searcher("needle", SearchOptions::default())
+            .execute(
+                stream(b"needle here\n", Mention::Explicit),
+                SearchMode::Print(Hit::Line),
+            )
+            .expect("execute");
+        assert_eq!(report.files.len(), 1);
+        assert_eq!(report.files[0].events.len(), 1);
+        let event = &report.files[0].events[0];
+        assert_eq!(event.spans[0].range, 0..6);
+        assert_eq!(&event.bytes[event.spans[0].range.clone()], b"needle");
     }
 
     #[test]

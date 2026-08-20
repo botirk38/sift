@@ -16,8 +16,8 @@ pub use corpus::{
 };
 pub use search::{
     BinaryEvent, BinaryMode, Case, CaseMode, ContextEvent, ContextKind, Count,
-    Error as SearchError, Events, Hit, Input, InputEncoding, Inputs, Io, Listing, Match,
-    MatchEvent, MatchedFile, Mention, Narrowing, Origin, Query, RegexEngine, SearchBound,
+    Error as SearchError, Events, FileReport, Hit, Input, InputEncoding, Inputs, Io, Listing,
+    Match, MatchEvent, MatchedFile, Mention, Narrowing, Origin, Query, RegexEngine, SearchBound,
     SearchEvent, SearchFlags, SearchMode, SearchOptions, SearchReport, Searcher, Span, Stats,
     ZeroCounts,
 };

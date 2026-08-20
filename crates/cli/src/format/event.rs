@@ -59,6 +59,24 @@ impl<'a> EventRenderer<'a> {
         }
     }
 
+    pub(super) fn files(&mut self, report: &SearchReport) -> sift_core::Result<()> {
+        for file in &report.files {
+            if file.matched
+                && let Some(offset) = file.binary
+            {
+                self.write_binary(&BinaryEvent {
+                    origin: file.origin.clone(),
+                    absolute_byte_offset: offset,
+                })?;
+            }
+            for event in &file.events {
+                self.matched(event)?;
+            }
+            self.end(&file.origin)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn finish(&mut self, report: &mut SearchReport) -> sift_core::Result<()> {
         if matches!(self.output.emission, OutputEmission::Quiet) {
             return Ok(());
