@@ -90,7 +90,7 @@ mod candidate_tests {
         let b = Postings::encode_list(&[3, 7]);
         let c = Postings::encode_list(&[0, 3, 4, 7, 8]);
         let slices = vec![a.as_slice(), b.as_slice(), c.as_slice()];
-        let ids = Index::intersect_sorted_slices(&slices);
+        let ids = Index::intersect_sorted_slices(&slices).expect("intersect");
         assert_eq!(ids, vec![3, 7]);
     }
 
@@ -114,29 +114,28 @@ mod candidate_tests {
 
     #[test]
     fn intersect_sorted_posting_byte_slices_empty_input_returns_empty() {
-        let ids = Index::intersect_sorted_slices(&[]);
+        let ids = Index::intersect_sorted_slices(&[]).expect("intersect");
         assert!(ids.is_empty());
     }
 
     #[test]
     fn intersect_sorted_slices_single_returns_decoded_ids() {
         let a = Postings::encode_list(&[1, 3, 5]);
-        let ids = Index::intersect_sorted_slices(&[a.as_slice()]);
+        let ids = Index::intersect_sorted_slices(&[a.as_slice()]).expect("intersect");
         assert_eq!(ids, vec![1, 3, 5]);
     }
 
     #[test]
-    #[should_panic(expected = "postings validated at open")]
-    fn intersect_sorted_slices_invalid_varint_panics() {
+    fn intersect_sorted_slices_invalid_varint_is_error() {
         let a = &[0xff];
-        Index::intersect_sorted_slices(&[a]);
+        Index::intersect_sorted_slices(&[a]).expect_err("corrupt postings");
     }
 
     #[test]
     fn intersect_sorted_slices_no_overlap_returns_empty() {
         let a = Postings::encode_list(&[1, 2, 3]);
         let b = Postings::encode_list(&[4, 5, 6]);
-        let ids = Index::intersect_sorted_slices(&[a.as_slice(), b.as_slice()]);
+        let ids = Index::intersect_sorted_slices(&[a.as_slice(), b.as_slice()]).expect("intersect");
         assert!(ids.is_empty());
     }
 

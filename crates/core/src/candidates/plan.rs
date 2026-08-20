@@ -62,16 +62,17 @@ impl Plan {
         let candidates = match discovery {
             Discovery::Empty => Candidates::empty(),
             Discovery::Walk => Candidates::from(Self::walk(source)?),
-            Discovery::Index { admission } => {
-                source.indexes.map_or_else(Candidates::empty, |indexes| {
-                    let file_ids = Self::file_ids(indexes, &query, coverage);
+            Discovery::Index { admission } => match source.indexes {
+                None => Candidates::empty(),
+                Some(indexes) => {
+                    let file_ids = Self::file_ids(indexes, &query, coverage)?;
                     Candidates::index(indexes, file_ids, source.filter, admission)
-                })
-            }
+                }
+            },
             Discovery::Merge { admission } => source.indexes.map_or_else(
                 || Ok(Candidates::empty()),
                 |indexes| {
-                    let file_ids = Self::file_ids(indexes, &query, coverage);
+                    let file_ids = Self::file_ids(indexes, &query, coverage)?;
                     indexes.files().map_or_else(
                         || Ok(Candidates::empty()),
                         |files| Self::merge(source, indexes, file_ids, admission, files),
@@ -82,9 +83,13 @@ impl Plan {
         Self::order(candidates, order)
     }
 
-    fn file_ids(indexes: &Indexes, query: &Query, coverage: Coverage) -> Vec<FileId> {
+    fn file_ids(
+        indexes: &Indexes,
+        query: &Query,
+        coverage: Coverage,
+    ) -> crate::Result<Vec<FileId>> {
         match coverage {
-            Coverage::Complete => indexes.all_indexed_file_ids(),
+            Coverage::Complete => Ok(indexes.all_indexed_file_ids()),
             Coverage::PotentialMatches => indexes.query(query),
         }
     }
