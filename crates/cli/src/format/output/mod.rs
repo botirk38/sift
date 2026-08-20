@@ -8,7 +8,7 @@ pub mod style;
 
 use mode::OutputEmission;
 use passthru::PassthruMode;
-use sift_core::search::{Hit, Inputs, SearchMode, SearchReport, Searcher};
+use sift_core::search::{Hit, Inputs, SearchBound, SearchMode, SearchReport, Searcher};
 use style::{PrintLineStyle, PrintRecordStyle};
 
 use crate::format::event::EventRenderer;
@@ -76,9 +76,19 @@ impl PrintSpec {
                 let started = Instant::now();
                 let context_requested =
                     searcher.options().before_context > 0 || searcher.options().after_context > 0;
+                let passthru = searcher.options().passthru();
                 let binary_mode = searcher.options().binary_mode;
                 let mut renderer =
                     EventRenderer::new(self, separators, started, binary_mode, context_requested);
+                if matches!(searcher.options().search_bound, SearchBound::Exhaustive)
+                    && !context_requested
+                    && !passthru
+                {
+                    let mut report = searcher.execute(inputs, mode)?;
+                    renderer.files(&report)?;
+                    renderer.finish(&mut report)?;
+                    return Ok(report);
+                }
                 let mut events = searcher.stream(inputs, mode);
                 for event in events.by_ref() {
                     renderer.event(event?)?;

@@ -23,6 +23,6 @@ pub use options::{
     SearchFlags, SearchOptions,
 };
 pub use query::Query;
-pub use report::SearchReport;
+pub use report::{FileReport, SearchReport};
 pub use searcher::{Events, Searcher};
 pub use stats::Stats;

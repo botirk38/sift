@@ -72,20 +72,23 @@ impl Index {
 
     /// Resolve candidate file ids for the query. Falls back to every indexed
     /// file when the query cannot be narrowed.
-    #[must_use]
-    pub(crate) fn query(&self, query: &Query) -> Vec<FileId> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a posting list is corrupt.
+    pub(crate) fn query(&self, query: &Query) -> crate::Result<Vec<FileId>> {
         let all_ids = || {
             (0..self.storage.file_count)
                 .map(FileId::new)
                 .collect::<Vec<_>>()
         };
         let Some(arms) = Self::extract_literal_arms(self.width, query) else {
-            return all_ids();
+            return Ok(all_ids());
         };
         let (arms, gram_match) = match (self.norm, query.case()) {
             (GramNorm::Identity, Case::Insensitive) => (arms, GramMatch::AsciiCase),
             (GramNorm::Identity, Case::Sensitive) => (arms, GramMatch::Exact),
-            (GramNorm::AsciiLower, Case::Sensitive) => return all_ids(),
+            (GramNorm::AsciiLower, Case::Sensitive) => return Ok(all_ids()),
             (GramNorm::AsciiLower, Case::Insensitive) => {
                 let folded = arms
                     .into_iter()
@@ -94,12 +97,15 @@ impl Index {
                 (folded, GramMatch::Exact)
             }
         };
-        let ids = self.candidate_file_ids(&arms, gram_match);
-        ids.into_iter()
+        let ids = self.candidate_file_ids(&arms, gram_match)?;
+        Ok(ids
+            .into_iter()
             .filter_map(|id| usize::try_from(id).ok().map(FileId::new))
-            .collect()
+            .collect())
     }
 
+    /// Decode-and-check every posting list. Used at write only; open trusts
+    /// the snapshot this already proved.
     pub(crate) fn validate_lexicon_postings(
         lexicon: &Lexicon,
         postings: &Postings,
@@ -196,7 +202,6 @@ impl Index {
 
         let lexicon = Lexicon::open(&lexicon_path, width).map_err(NGramIndexError::Io)?;
         let postings = Postings::open(&postings_path).map_err(NGramIndexError::Io)?;
-        Self::validate_lexicon_postings(&lexicon, &postings)?;
 
         Ok(Self::from_parts(
             width,
