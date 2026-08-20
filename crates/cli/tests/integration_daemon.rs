@@ -120,8 +120,8 @@ where
 }
 
 fn path_indexed(sift_dir: &Path, rel: &str) -> bool {
-    StoreMeta::read(sift_dir).ok().is_some_and(|meta| {
-        Indexes::open(sift_dir, &meta).ok().is_some_and(|indexes| {
+    StoreMeta::read(sift_dir).is_ok_and(|meta| {
+        Indexes::open(sift_dir, &meta).is_ok_and(|indexes| {
             indexes
                 .files()
                 .is_some_and(|files| files.contains(Path::new(rel)))
