@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 use super::gram::{Gram, GramMatch, GramWindows, LiteralNarrowing};
-use super::index::Index;
+use super::index::{Index, NGramIndexError};
 use super::storage::postings::Postings;
 
 /// Dense membership over indexed file ids (one bit per file).
@@ -11,10 +11,10 @@ struct FileIdSet {
 }
 
 impl FileIdSet {
-    fn union_postings(slices: &[&[u8]], file_count: usize) -> Self {
+    fn union_postings(slices: &[&[u8]], file_count: usize) -> crate::Result<Self> {
         let mut words = vec![0u64; file_count.div_ceil(64)];
         for slice in slices {
-            let ids = Postings::decode_sorted(slice).expect("postings validated at open");
+            let ids = Postings::decode_sorted(slice).map_err(NGramIndexError::Io)?;
             for id in ids {
                 let idx = id as usize;
                 if idx < file_count {
@@ -22,7 +22,7 @@ impl FileIdSet {
                 }
             }
         }
-        Self { words }
+        Ok(Self { words })
     }
 
     fn contains(&self, id: u32) -> bool {
@@ -50,27 +50,31 @@ impl FileIdSet {
 }
 
 impl Index {
-    pub(crate) fn candidate_file_ids(&self, arms: &[Vec<u8>], gram_match: GramMatch) -> Vec<u32> {
+    pub(crate) fn candidate_file_ids(
+        &self,
+        arms: &[Vec<u8>],
+        gram_match: GramMatch,
+    ) -> crate::Result<Vec<u32>> {
         if arms.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         if arms.len() == 1 {
-            return self.posting_ids(&arms[0], gram_match).unwrap_or_default();
+            return Ok(self.posting_ids(&arms[0], gram_match)?.unwrap_or_default());
         }
         let mut id_lists: Vec<Vec<u32>> = Vec::with_capacity(arms.len());
         for arm in arms {
-            if let Some(ids) = self.posting_ids(arm, gram_match) {
+            if let Some(ids) = self.posting_ids(arm, gram_match)? {
                 id_lists.push(ids);
             }
         }
-        Self::merge_sorted_runs(id_lists)
+        Ok(Self::merge_sorted_runs(id_lists))
     }
 
-    fn posting_ids(&self, lit: &[u8], gram_match: GramMatch) -> Option<Vec<u32>> {
+    fn posting_ids(&self, lit: &[u8], gram_match: GramMatch) -> crate::Result<Option<Vec<u32>>> {
         let storage = &self.storage;
         let width = self.width.get();
         match self.width.literal_narrowing(lit.len()) {
-            LiteralNarrowing::TooShort => None,
+            LiteralNarrowing::TooShort => Ok(None),
             LiteralNarrowing::Covering => {
                 // Union postings for every width-gram that contains `lit`.
                 let file_count = storage.file_count;
@@ -96,27 +100,35 @@ impl Index {
                     }
                 }
                 if slices.is_empty() {
-                    return None;
+                    return Ok(None);
                 }
-                let ids = FileIdSet::union_postings(&slices, file_count).file_ids();
-                if ids.is_empty() { None } else { Some(ids) }
+                let ids = FileIdSet::union_postings(&slices, file_count)?.file_ids();
+                if ids.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(ids))
+                }
             }
             LiteralNarrowing::Windows => match gram_match {
                 GramMatch::Exact => {
                     let grams: Vec<Gram> = GramWindows::new(lit, self.width).collect();
                     if grams.is_empty() {
-                        return None;
+                        return Ok(None);
                     }
                     let mut slices: Vec<&[u8]> = Vec::with_capacity(grams.len());
                     for gram in &grams {
                         let s = self.posting_bytes_slice(*gram);
                         if s.is_empty() {
-                            return None;
+                            return Ok(None);
                         }
                         slices.push(s);
                     }
-                    let ids = Self::intersect_sorted_slices(&slices);
-                    if ids.is_empty() { None } else { Some(ids) }
+                    let ids = Self::intersect_sorted_slices(&slices)?;
+                    if ids.is_empty() {
+                        Ok(None)
+                    } else {
+                        Ok(Some(ids))
+                    }
                 }
                 GramMatch::AsciiCase => {
                     let file_count = storage.file_count;
@@ -132,23 +144,23 @@ impl Index {
                             }
                         }
                         if slices.is_empty() {
-                            return None;
+                            return Ok(None);
                         }
                         // Single posting list: decode directly on the first window.
                         cur = Some(if cur.is_none() && slices.len() == 1 {
-                            Postings::decode_sorted(slices[0]).expect("postings validated at open")
+                            Postings::decode_sorted(slices[0]).map_err(NGramIndexError::Io)?
                         } else {
-                            let set = FileIdSet::union_postings(&slices, file_count);
+                            let set = FileIdSet::union_postings(&slices, file_count)?;
                             cur.map_or_else(
                                 || set.file_ids(),
                                 |prev| prev.into_iter().filter(|&id| set.contains(id)).collect(),
                             )
                         });
                         if cur.as_ref().is_some_and(Vec::is_empty) {
-                            return None;
+                            return Ok(None);
                         }
                     }
-                    cur.filter(|ids| !ids.is_empty())
+                    Ok(cur.filter(|ids| !ids.is_empty()))
                 }
             },
         }
@@ -165,12 +177,12 @@ impl Index {
         storage.postings.slice(start, end.saturating_sub(start))
     }
 
-    pub(crate) fn intersect_sorted_slices(slices: &[&[u8]]) -> Vec<u32> {
+    pub(crate) fn intersect_sorted_slices(slices: &[&[u8]]) -> crate::Result<Vec<u32>> {
         if slices.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         if slices.len() == 1 {
-            return Postings::decode_sorted(slices[0]).expect("postings validated at open");
+            return Ok(Postings::decode_sorted(slices[0]).map_err(NGramIndexError::Io)?);
         }
         if slices.len() == 2 {
             let (first, second) = if slices[0].len() <= slices[1].len() {
@@ -179,24 +191,24 @@ impl Index {
                 (slices[1], slices[0])
             };
             if first == second {
-                return Postings::decode_sorted(first).expect("postings validated at open");
+                return Ok(Postings::decode_sorted(first).map_err(NGramIndexError::Io)?);
             }
-            let ids = Postings::decode_sorted(first).expect("postings validated at open");
-            return Postings::intersect_sorted(&ids, second).expect("postings validated at open");
+            let ids = Postings::decode_sorted(first).map_err(NGramIndexError::Io)?;
+            return Ok(Postings::intersect_sorted(&ids, second).map_err(NGramIndexError::Io)?);
         }
         let mut ordered: Vec<&[u8]> = slices.to_vec();
         ordered.sort_unstable_by_key(|slice| slice.len());
         if ordered[1..].iter().all(|slice| *slice == ordered[0]) {
-            return Postings::decode_sorted(ordered[0]).expect("postings validated at open");
+            return Ok(Postings::decode_sorted(ordered[0]).map_err(NGramIndexError::Io)?);
         }
-        let mut cur = Postings::decode_sorted(ordered[0]).expect("postings validated at open");
+        let mut cur = Postings::decode_sorted(ordered[0]).map_err(NGramIndexError::Io)?;
         for s in &ordered[1..] {
-            cur = Postings::intersect_sorted(&cur, s).expect("postings validated at open");
+            cur = Postings::intersect_sorted(&cur, s).map_err(NGramIndexError::Io)?;
             if cur.is_empty() {
                 break;
             }
         }
-        cur
+        Ok(cur)
     }
 
     pub(crate) fn merge_sorted_runs(lists: Vec<Vec<u32>>) -> Vec<u32> {

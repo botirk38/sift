@@ -122,7 +122,7 @@ pub(crate) enum Kind {
 }
 
 impl Kind {
-    pub(crate) fn query(&self, query: &Query) -> Vec<FileId> {
+    pub(crate) fn query(&self, query: &Query) -> crate::Result<Vec<FileId>> {
         match self {
             Self::Ngram(index) => index.query(query),
         }

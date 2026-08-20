@@ -24,6 +24,25 @@ temp corpus per process (README scale table is stale). See [`README.md`](README.
 
 ## Sessions
 
+### 2026-08-20 — PR2 cheap Index open (decode at write only)
+
+- **Tool:** benchsuite + `perf record -F 999 --call-graph fp -e task-clock`
+- **Change:** `validate_lexicon_postings` (full decode) runs in `write_tables` only. `Index::open` mmaps + magic/header. Query decode is `Result` (not `expect`).
+- **Wall-clock (benchsuite vs PR1, same host/corpus):**
+
+| Id | PR1 | PR2 | rg |
+|----|-----|-----|-----|
+| `linux_literal` | 0.269 s | 0.122 s | 0.327 s |
+| `linux_word` | 0.282 s | 0.234 s | 0.430 s |
+| `linux_re_literal_suffix` | 0.314 s | 0.201 s | 0.626 s |
+| `linux_no_literal` | 2.254 s | 2.810 s | 1.492 s |
+
+Correctness 11/11. sift faster on 7/11 (was 5/11 after PR1). `linux_literal_default` still noisy (0.963 ± 1.471). Full-scan variance, not a load-path regression.
+
+- **CLI `linux_literal` after PR2 (release binary that still range-checked on open):** 255 ms task-clock. Leaves: `Rust::matched` 23%; `Pool::put_value` 18%; `check_lexicon_ranges` 16%; memchr 11%. `decode_sorted` / `validate_lexicon_postings` gone from the top. Source now skips the range-check too (write-only validation).
+- **Attributed module:** `crates/core/src/index/ngram/index.rs` — open no longer decodes every posting list.
+- **Before / after:** `linux_literal` 0.269 s → 0.122 s. Remaining literal leaves are `Rust::matched` / `Pool::put_value` (PR4).
+
 ### 2026-08-20 — PR1 exhaustive print via `execute`
 
 - **Tool:** benchsuite + `perf record -F 999 --call-graph fp -e task-clock`

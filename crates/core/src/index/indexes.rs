@@ -185,19 +185,21 @@ impl Indexes {
         Ok(())
     }
 
-    #[must_use]
-    pub(crate) fn query(&self, query: &Query) -> Vec<FileId> {
+    pub(crate) fn query(&self, query: &Query) -> crate::Result<Vec<FileId>> {
         let Some(current) = &self.current else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         if current.kinds.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         if current.kinds.len() == 1 {
             return current.kinds[0].query(query);
         }
-        let mut plans: Vec<Vec<FileId>> =
-            current.kinds.iter().map(|idx| idx.query(query)).collect();
+        let mut plans: Vec<Vec<FileId>> = current
+            .kinds
+            .iter()
+            .map(|idx| idx.query(query))
+            .collect::<crate::Result<_>>()?;
         plans.sort_by_key(Vec::len);
         let mut cur = plans.remove(0);
         for next in plans {
@@ -206,7 +208,7 @@ impl Indexes {
                 break;
             }
         }
-        cur
+        Ok(cur)
     }
 
     fn intersect_sorted(a: &[FileId], b: &[FileId]) -> Vec<FileId> {

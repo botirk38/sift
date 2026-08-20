@@ -2,7 +2,10 @@ use std::{fs, path::Path};
 
 use sift_core::search::CaseMode;
 use sift_core::search::SearchOptions;
-use sift_core::{FilterAdmission, GramNorm, GramWidth, IndexRecord, Indexes};
+use sift_core::{
+    FileFilter, FileFilterConfig, FileOrder, FilterAdmission, GramNorm, GramWidth, Hit,
+    IndexRecord, Indexes, Plan, Query, Scan, ScanScope, SnapshotFreshness,
+};
 use tempfile::TempDir;
 
 use super::super::common::{
@@ -247,4 +250,52 @@ fn dual_indexes_intersect_identity_all_with_ascii_lower_matched() {
     );
     assert_eq!(sensitive.len(), 1);
     assert_eq!(sensitive[0].rel_path(), Path::new("hit.rs"));
+}
+
+#[test]
+fn corrupt_postings_fail_at_query_not_load() {
+    let tmp = TempDir::new().expect("tempdir");
+    let corpus = tmp.path().join("corpus");
+    make_parity_corpus(&corpus);
+    let sift_dir = tmp.path().join(".sift");
+    drop(build_indexes(&corpus, &sift_dir));
+
+    let id = fs::read_to_string(sift_dir.join("CURRENT"))
+        .expect("CURRENT")
+        .trim()
+        .to_string();
+    let postings = sift_dir
+        .join("snapshots")
+        .join(id)
+        .join("ngram-3")
+        .join("postings.bin");
+    let mut bytes = fs::read(&postings).expect("read postings");
+    assert!(bytes.len() > 12, "postings header plus payload");
+    for byte in &mut bytes[12..] {
+        *byte = 0xff;
+    }
+    fs::write(&postings, bytes).expect("corrupt payload");
+
+    let indexes = Indexes::load(&sift_dir)
+        .expect("load")
+        .expect("store present");
+    let filter = FileFilter::new(&FileFilterConfig::default(), &corpus).expect("filter");
+    let source = Scan::new(
+        Some(&indexes),
+        &filter,
+        None,
+        ScanScope::Index {
+            order: FileOrder::default(),
+            freshness: SnapshotFreshness::Current,
+        },
+    );
+    let query = Query::new(vec!["beta".into()], SearchOptions::default()).expect("query");
+    let searcher = sift_core::Searcher::new(query).expect("searcher");
+    let result = Plan::new(
+        &source,
+        searcher.query(),
+        sift_core::SearchMode::Print(Hit::Line).coverage(),
+    )
+    .resolve(&source);
+    assert!(result.is_err(), "corrupt postings fail at query");
 }
