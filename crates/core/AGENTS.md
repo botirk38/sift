@@ -18,8 +18,8 @@ Plan::new (pure) → Plan::resolve (query I/O) → Searcher::execute / stream
 - `Query` — patterns + options; owns narrowing policy
 - `File` / `Origin` — path identity (`Origin::{File, Stream { label }}`)
 
-Today the default catalog record is N-gram width 3. `record.rs` privately opens
-kinds through its `Kind` enum.
+Today the default catalog is identity and ascii-lower trigram. `record.rs`
+privately opens kinds through its `Kind` enum.
 
 ## Public API
 

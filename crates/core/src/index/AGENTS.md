@@ -32,8 +32,9 @@ is no public index trait or public snapshot type.
 ## Conventions
 
 - Search and candidates use `Indexes`, never N-gram internals.
-- Kind queries may over-return but must not under-return; when narrowing is not
-  possible, they return every shared file ID.
+- Kind queries may over-return but must not under-return. A kind that cannot
+  restrict the file set returns `None`; `Indexes::query` then uses every
+  indexed id (or intersects the kinds that did restrict).
 - `Files` is the single shared mmap-backed `FileId` space and lives at the
   snapshot root.
 - `Indexes::open(dir, meta)` writes meta when the store is new — no

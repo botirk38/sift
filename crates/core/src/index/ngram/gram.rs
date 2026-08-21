@@ -164,49 +164,6 @@ pub(crate) enum LiteralNarrowing {
 )]
 pub struct Gram(u64);
 
-/// How a query gram matches indexed grams.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GramMatch {
-    /// Byte-exact gram key.
-    Exact,
-    /// Match any ASCII letter case variant of the gram window.
-    AsciiCase,
-}
-
-impl GramMatch {
-    /// Grams that should hit the lexicon for this window.
-    ///
-    /// `AsciiCase` rewrites alphabetic bytes in `window` while enumerating.
-    pub(crate) fn grams(self, window: &mut [u8]) -> Vec<Gram> {
-        match self {
-            Self::Exact => vec![Gram::from_window(window)],
-            Self::AsciiCase => {
-                let alpha: Vec<usize> = window
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, &b)| b.is_ascii_alphabetic().then_some(i))
-                    .collect();
-                for &i in &alpha {
-                    window[i] = window[i].to_ascii_lowercase();
-                }
-                let total = 1usize << alpha.len();
-                let mut out = Vec::with_capacity(total);
-                for state in 0..total {
-                    for (bit, &idx) in alpha.iter().enumerate() {
-                        window[idx] = if (state >> bit) & 1 == 1 {
-                            window[idx].to_ascii_uppercase()
-                        } else {
-                            window[idx].to_ascii_lowercase()
-                        };
-                    }
-                    out.push(Gram::from_window(window));
-                }
-                out
-            }
-        }
-    }
-}
-
 impl Gram {
     #[must_use]
     pub fn from_window(bytes: &[u8]) -> Self {
@@ -336,35 +293,5 @@ mod tests {
         assert_eq!(bytes, b"abc");
         assert_eq!(Gram::read_bytes(width, &bytes).unwrap(), gram);
         assert_eq!(Gram::from_ordinal(width, gram.ordinal()).unwrap(), gram);
-    }
-
-    #[test]
-    fn gram_match_exact_one() {
-        let mut window = *b"Ab_";
-        assert_eq!(
-            GramMatch::Exact.grams(&mut window),
-            vec![Gram::from_window(b"Ab_")]
-        );
-    }
-
-    #[test]
-    fn gram_match_ascii_case_product() {
-        let mut window = *b"Ab_";
-        let grams = GramMatch::AsciiCase.grams(&mut window);
-        assert_eq!(grams.len(), 4);
-        let ords: Vec<_> = grams.into_iter().map(Gram::ordinal).collect();
-        assert!(ords.contains(&Gram::from_window(b"ab_").ordinal()));
-        assert!(ords.contains(&Gram::from_window(b"Ab_").ordinal()));
-        assert!(ords.contains(&Gram::from_window(b"aB_").ordinal()));
-        assert!(ords.contains(&Gram::from_window(b"AB_").ordinal()));
-    }
-
-    #[test]
-    fn gram_match_ascii_case_non_alpha() {
-        let mut window = *b"12_";
-        assert_eq!(
-            GramMatch::AsciiCase.grams(&mut window),
-            vec![Gram::from_window(b"12_")]
-        );
     }
 }

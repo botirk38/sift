@@ -1,7 +1,7 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-use super::gram::{Gram, GramMatch, GramWindows, LiteralNarrowing};
+use super::gram::{Gram, GramWindows, LiteralNarrowing};
 use super::index::{Index, NGramIndexError};
 use super::storage::postings::Postings;
 
@@ -25,13 +25,6 @@ impl FileIdSet {
         Ok(Self { words })
     }
 
-    fn contains(&self, id: u32) -> bool {
-        let idx = id as usize;
-        self.words
-            .get(idx / 64)
-            .is_some_and(|word| word & (1u64 << (idx % 64)) != 0)
-    }
-
     fn file_ids(&self) -> Vec<u32> {
         let mut out = Vec::new();
         for (word_idx, word) in self.words.iter().enumerate() {
@@ -50,27 +43,23 @@ impl FileIdSet {
 }
 
 impl Index {
-    pub(crate) fn candidate_file_ids(
-        &self,
-        arms: &[Vec<u8>],
-        gram_match: GramMatch,
-    ) -> crate::Result<Vec<u32>> {
+    pub(crate) fn candidate_file_ids(&self, arms: &[Vec<u8>]) -> crate::Result<Vec<u32>> {
         if arms.is_empty() {
             return Ok(Vec::new());
         }
         if arms.len() == 1 {
-            return Ok(self.posting_ids(&arms[0], gram_match)?.unwrap_or_default());
+            return Ok(self.posting_ids(&arms[0])?.unwrap_or_default());
         }
         let mut id_lists: Vec<Vec<u32>> = Vec::with_capacity(arms.len());
         for arm in arms {
-            if let Some(ids) = self.posting_ids(arm, gram_match)? {
+            if let Some(ids) = self.posting_ids(arm)? {
                 id_lists.push(ids);
             }
         }
         Ok(Self::merge_sorted_runs(id_lists))
     }
 
-    fn posting_ids(&self, lit: &[u8], gram_match: GramMatch) -> crate::Result<Option<Vec<u32>>> {
+    fn posting_ids(&self, lit: &[u8]) -> crate::Result<Option<Vec<u32>>> {
         let storage = &self.storage;
         let width = self.width.get();
         match self.width.literal_narrowing(lit.len()) {
@@ -91,11 +80,10 @@ impl Index {
                                 lit_i += 1;
                             }
                         }
-                        for gram in gram_match.grams(&mut window) {
-                            let slice = self.posting_bytes_slice(gram);
-                            if !slice.is_empty() {
-                                slices.push(slice);
-                            }
+                        let gram = Gram::from_window(&window);
+                        let slice = self.posting_bytes_slice(gram);
+                        if !slice.is_empty() {
+                            slices.push(slice);
                         }
                     }
                 }
@@ -109,60 +97,26 @@ impl Index {
                     Ok(Some(ids))
                 }
             }
-            LiteralNarrowing::Windows => match gram_match {
-                GramMatch::Exact => {
-                    let grams: Vec<Gram> = GramWindows::new(lit, self.width).collect();
-                    if grams.is_empty() {
+            LiteralNarrowing::Windows => {
+                let grams: Vec<Gram> = GramWindows::new(lit, self.width).collect();
+                if grams.is_empty() {
+                    return Ok(None);
+                }
+                let mut slices: Vec<&[u8]> = Vec::with_capacity(grams.len());
+                for gram in &grams {
+                    let s = self.posting_bytes_slice(*gram);
+                    if s.is_empty() {
                         return Ok(None);
                     }
-                    let mut slices: Vec<&[u8]> = Vec::with_capacity(grams.len());
-                    for gram in &grams {
-                        let s = self.posting_bytes_slice(*gram);
-                        if s.is_empty() {
-                            return Ok(None);
-                        }
-                        slices.push(s);
-                    }
-                    let ids = Self::intersect_sorted_slices(&slices)?;
-                    if ids.is_empty() {
-                        Ok(None)
-                    } else {
-                        Ok(Some(ids))
-                    }
+                    slices.push(s);
                 }
-                GramMatch::AsciiCase => {
-                    let file_count = storage.file_count;
-                    let mut window = vec![0u8; width];
-                    let mut cur: Option<Vec<u32>> = None;
-                    for offset in 0..=lit.len() - width {
-                        window.copy_from_slice(&lit[offset..offset + width]);
-                        let mut slices: Vec<&[u8]> = Vec::new();
-                        for gram in gram_match.grams(&mut window) {
-                            let slice = self.posting_bytes_slice(gram);
-                            if !slice.is_empty() {
-                                slices.push(slice);
-                            }
-                        }
-                        if slices.is_empty() {
-                            return Ok(None);
-                        }
-                        // Single posting list: decode directly on the first window.
-                        cur = Some(if cur.is_none() && slices.len() == 1 {
-                            Postings::decode_sorted(slices[0]).map_err(NGramIndexError::Io)?
-                        } else {
-                            let set = FileIdSet::union_postings(&slices, file_count)?;
-                            cur.map_or_else(
-                                || set.file_ids(),
-                                |prev| prev.into_iter().filter(|&id| set.contains(id)).collect(),
-                            )
-                        });
-                        if cur.as_ref().is_some_and(Vec::is_empty) {
-                            return Ok(None);
-                        }
-                    }
-                    Ok(cur.filter(|ids| !ids.is_empty()))
+                let ids = Self::intersect_sorted_slices(&slices)?;
+                if ids.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(ids))
                 }
-            },
+            }
         }
     }
 
