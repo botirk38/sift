@@ -1,10 +1,11 @@
-use pcre2::bytes::{Captures, Regex, RegexBuilder};
+use pcre2::bytes::{MatchData, Regex, RegexBuilder};
 
 use crate::SearchError;
 use crate::search::event::Span;
 use crate::search::options::Case;
 use crate::search::query::{PatternBound, Query};
 
+use super::Scratch;
 use super::template::{Groups, Template};
 
 #[derive(Debug, Clone)]
@@ -52,9 +53,19 @@ impl Pcre2 {
         Ok(Self { regex })
     }
 
-    pub(super) fn matched(&self, haystack: &[u8]) -> Result<bool, SearchError> {
+    pub(super) fn scratch(&self) -> Scratch {
+        Scratch::Pcre2 {
+            data: self.regex.create_match_data(),
+        }
+    }
+
+    pub(super) fn matched(
+        &self,
+        haystack: &[u8],
+        data: &mut MatchData,
+    ) -> Result<bool, SearchError> {
         self.regex
-            .is_match(haystack)
+            .is_match_with(data, haystack)
             .map_err(|err| SearchError::Match(err.to_string()))
     }
 
@@ -62,29 +73,50 @@ impl Pcre2 {
         &self,
         haystack: &[u8],
         template: Option<&[u8]>,
+        data: &mut MatchData,
     ) -> Result<Vec<Span>, SearchError> {
         let mut spans = Vec::new();
-        for caps in self.regex.captures_iter(haystack) {
-            let caps = caps.map_err(|err| SearchError::Match(err.to_string()))?;
-            spans.push(self.span(&caps, template));
+        let mut last_end = 0;
+        let mut last_match = None;
+        while last_end <= haystack.len() {
+            let found = self
+                .regex
+                .find_at_with(data, haystack, last_end)
+                .map_err(|err| SearchError::Match(err.to_string()))?;
+            let Some(m) = found else {
+                break;
+            };
+            if m.start() == m.end() {
+                last_end = m.end() + 1;
+                if Some(m.end()) == last_match {
+                    continue;
+                }
+            } else {
+                last_end = m.end();
+            }
+            last_match = Some(m.end());
+            spans.push(self.span(haystack, data, template));
         }
         Ok(spans)
     }
 
-    fn span(&self, caps: &Captures<'_>, template: Option<&[u8]>) -> Span {
-        let range = caps.get(0).map_or(0..0, |m| m.start()..m.end());
+    fn span(&self, haystack: &[u8], data: &MatchData, template: Option<&[u8]>) -> Span {
+        let range = data.get(0).map_or(0..0, |(start, end)| start..end);
         let replacement = template.map(|template| {
             let mut text = Vec::new();
-            Template(template).expand(&self.groups(caps), &mut text);
+            Template(template).expand(&self.groups(haystack, data), &mut text);
             text
         });
         Span { range, replacement }
     }
 
-    fn groups<'a>(&'a self, caps: &'a Captures<'a>) -> Groups<'a> {
+    fn groups<'a>(&'a self, haystack: &'a [u8], data: &'a MatchData) -> Groups<'a> {
         Groups {
-            slots: (0..caps.len())
-                .map(|i| caps.get(i).map(|m| m.as_bytes()))
+            slots: (0..self.regex.captures_len())
+                .map(|i| {
+                    data.get(i)
+                        .and_then(|(start, end)| haystack.get(start..end))
+                })
                 .collect(),
             names: self.regex.capture_names(),
         }

@@ -18,6 +18,17 @@ enum Engine {
     Pcre2(pcre2::Pcre2),
 }
 
+/// Per-file matcher scratch. Owned by [`crate::search::scan::FileScan`].
+pub(super) enum Scratch {
+    Rust {
+        cache: Box<regex_automata::meta::Cache>,
+        caps: regex_automata::util::captures::Captures,
+    },
+    Pcre2 {
+        data: ::pcre2::bytes::MatchData,
+    },
+}
+
 impl Matcher {
     pub(super) fn compile(query: &Query) -> Result<Self, SearchError> {
         let engine = match query.options.regex_engine {
@@ -37,10 +48,24 @@ impl Matcher {
         }
     }
 
-    pub(super) fn matched(&self, haystack: &[u8]) -> Result<bool, SearchError> {
+    pub(super) fn scratch(&self) -> Scratch {
         match &self.engine {
-            Engine::Rust(engine) => Ok(engine.matched(haystack)),
-            Engine::Pcre2(engine) => engine.matched(haystack),
+            Engine::Rust(engine) => engine.scratch(),
+            Engine::Pcre2(engine) => engine.scratch(),
+        }
+    }
+
+    pub(super) fn matched(
+        &self,
+        haystack: &[u8],
+        scratch: &mut Scratch,
+    ) -> Result<bool, SearchError> {
+        match (&self.engine, scratch) {
+            (Engine::Rust(engine), Scratch::Rust { cache, .. }) => {
+                Ok(engine.matched(haystack, cache))
+            }
+            (Engine::Pcre2(engine), Scratch::Pcre2 { data }) => engine.matched(haystack, data),
+            _ => unreachable!("scratch does not match compiled engine"),
         }
     }
 
@@ -48,10 +73,16 @@ impl Matcher {
         &self,
         haystack: &[u8],
         template: Option<&[u8]>,
+        scratch: &mut Scratch,
     ) -> Result<Vec<Span>, SearchError> {
-        match &self.engine {
-            Engine::Rust(engine) => Ok(engine.spans(haystack, template)),
-            Engine::Pcre2(engine) => engine.spans(haystack, template),
+        match (&self.engine, scratch) {
+            (Engine::Rust(engine), Scratch::Rust { cache, caps }) => {
+                Ok(engine.spans(haystack, template, cache, caps))
+            }
+            (Engine::Pcre2(engine), Scratch::Pcre2 { data }) => {
+                engine.spans(haystack, template, data)
+            }
+            _ => unreachable!("scratch does not match compiled engine"),
         }
     }
 }

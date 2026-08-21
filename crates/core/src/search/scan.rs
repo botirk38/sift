@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use crate::search::error::Error as SearchError;
 use crate::search::event::ContextKind;
 use crate::search::line::{Break, Line, Lines, Multiline};
-use crate::search::matcher::Matcher;
+use crate::search::matcher::{Matcher, Scratch};
 use crate::search::mode::{Hit, SearchMode};
 use crate::search::options::{Nul, SearchOptions};
 
@@ -40,6 +40,7 @@ pub(super) struct FileScan<'h> {
     finished: bool,
     before_n: usize,
     after_n: usize,
+    scratch: Scratch,
 }
 
 impl<'h> FileScan<'h> {
@@ -49,9 +50,8 @@ impl<'h> FileScan<'h> {
         options: &'h SearchOptions,
         mode: SearchMode,
         nul: Nul,
-        mut multiline: Option<Multiline>,
         binary: Option<u64>,
-    ) -> Self {
+    ) -> Result<Self, SearchError> {
         let before_n = if options.passthru() {
             0
         } else {
@@ -66,6 +66,17 @@ impl<'h> FileScan<'h> {
             .is_path_mode()
             .then_some(1usize)
             .or(options.max_results);
+        let mut scratch = matcher.scratch();
+        let mut multiline = if options.multiline() {
+            let template = options.replace.as_deref().map(str::as_bytes);
+            Some(Multiline::new(matcher.spans(
+                chunk,
+                template,
+                &mut scratch,
+            )?))
+        } else {
+            None
+        };
         if matches!(mode.hit(), Some(Hit::Span))
             && let (Some(n), Some(spans)) = (limit, multiline.as_mut())
         {
@@ -76,7 +87,7 @@ impl<'h> FileScan<'h> {
         } else {
             Break::Term(options.line_terminator())
         };
-        Self {
+        Ok(Self {
             matcher,
             options,
             mode,
@@ -99,7 +110,8 @@ impl<'h> FileScan<'h> {
             finished: false,
             before_n,
             after_n,
-        }
+            scratch,
+        })
     }
 
     pub(super) const fn matched(&self) -> bool {
@@ -128,6 +140,10 @@ impl<'h> FileScan<'h> {
         } else {
             self.multiline.as_ref()
         }
+    }
+
+    pub(super) const fn scratch(&mut self) -> &mut Scratch {
+        &mut self.scratch
     }
 
     const fn span_limited(&self) -> bool {
@@ -175,9 +191,10 @@ impl<'h> FileScan<'h> {
             return Ok(true);
         }
         let matched = match self.multiline.as_ref() {
-            None => self
-                .matcher
-                .matched(line.without_break(self.brk, self.options.crlf()))?,
+            None => self.matcher.matched(
+                line.without_break(self.brk, self.options.crlf()),
+                &mut self.scratch,
+            )?,
             Some(spans) => spans.overlaps(&line),
         };
         let hit = matched != self.options.invert_match();
@@ -247,9 +264,11 @@ impl<'h> FileScan<'h> {
             && !self.options.invert_match()
             && self.multiline.is_none()
         {
-            self.hits = self
-                .hits
-                .saturating_add(self.matcher.spans(line.bytes(), None)?.len());
+            self.hits = self.hits.saturating_add(
+                self.matcher
+                    .spans(line.bytes(), None, &mut self.scratch)?
+                    .len(),
+            );
         } else if !(matches!(self.mode.hit(), Some(Hit::Span))
             && !self.options.invert_match()
             && self.multiline.is_some())

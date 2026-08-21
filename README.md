@@ -96,9 +96,10 @@ Flag and search UX aim for ripgrep parity; remaining gaps are tracked as GitHub 
 ## Development
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo fmt -p sift-core -p sift-grep -- --check
+cargo clippy -p sift-core -p sift-grep --all-targets --all-features --no-deps -- -D warnings
+cargo test --workspace --all-features \
+  --exclude regex --exclude regex-automata --exclude regex-syntax --exclude pcre2
 ```
 
 ## License

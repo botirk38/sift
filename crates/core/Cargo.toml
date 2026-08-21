@@ -28,6 +28,7 @@ memmap2 = "0.9"
 pcre2 = "0.2"
 rayon = "1"
 regex = "1"
+regex-automata = "0.4"
 regex-syntax = "0.8"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }

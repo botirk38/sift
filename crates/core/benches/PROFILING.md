@@ -24,7 +24,31 @@ temp corpus per process (README scale table is stale). See [`README.md`](README.
 
 ## Sessions
 
+### 2026-08-21 — PR4 FileScan owns regex scratch; pool off
+
+- **Tool:** `perf record -F 999 --call-graph fp -e task-clock` + `perf stat -e task-clock,page-faults`
+- **Change:** Vendored `regex-automata` / `pcre2`. `meta::Regex` compiled with `pool(false)`. `FileScan` owns per-file `Scratch` (`Cache` + `Captures`, or `MatchData`). `matched` / `spans` take `&mut Scratch`. `ignore` / `globset` keep the default pool.
+- **Command:** same CLI argv as the last master pass, corpus `/tmp/benchsuite/linux`, index `/tmp/benchsuite/linux.sift`, `CARGO_PROFILE_RELEASE_DEBUG=1 RUSTFLAGS="-C force-frame-pointers=yes"`. Compared to `/usr/bin/rg` 14.1.1.
+- **Wall-clock (warm CLI, vs last master pass on this host):**
+
+| Id | master | PR4 | rg |
+|----|--------|-----|-----|
+| `linux_alternates_casei` | 0.954 s | **0.283 s** | 0.384 s |
+| `linux_no_literal` | 3.036 s | **2.25 s** | 1.51 s |
+| `linux_unicode_greek` | 4.299 s | **3.16 s** | 1.78 s |
+| `linux_unicode_greek_casei` | 3.626 s | 3.81 s | 1.67 s |
+
+`linux_alternates_casei` is now faster than rg (979 ms task-clock, 3.46 CPUs). First `linux_no_literal` after a fresh binary was 4.85 s / 1.6 CPUs; warmed repeats were 2.25–2.33 s / ~3.5 CPUs.
+
+- **Leaves after (flat self, `--no-children -s symbol`):**
+  - `linux_alternates_casei`: teddy `find` 28%; memchr 17%; `FileScan::next_item` 10%; `find_fwd` 9%. **No `Pool::put_value` / `get_slow` above 0.3%.**
+  - `linux_no_literal`: `find_fwd` 34%; `memset` 16% (per-file hybrid cache init); determinize / `cache_next_state`. **No pool leaves.**
+  - `linux_unicode_greek` / `_casei`: `find_fwd` 65%; memchr / `FileScan::next_item` / `Matcher::matched`. **No pool leaves.**
+- **Attributed module:** `crates/core/src/search/scan.rs` + `matcher/`; overlay `crates/regex-automata/src/meta/regex.rs`.
+- **Before / after:** `Pool::put_value` 26% + `get_slow` 7% on casei (master) gone. Remaining full-scan cost is `find_fwd` and per-file `Cache` construction (`memset` / `Lazy::init_cache`).
+
 ### 2026-08-20 — PR3 kinds opt into narrowing; default AsciiLower
+
 
 - **Tool:** benchsuite + `perf record -F 999 --call-graph fp -e task-clock`
 - **Change:** `Index::query` returns `Option` (`None` = no restriction). Default catalog is identity + ascii-lower trigram. `GramMatch::AsciiCase` deleted. Rebuilt `/tmp/benchsuite/linux.sift`.
