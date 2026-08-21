@@ -17,9 +17,10 @@ The candidate pipeline is **plan (pure) → resolve (I/O) → search**: `Plan::n
 ## Build & Test
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo fmt -p sift-core -p sift-grep -- --check
+cargo clippy -p sift-core -p sift-grep --all-targets --all-features --no-deps -- -D warnings
+cargo test --workspace --all-features \
+  --exclude regex --exclude regex-automata --exclude regex-syntax --exclude pcre2
 ```
 
 Run all three before pushing. CI enforces the same checks on Linux, macOS, and Windows.
@@ -49,6 +50,10 @@ evidence for performance PRs.
 | `crates/core/src/search/` | Query, Searcher, Origin, SearchMode, report/events |
 | `crates/core/src/corpus/` | `File`, `FileFilter`, `FileOrder`, walk |
 | `crates/cli/` | `sift-grep`: `sift` / `sift-daemon` binaries (clap CLI over core) |
+| `crates/regex/` | Vendored `regex` 1.13.1 (pristine) |
+| `crates/regex-automata/` | Vendored `regex-automata` 0.4.18 (`Config::pool`, `is_match_with`) |
+| `crates/regex-syntax/` | Vendored `regex-syntax` 0.8.11 (pristine) |
+| `crates/pcre2/` | Vendored `pcre2` 0.2.11 (`MatchData` search; `pcre2-sys` stays crates.io) |
 | `fuzz/` | `cargo-fuzz` targets (standalone package, nightly) |
 | `benchsuite/` | Comparative `rg` vs `sift` benchmarks |
 | `scripts/` | `fuzz.sh`, `install.sh`, `release.sh` |
@@ -87,11 +92,38 @@ evidence for performance PRs.
 Values (not aggregates): `StoreMeta`, `SearchMode`, `Scan` / `ScanScope`,
 `FileFilter`, `FileOrder`, `Coverage`. Printing stays under `cli/format`.
 
+## Vendored regex crates
+
+Sift vendors `regex` 1.13.1, `regex-automata` 0.4.18, `regex-syntax` 0.8.11,
+and `pcre2` 0.2.11 as workspace members under `crates/`. `[patch.crates-io]`
+redirects `ignore` / `globset` to the same automata. Those crates keep the
+default cache pool **on**. Sift compiles `meta::Regex` with `pool(false)` and
+passes a `FileScan`-owned `Cache`.
+
+Vendor crates do **not** inherit `[workspace.package]` or `[lints] workspace =
+true`. They keep upstream `unsafe` and formatting. Sift clippy/fmt/test stay on
+sift packages (`default-members` is `crates/core` and `crates/cli`; clippy uses
+`-p sift-core -p sift-grep --no-deps` so path-dep vendor crates are not relinted). Overlay
+tests: `cargo test -p regex-automata` and `cargo test -p pcre2` locally after
+engine changes; do not put the full regex suite on the 3-OS CI matrix.
+
+**Overlay only** `regex-automata` and `pcre2`. `regex` and `regex-syntax` stay
+pristine.
+
+| Overlay | Files |
+|---------|-------|
+| `regex-automata` | `src/meta/regex.rs` (`Config::pool`, `is_match_with`, pool-less `Regex`) |
+| `pcre2` | `src/ffi.rs` (`pub MatchData`), `src/bytes.rs` (`create_match_data`, `is_match_with`, `find_at_with`) |
+
+**Re-import:** copy the published crate trees from crates.io over
+`crates/{regex,regex-automata,regex-syntax,pcre2}`, then rebase the overlay
+commits. Do not inherit workspace package/lints. Drop `Cargo.lock` from `pcre2`.
+
 ## Key Conventions
 
-- **No `unsafe`** except in `index/mmap.rs` (documented safety invariant). Workspace does not deny `unsafe_code` so mmap needs no `#[allow]`.
-- **Strict clippy:** workspace uses `pedantic + nursery + cargo` warnings; CI uses `-D warnings`.
-- Fix lints at the root cause. `#[allow]` is **never** permitted.
+- **No `unsafe` in sift crates** except in `index/mmap.rs` (documented safety invariant). Workspace does not deny `unsafe_code` so mmap needs no `#[allow]`. Vendored regex crates keep upstream `unsafe`.
+- **Strict clippy on sift packages:** workspace uses `pedantic + nursery + cargo` warnings; CI uses `-D warnings` with vendor crates excluded.
+- Fix lints at the root cause. `#[allow]` is **never** permitted in sift crates.
 - **Never** add free helper functions or callback/`FnOnce` APIs (see API
   Evolution).
 - Prefer small, focused commits when the design is already right. When the design
@@ -373,9 +405,9 @@ Clap parses `*Decl` flag groups; **`Argv` resolves effective runtime values**
   to `stable` (`rustup default stable`). If a build fails with
   `feature edition2024 is required`, run `rustup default stable`.
 - **Build / lint / test:** use the commands in `README.md` / the "Build & Test"
-  section above (`cargo build --workspace`, `cargo fmt --all -- --check`,
-  `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
-  `cargo test --workspace --all-features`). No services or external deps needed.
+  section above (`cargo build --workspace`, `cargo fmt -p sift-core -p sift-grep -- --check`,
+  `cargo clippy -p sift-core -p sift-grep --all-targets --all-features --no-deps -- -D warnings`,
+  `cargo test --workspace --all-features --exclude regex --exclude regex-automata --exclude regex-syntax --exclude pcre2`). No services or external deps needed.
 - **Running the CLI:** the dev binary is `target/debug/sift` (bin name `sift`,
   crate `sift-grep`). You must build an index before searching, and search paths
   must sit under the indexed corpus root.

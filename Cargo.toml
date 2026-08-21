@@ -1,6 +1,14 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/cli"]
+members = [
+    "crates/core",
+    "crates/cli",
+    "crates/regex",
+    "crates/regex-automata",
+    "crates/regex-syntax",
+    "crates/pcre2",
+]
+default-members = ["crates/core", "crates/cli"]
 exclude = ["fuzz"]
 
 [workspace.package]
@@ -27,9 +35,21 @@ nursery = { level = "deny", priority = -1 }
 cargo = { level = "deny", priority = -1 }
 # fastio pulls io-uring (bitflags 1) and region (windows-sys 0.52).
 multiple_crate_versions = "allow"
+# Vendored workspace members keep upstream Cargo.toml; cargo-group lints
+# still see those crates when clippy runs on sift packages.
+cargo_common_metadata = "allow"
+redundant_feature_names = "allow"
 no_effect_underscore_binding = "deny"
 
 # Line tables for Criterion / `cargo bench` without full debug info bloat.
 [profile.bench]
 inherits = "release"
 debug = 1
+
+# One copy of the regex stack (including ignore/globset). Overlay lives in
+# regex-automata and pcre2; regex and regex-syntax stay pristine.
+[patch.crates-io]
+regex = { path = "crates/regex" }
+regex-automata = { path = "crates/regex-automata" }
+regex-syntax = { path = "crates/regex-syntax" }
+pcre2 = { path = "crates/pcre2" }

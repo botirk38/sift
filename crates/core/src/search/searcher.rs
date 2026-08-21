@@ -9,7 +9,7 @@ use crate::search::error::Error as SearchError;
 use crate::search::event::{BinaryEvent, ContextEvent, MatchEvent, SearchEvent, Span};
 use crate::search::hit::Match;
 use crate::search::input::{Input, Inputs, Origin};
-use crate::search::line::{Line, Multiline};
+use crate::search::line::Line;
 use crate::search::matcher::Matcher;
 use crate::search::mode::{Hit, SearchMode};
 use crate::search::options::{Nul, SearchBound, SearchOptions};
@@ -103,22 +103,11 @@ impl Searcher {
         let nul = self.nul(input);
         let binary = self.convert(&mut loaded, nul);
         let haystack = loaded.as_slice();
-        let multiline = self.multiline(haystack)?;
-        let mut scan = FileScan::new(
-            haystack,
-            &self.matcher,
-            self.options(),
-            mode,
-            nul,
-            multiline,
-            binary,
-        );
+        let mut scan = FileScan::new(haystack, &self.matcher, self.options(), mode, nul, binary)?;
         let mut report = FileReport::new(input.origin().clone());
         while let Some(item) = scan.next_item() {
             if let Item::Hit(line) = item? {
-                for event in
-                    self.match_events(input.origin().clone(), &line, scan.slice(), scan.spans())?
-                {
+                for event in self.match_events(input.origin().clone(), &line, &mut scan)? {
                     for listed in Self::listing(&event, mode) {
                         report.push_match(listed);
                     }
@@ -153,20 +142,11 @@ impl Searcher {
         }
     }
 
-    fn multiline(&self, bytes: &[u8]) -> Result<Option<Multiline>, SearchError> {
-        if !self.options().multiline() {
-            return Ok(None);
-        }
-        let template = self.options().replace.as_deref().map(str::as_bytes);
-        Ok(Some(Multiline::new(self.matcher.spans(bytes, template)?)))
-    }
-
     fn match_events(
         &self,
         origin: Origin,
         line: &Line<'_>,
-        chunk: &[u8],
-        spans: Option<&Multiline>,
+        scan: &mut FileScan<'_>,
     ) -> Result<Vec<MatchEvent>, SearchError> {
         let invert = self.options().invert_match();
         let template = self.options().replace.as_deref().map(str::as_bytes);
@@ -179,11 +159,11 @@ impl Searcher {
                 spans: Vec::new(),
             }]);
         }
-        if let Some(spans) = spans {
+        if let Some(spans) = scan.spans() {
             return Ok(spans
                 .starting_on(line)
                 .map(|span| {
-                    let bytes = chunk.get(span.range.clone()).unwrap_or(b"").to_vec();
+                    let bytes = scan.slice().get(span.range.clone()).unwrap_or(b"").to_vec();
                     MatchEvent {
                         origin: origin.clone(),
                         line_number: line.number,
@@ -198,7 +178,7 @@ impl Searcher {
                 .collect());
         }
         let bytes = line.bytes().to_vec();
-        let spans = self.matcher.spans(&bytes, template)?;
+        let spans = self.matcher.spans(&bytes, template, scan.scratch())?;
         Ok(vec![MatchEvent {
             origin,
             line_number: line.number,
@@ -308,27 +288,23 @@ impl<'a> Events<'a> {
                 binary,
             )
         };
-        let multiline = self.searcher.multiline(&chunk)?;
         let mut scan = FileScan::new(
             &chunk,
             &self.searcher.matcher,
             self.searcher.options(),
             self.mode,
             nul,
-            multiline,
             binary,
-        );
+        )?;
         self.pending.push_back(SearchEvent::Begin(origin.clone()));
         let mut body = VecDeque::new();
         while let Some(item) = scan.next_item() {
             match item? {
                 Item::Hit(line) => {
-                    for event in self.searcher.match_events(
-                        origin.clone(),
-                        &line,
-                        scan.slice(),
-                        scan.spans(),
-                    )? {
+                    for event in self
+                        .searcher
+                        .match_events(origin.clone(), &line, &mut scan)?
+                    {
                         body.push_back(SearchEvent::Match(event));
                     }
                 }
