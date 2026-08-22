@@ -10,6 +10,8 @@ All notable changes to this project will be documented in this file.
 
 ### Refactor
 
+- the posting-list container moved to `index/postings.rs` so index kinds can share it; the `sift_core::index::ngram::storage::postings` path is gone
+
 - `Searcher::execute` materializes a report; `Searcher::stream` returns `Events`. Quiet/invert-match are `bool`.
 - compile `Matcher::Pcre2` with the `pcre2` crate; drop `grep-pcre2` and `grep-matcher` (#279)
 - `Matcher::spans` is the match walk; `MatchEvent` carries `Span`; `Query::case()` is caseless for both engines

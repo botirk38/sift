@@ -6,6 +6,7 @@ pub mod kinds;
 pub mod meta;
 pub mod mmap;
 pub mod ngram;
+pub(crate) mod postings;
 pub mod record;
 
 pub use disk::SnapshotId;

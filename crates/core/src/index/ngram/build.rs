@@ -2,7 +2,7 @@
 
 use super::gram::{Gram, GramNorm, GramWidth};
 use super::storage::lexicon::LexiconEntry;
-use super::storage::postings::Postings;
+use crate::index::postings::Postings;
 
 use crate::index::Files;
 

@@ -10,12 +10,11 @@ pub use gram::{Gram, GramNorm, GramWidth, GramWindows};
 pub use index::{Index, NGramIndexError};
 
 pub(crate) const LEXICON_BIN: &str = "lexicon.bin";
-pub(crate) const POSTINGS_BIN: &str = "postings.bin";
 
 #[cfg(test)]
 mod candidate_tests {
 
-    use crate::index::ngram::storage::postings::Postings;
+    use crate::index::postings::Postings;
     use crate::search::{CaseMode, InputEncoding, Query, SearchFlags, SearchOptions};
 
     use super::*;

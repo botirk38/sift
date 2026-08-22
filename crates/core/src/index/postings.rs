@@ -1,4 +1,7 @@
-//! File-id payloads referenced by the lexicon.
+//! Posting-list payloads shared by index kinds.
+//!
+//! Each kind stores its own `postings.bin` in its snapshot namespace and
+//! addresses lists by `(offset, len)` from whatever directory it keeps.
 //!
 //! Each posting list is a self-describing blob: a varint element count, then
 //! whole 128-value blocks SIMD delta-bitpacked via [`BitPacker4x`], then a
@@ -10,10 +13,12 @@ use std::path::Path;
 use bitpacking::{BitPacker, BitPacker4x};
 use integer_encoding::VarInt;
 
-use crate::index::ngram::storage::format::POSTINGS_MAGIC;
-
-use super::read_u32_le;
 use crate::index::mmap::mmap_open;
+
+const POSTINGS_MAGIC: [u8; 8] = *b"SIFTPST3";
+
+/// On-disk artifact name for a kind's posting payload.
+pub const POSTINGS_BIN: &str = "postings.bin";
 
 /// Values per SIMD-bitpacked block.
 const BLOCK_LEN: usize = BitPacker4x::BLOCK_LEN;
@@ -31,6 +36,14 @@ impl Postings {
 
     fn malformed(msg: &'static str) -> std::io::Error {
         std::io::Error::new(std::io::ErrorKind::InvalidData, msg)
+    }
+
+    fn read_u32_le(bytes: &[u8], offset: usize) -> u32 {
+        u32::from_le_bytes(
+            bytes[offset..offset + 4]
+                .try_into()
+                .expect("slice is exactly 4 bytes"),
+        )
     }
 
     /// Encode a postings payload into bytes (magic + length prefix + payload).
@@ -91,7 +104,7 @@ impl Postings {
                 "unexpected postings magic",
             ));
         }
-        let plen = read_u32_le(bytes, magic_len) as usize;
+        let plen = Self::read_u32_le(bytes, magic_len) as usize;
         if bytes.len() < magic_len + 4 + plen {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,

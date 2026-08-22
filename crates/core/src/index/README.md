@@ -17,6 +17,7 @@ index/
   indexes.rs   -- Indexes: open/load/build + query/hydrate
   files.rs     -- Snapshot-owned FileId → File map
   disk.rs      -- atomic persistence, leases, manifests
+  postings.rs  -- posting-list container shared by kinds (SIFTPST3)
   ngram/       -- runtime-width N-gram index (default width 3)
 ```
 
@@ -30,6 +31,7 @@ index/
 | [`disk.rs`](disk.rs) | Snapshot persistence |
 | [`kinds.rs`](kinds.rs) | `FileId` |
 | [`meta.rs`](meta.rs) | `StoreMeta` |
+| [`postings.rs`](postings.rs) | Posting-list container shared by kinds |
 | [`ngram/`](ngram/) | N-gram implementation |
 
 ## API
