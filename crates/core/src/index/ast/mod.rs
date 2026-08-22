@@ -5,10 +5,21 @@
 //! persisted numeric codes) and [`AstPattern`] is the compiled-pattern
 //! wrapper, so a future in-house matcher is a single-module replacement.
 //!
-//! The on-disk kind that consumes these lands in a follow-up.
+//! The kind persists two artifacts per snapshot namespace (`ast/`):
+//!
+//! | File | Purpose |
+//! |---|---|
+//! | `kinds.bin` | language table with grammar fingerprints, per-file language map, `(lang, kind)` directory |
+//! | `postings.bin` | the shared posting container the directory addresses |
+//!
+//! Wiring it into the catalog as a queryable kind lands in a follow-up.
 
+mod build;
+mod index;
 mod language;
 mod pattern;
+mod storage;
 
+pub use index::{AstIndexError, Index};
 pub use language::AstLanguage;
 pub use pattern::AstPattern;
