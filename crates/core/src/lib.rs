@@ -22,7 +22,7 @@ pub use search::{
     ZeroCounts,
 };
 
-pub use index::ast::{AstLanguage, AstPattern};
+pub use index::ast::{AstIndexError, AstLanguage, AstPattern, Index as AstIndex};
 pub use index::meta::StoreMeta;
 pub use index::ngram::{
     Gram, GramNorm, GramWidth, GramWindows, Index as NGramIndex, NGramIndexError,
@@ -55,6 +55,12 @@ pub enum Error {
 impl From<crate::index::ngram::NGramIndexError> for Error {
     fn from(e: crate::index::ngram::NGramIndexError) -> Self {
         Self::Index(IndexError::NGram(e))
+    }
+}
+
+impl From<crate::index::ast::AstIndexError> for Error {
+    fn from(e: crate::index::ast::AstIndexError) -> Self {
+        Self::Index(IndexError::Ast(e))
     }
 }
 
