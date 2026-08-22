@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
+- add the tree-sitter language registry and ast-grep pattern wrapper behind `index/ast/` (seven languages: rust, python, javascript, typescript, tsx, go, java). No user-visible behavior yet; the index kind that uses them follows
+
 - own the per-file scan loop (`Bytes` + `Lines`); `--io sync|mmap|uring` replaces `--mmap`/`--no-mmap`
 
 ### Refactor

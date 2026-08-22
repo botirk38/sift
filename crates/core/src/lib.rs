@@ -22,6 +22,7 @@ pub use search::{
     ZeroCounts,
 };
 
+pub use index::ast::{AstLanguage, AstPattern};
 pub use index::meta::StoreMeta;
 pub use index::ngram::{
     Gram, GramNorm, GramWidth, GramWindows, Index as NGramIndex, NGramIndexError,

@@ -1,3 +1,4 @@
+pub mod ast;
 mod disk;
 pub mod error;
 pub mod files;
