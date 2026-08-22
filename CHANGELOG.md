@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
+- register the AST index kind: `--index ast` builds it into a snapshot namespace beside the N-gram kinds. It does not narrow regex queries yet, so results are unchanged; structural search follows
+
 - the AST kind persists `kinds.bin` (language table with grammar fingerprints, per-file language map, node-kind directory) and a `postings.bin` payload; a grammar-fingerprint mismatch marks that language stale at open instead of failing, so a rebuild is always reachable
 
 - add the tree-sitter language registry and ast-grep pattern wrapper behind `index/ast/` (seven languages: rust, python, javascript, typescript, tsx, go, java). No user-visible behavior yet; the index kind that uses them follows

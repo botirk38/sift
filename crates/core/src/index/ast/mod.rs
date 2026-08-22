@@ -12,7 +12,9 @@
 //! | `kinds.bin` | language table with grammar fingerprints, per-file language map, `(lang, kind)` directory |
 //! | `postings.bin` | the shared posting container the directory addresses |
 //!
-//! Wiring it into the catalog as a queryable kind lands in a follow-up.
+//! The kind is opt-in (`--index ast`). It cannot narrow a regex query, so
+//! it returns `None` and does not participate in the intersection;
+//! structural queries land with the `--ast` search surface.
 
 mod build;
 mod index;

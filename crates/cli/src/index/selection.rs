@@ -12,6 +12,7 @@ use crate::grep::Argv;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum IndexKindArg {
     Ngram,
+    Ast,
 }
 
 /// Gram normalization accepted by `--norm`.
@@ -75,6 +76,15 @@ impl Pending {
                     .norm
                     .map_or(GramNorm::Identity, GramNormArg::to_gram_norm);
                 Ok(IndexRecord::ngram_norm(width, norm))
+            }
+            IndexKindArg::Ast => {
+                if self.width.is_some() {
+                    return Err(anyhow::anyhow!("--width does not apply to --index ast"));
+                }
+                if self.norm.is_some() {
+                    return Err(anyhow::anyhow!("--norm does not apply to --index ast"));
+                }
+                Ok(IndexRecord::Ast)
             }
         }
     }
@@ -205,8 +215,9 @@ fn next_value<'a>(args: &'a [String], i: usize, flag: &str) -> anyhow::Result<&'
 fn parse_kind(raw: &str) -> anyhow::Result<IndexKindArg> {
     match raw {
         "ngram" => Ok(IndexKindArg::Ngram),
+        "ast" => Ok(IndexKindArg::Ast),
         other => Err(anyhow::anyhow!(
-            "unknown index kind '{other}' (expected ngram)"
+            "unknown index kind '{other}' (expected ngram or ast)"
         )),
     }
 }
@@ -264,6 +275,38 @@ mod tests {
             err.to_string()
                 .contains("--width requires a preceding --index")
         );
+    }
+
+    #[test]
+    fn resolve_accepts_ast_kind() {
+        let selection = IndexSelection::resolve(&argv(&[
+            "sift", "index", "build", "--index", "ngram", "--index", "ast",
+        ]))
+        .expect("resolve")
+        .expect("selection");
+        let names: Vec<String> = selection.indexes.iter().map(|r| r.name()).collect();
+        assert_eq!(names, vec!["ngram-3".to_string(), "ast".to_string()]);
+    }
+
+    #[test]
+    fn ast_rejects_width_and_norm() {
+        let err = IndexSelection::resolve(&argv(&[
+            "sift", "index", "build", "--index", "ast", "--width", "3",
+        ]))
+        .expect_err("must error");
+        assert!(err.to_string().contains("--width does not apply"));
+
+        let err = IndexSelection::resolve(&argv(&[
+            "sift",
+            "index",
+            "build",
+            "--index",
+            "ast",
+            "--norm",
+            "ascii-lower",
+        ]))
+        .expect_err("must error");
+        assert!(err.to_string().contains("--norm does not apply"));
     }
 
     #[test]

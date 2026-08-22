@@ -2,7 +2,7 @@
 
 Grep-like CLI for indexed codebase search. Thin wrapper over `sift-core`: parses flags with clap, maps them to core types, and prints matches.
 
-Sift currently ships runtime-width N-gram indexes for literal search acceleration, defaulting to identity and ascii-lower trigrams. The CLI and core are designed for multiple composable index configurations. Repeatable `--index ngram` with optional `--width` / `--norm` (after `--index`) selects which indexes to build; the search path is index-agnostic.
+Sift currently ships runtime-width N-gram indexes for literal search acceleration, defaulting to identity and ascii-lower trigrams. The CLI and core are designed for multiple composable index configurations. Repeatable `--index KIND` selects which indexes to build: `ngram` (optional `--width` / `--norm` after it) and the opt-in `ast` kind; the search path is index-agnostic.
 
 ## Usage
 
