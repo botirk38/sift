@@ -9,7 +9,7 @@ Store metadata, snapshot persistence, and search orchestration.
 | Metadata | `StoreMeta`, `IndexRecord` | Corpus configuration and kind catalog |
 | Orchestrator | `Indexes` | `open` / `load` / `build`, query, and hydration |
 | Snapshot storage | `SnapshotId`, `Files` | Committed artifact layout and shared file IDs |
-| Kind | `ngram::Index` | First shipped kind |
+| Kind | `ngram::Index`, `ast::Index` | Shipped kinds |
 
 ```
 index/
@@ -34,7 +34,7 @@ index/
 | [`meta.rs`](meta.rs) | `StoreMeta` |
 | [`postings.rs`](postings.rs) | Posting-list container shared by kinds |
 | [`ngram/`](ngram/) | N-gram implementation |
-| [`ast/`](ast/) | Languages and patterns for the AST kind |
+| [`ast/`](ast/) | AST kind: languages, patterns, and node-kind artifacts |
 
 ## API
 

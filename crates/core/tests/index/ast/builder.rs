@@ -143,3 +143,40 @@ fn languages_lists_every_compiled_language() {
     let index = AstIndex::open(&ast_dir, files.len()).expect("open");
     assert_eq!(index.languages(), AstLanguage::ALL.to_vec());
 }
+
+#[test]
+fn catalog_build_writes_the_ast_namespace_beside_ngram() {
+    use sift_core::Indexes;
+
+    let tmp = TempDir::new().expect("tempdir");
+    let corpus = tmp.path().join("corpus");
+    write_polyglot_corpus(&corpus);
+
+    let sift_dir = tmp.path().join(".sift");
+    let root = corpus.canonicalize().expect("canonicalize");
+    let meta = sample_store_meta(
+        root,
+        vec![
+            IndexRecord::ngram(sift_core::GramWidth::TRIGRAM),
+            IndexRecord::Ast,
+        ],
+    );
+    let mut indexes = Indexes::open(&sift_dir, &meta).expect("open");
+    indexes.refresh_meta(&meta).expect("refresh meta");
+    indexes.build().expect("build");
+
+    let id = indexes.current_id().expect("snapshot id").to_string();
+    let snap = indexes.snapshot_dir(&id);
+    assert!(snap.join("files.bin").is_file());
+    assert!(snap.join("ngram-3").join("postings.bin").is_file());
+    assert!(snap.join("ast").join("kinds.bin").is_file());
+    assert!(snap.join("ast").join("postings.bin").is_file());
+    // The shared file table stays at the snapshot root; kinds never write one.
+    assert!(!snap.join("ast").join("files.bin").exists());
+
+    // The store reopens through the ordinary search path.
+    drop(indexes);
+    let reopened = Indexes::load(&sift_dir).expect("load").expect("some");
+    assert!(reopened.queryable());
+    assert_eq!(reopened.current_id(), Some(id.as_str()));
+}

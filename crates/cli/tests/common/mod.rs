@@ -91,22 +91,27 @@ impl TestProject {
     }
 
     fn build_index_opts(&self, corpus: &Path, follow: bool) -> &Self {
-        self.build_index_with(corpus, follow, std::iter::empty::<&str>())
+        self.build_index_with(corpus, follow, &[], &[])
     }
 
-    pub fn build_index_with<I, S>(&self, corpus: &Path, follow: bool, extra_args: I) -> &Self
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
-    {
+    /// Build an index, threading `global_args` before the subcommand and
+    /// `build_args` (for example `--index ast`) after it.
+    pub fn build_index_with(
+        &self,
+        corpus: &Path,
+        follow: bool,
+        global_args: &[&str],
+        build_args: &[&str],
+    ) -> &Self {
         let mut cmd = self.sift();
         cmd.arg("--sift-dir").arg(&self.sift_dir);
         if follow {
             cmd.arg("--follow");
         }
-        cmd.args(extra_args);
+        cmd.args(global_args);
         let status = cmd
             .args(["index", "build", "--wait"])
+            .args(build_args)
             .arg(corpus)
             .status()
             .unwrap();

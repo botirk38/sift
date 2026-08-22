@@ -20,6 +20,7 @@ pub enum IndexRecord {
         #[serde(default)]
         norm: GramNorm,
     },
+    Ast,
 }
 
 impl IndexRecord {
@@ -47,7 +48,8 @@ impl IndexRecord {
         ]
     }
 
-    /// Snapshot namespace / display name (`ngram-3`, `ngram-5-ascii-lower`).
+    /// Snapshot namespace / display name (`ngram-3`, `ngram-5-ascii-lower`,
+    /// `ast`).
     #[must_use]
     pub fn name(self) -> String {
         match self {
@@ -59,11 +61,12 @@ impl IndexRecord {
                 width,
                 norm: GramNorm::AsciiLower,
             } => format!("ngram-{}-ascii-lower", width.get()),
+            Self::Ast => "ast".to_string(),
         }
     }
 
     /// Parse a short catalog name (`trigram`, `ngram-3`, `ngram:3`,
-    /// `ngram-5-ascii-lower`).
+    /// `ngram-5-ascii-lower`, `ast`).
     ///
     /// # Errors
     ///
@@ -71,6 +74,9 @@ impl IndexRecord {
     pub fn from_name(value: &str) -> Result<Self, String> {
         if value == "trigram" {
             return Ok(Self::ngram(GramWidth::TRIGRAM));
+        }
+        if value == "ast" {
+            return Ok(Self::Ast);
         }
         let rest = value
             .strip_prefix("ngram-")
@@ -94,6 +100,7 @@ impl IndexRecord {
     pub fn build(self, dir: &Path, files: &Files) -> crate::Result<()> {
         match self {
             Self::Ngram { width, norm } => super::ngram::Index::build(width, norm, dir, files),
+            Self::Ast => super::ast::Index::build(dir, files),
         }
     }
 
@@ -107,6 +114,13 @@ impl IndexRecord {
             Self::Ngram { width, norm } => Ok(Kind::Ngram(super::ngram::Index::open(
                 width, norm, dir, file_count,
             )?)),
+            Self::Ast => {
+                // Opening validates the artifacts and proves the snapshot is
+                // readable; the opened index is retained once structural
+                // queries can use it.
+                super::ast::Index::open(dir, file_count)?;
+                Ok(Kind::Ast)
+            }
         }
     }
 }
@@ -122,12 +136,19 @@ impl FromStr for IndexRecord {
 /// Runtime index kind ready to query.
 pub(crate) enum Kind {
     Ngram(super::ngram::Index),
+    /// Artifacts validated at open. The language map and node-kind postings
+    /// narrow structural queries, which arrive with the `--ast` search
+    /// surface; until then this kind holds no queryable state.
+    Ast,
 }
 
 impl Kind {
     pub(crate) fn query(&self, query: &Query) -> crate::Result<Option<Vec<FileId>>> {
         match self {
             Self::Ngram(index) => index.query(query),
+            // A regex query has no signal this kind can restrict on, so it
+            // does not participate in the intersection.
+            Self::Ast => Ok(None),
         }
     }
 }
@@ -135,6 +156,16 @@ impl Kind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ast_record_round_trips_name_and_serde() {
+        assert_eq!(IndexRecord::Ast.name(), "ast");
+        assert_eq!(IndexRecord::from_name("ast"), Ok(IndexRecord::Ast));
+        let json = serde_json::to_string(&IndexRecord::Ast).expect("serialize");
+        assert_eq!(json, r#"{"kind":"ast"}"#);
+        let back: IndexRecord = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, IndexRecord::Ast);
+    }
 
     #[test]
     fn default_catalog_is_identity_and_ascii_lower_trigram() {

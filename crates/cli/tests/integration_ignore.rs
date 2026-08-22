@@ -86,7 +86,7 @@ fn no_ignore_disables_gitignore() {
         .expect("git");
     assert!(status.success());
 
-    p.build_index_with(p.root(), false, ["--no-ignore"]);
+    p.build_index_with(p.root(), false, &["--no-ignore"], &[]);
 
     let out = p.index_output(["--no-ignore", "needle"]);
     assert_success(&out);
@@ -135,7 +135,7 @@ fn no_ignore_vcs_index() {
     p.write(".gitignore", "*.log\n");
     p.write("keep.txt", "findme in txt\n");
     p.write("skip.log", "findme in log\n");
-    p.build_index_with(p.root(), false, ["--no-ignore-vcs"]);
+    p.build_index_with(p.root(), false, &["--no-ignore-vcs"], &[]);
 
     let out = p.index_output(["--no-ignore-vcs", "findme"]);
     assert_success(&out);
@@ -184,7 +184,7 @@ fn unrestricted_disables_gitignore_index() {
     p.write(".gitignore", "*.log\n");
     p.write("keep.txt", "findme in txt\n");
     p.write("skip.log", "findme in log\n");
-    p.build_index_with(p.root(), false, ["-u"]);
+    p.build_index_with(p.root(), false, &["-u"], &[]);
 
     let out = p.index_output(["-u", "findme"]);
     assert_success(&out);
@@ -230,7 +230,7 @@ fn no_ignore_dot_index() {
     p.write(".ignore", "secret.txt\n");
     p.write("secret.txt", "findme secret\n");
     p.write("public.txt", "findme public\n");
-    p.build_index_with(p.root(), false, ["--no-ignore-dot"]);
+    p.build_index_with(p.root(), false, &["--no-ignore-dot"], &[]);
 
     let out = p.index_output(["--no-ignore-dot", "findme"]);
     assert_success(&out);
@@ -320,7 +320,7 @@ fn no_ignore_exclude_index() {
     p.write(".git/info/exclude", "*.bak\n");
     p.write("file.bak", "findme in bak\n");
     p.write("file.txt", "findme in txt\n");
-    p.build_index_with(Path::new("."), false, ["--no-ignore-exclude"]);
+    p.build_index_with(Path::new("."), false, &["--no-ignore-exclude"], &[]);
 
     let out = p.index_output(["--no-ignore-exclude", "findme"]);
     assert_success(&out);
