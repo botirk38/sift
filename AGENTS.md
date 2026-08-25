@@ -47,6 +47,7 @@ evidence for performance PRs.
 | `crates/core/src/candidates/` | Index-agnostic candidate description, planning, and resolution |
 | `crates/core/src/index/` | `StoreMeta`, `IndexRecord`, `Files`, disk snapshots, `Indexes` |
 | `crates/core/src/index/ngram/` | N-gram kind implementation (first shipped kind) |
+| `crates/core/src/index/ast/` | Tree-sitter languages and ast-grep patterns |
 | `crates/core/src/search/` | Query, Searcher, Origin, SearchMode, report/events |
 | `crates/core/src/corpus/` | `File`, `FileFilter`, `FileOrder`, walk |
 | `crates/cli/` | `sift-grep`: `sift` / `sift-daemon` binaries (clap CLI over core) |
