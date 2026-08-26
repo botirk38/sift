@@ -112,6 +112,9 @@ jobs:
         run: cargo build --release -p sift-grep --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.cross && 'aarch64-linux-gnu-gcc' || '' }}
+          # tree-sitter grammar crates compile C via cc-rs; pin the cross C
+          # compiler explicitly rather than trusting its target probe.
+          CC_aarch64_unknown_linux_gnu: ${{ matrix.cross && 'aarch64-linux-gnu-gcc' || '' }}
 
       - name: stage binary
         shell: bash

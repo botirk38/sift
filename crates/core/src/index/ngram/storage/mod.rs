@@ -2,7 +2,6 @@
 
 pub mod format;
 pub mod lexicon;
-pub mod postings;
 
 pub(super) fn read_u32_le(bytes: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(

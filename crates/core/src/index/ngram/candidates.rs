@@ -3,7 +3,7 @@ use std::collections::BinaryHeap;
 
 use super::gram::{Gram, GramWindows, LiteralNarrowing};
 use super::index::{Index, NGramIndexError};
-use super::storage::postings::Postings;
+use crate::index::postings::Postings;
 
 /// Dense membership over indexed file ids (one bit per file).
 struct FileIdSet {

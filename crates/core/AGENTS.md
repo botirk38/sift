@@ -28,6 +28,7 @@ Search (re-exported from `lib.rs`):
 - `Query`, `Searcher`, `SearchReport`, `Events`, `Origin`, `Mention`, `SearchMode`, `Hit`
 - `StoreMeta`, `IndexRecord`, `Indexes`, `SnapshotId`, `Files`
 - `ngram::Index`, `GramWidth`, `GramNorm`
+- `AstLanguage`, `AstPattern`
 - `Candidates`, `Plan`, `Scan`, `ScanScope`, `SnapshotFreshness`, `Coverage`
 
 ## Source map
@@ -38,7 +39,9 @@ Search (re-exported from `lib.rs`):
 | `index/record.rs` | `IndexRecord`, private `Kind` dispatch |
 | `index/files.rs` | Snapshot-owned `Files` |
 | `index/disk.rs` | Snapshot persistence |
+| `index/postings.rs` | Posting-list container shared by kinds |
 | `index/ngram/` | N-gram implementation (artifact names live here) |
+| `index/ast/` | Tree-sitter languages and ast-grep patterns |
 | `index/mmap.rs` | Sole `unsafe` in the crate (`mmap_open`) |
 | `search/` | `Query`, `Searcher`, `FileScan`, `Bytes`, `SearchReport`, `Events` |
 | `candidates/plan.rs` | `Plan` (plan + resolve) |

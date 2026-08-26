@@ -18,7 +18,7 @@ Each table file starts with an 8-byte magic header:
 | File | Magic | Contents |
 |------|-------|----------|
 | `lexicon.bin` | `SIFTLEX2` | Width-aware sorted gram entries with postings offsets |
-| `postings.bin` | `SIFTPST3` | Encoded sorted file-ID posting lists referenced by lexicon |
+| `postings.bin` (container in `index/postings.rs`) | `SIFTPST3` | Encoded sorted file-ID posting lists referenced by lexicon |
 
 All integers are little-endian. Lexicon entries are sorted by gram ordinal for
 binary search. Width-bearing files store the gram width in the header and reject

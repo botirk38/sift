@@ -9,7 +9,7 @@ use crate::search::{Case, Query};
 use super::build::IndexTables;
 use super::gram::{GramNorm, GramWidth};
 use super::storage::lexicon::Lexicon;
-use super::storage::postings::Postings;
+use crate::index::postings::{POSTINGS_BIN, Postings};
 
 /// Errors specific to opening or persisting an N-gram index.
 #[derive(Debug, thiserror::Error)]
@@ -162,7 +162,7 @@ impl Index {
     fn write_tables(width: GramWidth, tables: &IndexTables, dir: &Path) -> crate::Result<()> {
         std::fs::create_dir_all(dir)?;
         let lexicon_path = dir.join(super::LEXICON_BIN);
-        let postings_path = dir.join(super::POSTINGS_BIN);
+        let postings_path = dir.join(POSTINGS_BIN);
 
         let (lr, pr) = rayon::join(
             || Lexicon::create(&lexicon_path, width, &tables.lexicon),
@@ -187,7 +187,7 @@ impl Index {
         file_count: usize,
     ) -> crate::Result<Self> {
         let lexicon_path = index_dir.join(super::LEXICON_BIN);
-        let postings_path = index_dir.join(super::POSTINGS_BIN);
+        let postings_path = index_dir.join(POSTINGS_BIN);
 
         for p in [&lexicon_path, &postings_path] {
             if !p.is_file() {
